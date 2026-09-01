@@ -14,7 +14,8 @@ Aplicación móvil orientada a facilitar la adherencia a tratamientos médicos m
 4. [Requerimientos](#requerimientos-funcionales)
 5. [Reglas de negocio](#reglas-de-negocio)
 6. [Diccionario de datos](#diccionario-de-datos)
-7. [Casos de uso](#casos-de-uso)
+7. [Base de datos](#base-de-datos)
+8. [Casos de uso](#casos-de-uso)
 
 ---
 
@@ -68,6 +69,10 @@ seguimiento-de-medicacion/
 │   │   │       └── application.yml
 │   │   └── test/                # Tests
 │   └── pom.xml
+│
+├── database/
+│   ├── schema.sql              # DDL de tipos y tablas
+│   └── er-diagram.md           # Diagrama de entidad-relación (Mermaid)
 │
 └── README.md
 ```
@@ -215,6 +220,20 @@ Vínculo entre un tutor/responsable y los pacientes que gestiona. Un `caregiver`
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el vínculo está activo |
 
+
+---
+
+## Base de datos
+
+El motor de base de datos es PostgreSQL, hosteado en [Neon](#tecnologías). El esquema (`database/schema.sql`) se genera a partir del [diccionario de datos](#diccionario-de-datos) y puede aplicarse sobre una instancia de Neon por dos vías:
+
+- **SQL Editor de Neon:** el contenido de `database/schema.sql` se copia y ejecuta directamente desde la consola web del proyecto, sin requerir herramientas adicionales.
+- **`psql` local:** utilizando el connection string del proyecto, definido como variable `DATABASE_URL` en un archivo `database/.env.local` no versionado, el esquema se aplica con:
+  ```bash
+  set -a && source database/.env.local && set +a
+  psql "$DATABASE_URL" -f database/schema.sql
+  ```
+  El valor de `DATABASE_URL` debe declararse entre comillas, ya que el parámetro `channel_binding` de la cadena de conexión de Neon incluye un `&` que, sin comillas, bash interpreta como operador de segundo plano.
 
 ---
 
