@@ -1,35 +1,37 @@
 package com.medtracker.medtracker.dto;
 
 import com.medtracker.medtracker.model.Usuario;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 
+import java.time.LocalDateTime;
+
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class UsuarioDTO {
 
     private Long id;
     private String nombre;
     private String correo;
     private Usuario.Rol rol;
+    private String tokenFcm;
+    private LocalDateTime creadoEn;
+    private LocalDateTime actualizadoEn;
 
-    // Constructor vacío
-    public UsuarioDTO() {}
-
-    // Constructor desde entidad Usuario
+    // Constructor auxiliar para mapear desde la entidad
     public UsuarioDTO(Usuario usuario) {
         this.id = usuario.getId();
         this.nombre = usuario.getNombre();
         this.correo = usuario.getCorreo();
         this.rol = usuario.getRol();
+        this.tokenFcm = usuario.getTokenFcm();
+        this.creadoEn = usuario.getCreadoEn();
+        this.actualizadoEn = usuario.getActualizadoEn();
     }
-
-    // Getters y setters
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-
-    public String getNombre() { return nombre; }
-    public void setNombre(String nombre) { this.nombre = nombre; }
-
-    public String getCorreo() { return correo; }
-    public void setCorreo(String correo) { this.correo = correo; }
-
-    public Usuario.Rol getRol() { return rol; }
-    public void setRol(Usuario.Rol rol) { this.rol = rol; }
 }
