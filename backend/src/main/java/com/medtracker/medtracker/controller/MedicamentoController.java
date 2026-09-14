@@ -23,20 +23,8 @@ public class MedicamentoController {
     // Registrar medicamento
     @PostMapping("/registrar")
     public ResponseEntity<MedicamentoDTO> registrar(@RequestBody Medicamento medicamento) {
-        try {
-            Medicamento nuevo = medicamentoService.registrarMedicamento(medicamento);
-            return ResponseEntity.ok(new MedicamentoDTO(nuevo));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().build();
-        }
-    }
-
-    // Buscar medicamento por nombre
-    @GetMapping("/nombre/{nombre}")
-    public ResponseEntity<MedicamentoDTO> buscarPorNombre(@PathVariable String nombre) {
-        Optional<Medicamento> medicamento = medicamentoService.buscarPorNombre(nombre);
-        return medicamento.map(m -> ResponseEntity.ok(new MedicamentoDTO(m)))
-                          .orElse(ResponseEntity.notFound().build());
+        Medicamento nuevo = medicamentoService.registrarMedicamento(medicamento);
+        return ResponseEntity.ok(new MedicamentoDTO(nuevo));
     }
 
     // Buscar medicamento por ID
@@ -48,7 +36,7 @@ public class MedicamentoController {
     }
 
     // Listar todos los medicamentos
-    @GetMapping("/listar")
+    @GetMapping
     public ResponseEntity<List<MedicamentoDTO>> listarTodos() {
         List<MedicamentoDTO> lista = medicamentoService.listarTodos()
                 .stream()

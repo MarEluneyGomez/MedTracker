@@ -1,41 +1,42 @@
 package com.medtracker.medtracker.model;
 
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "medicamentos")
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class Medicamento {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // Nombre del medicamento
+    @Column(nullable = false)
     private String nombre;
 
-    @Column(nullable = false)
-    private String formaAdministracion; // oral, inyectable, tópico, etc.
+    // Forma de administración (oral, inyectable, tópico, etc.)
+    @Column(name = "forma_administracion", nullable = false)
+    private String formaAdministracion;
 
+    // Fechas de auditoría
+    @Column(name = "creado_en")
     private LocalDateTime creadoEn;
+
+    @Column(name = "actualizado_en")
     private LocalDateTime actualizadoEn;
+
+    @Column(name = "eliminado_en")
     private LocalDateTime eliminadoEn;
-
-    // Getters y setters
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-
-    public String getNombre() { return nombre; }
-    public void setNombre(String nombre) { this.nombre = nombre; }
-
-    public String getFormaAdministracion() { return formaAdministracion; }
-    public void setFormaAdministracion(String formaAdministracion) { this.formaAdministracion = formaAdministracion; }
-
-    public LocalDateTime getCreadoEn() { return creadoEn; }
-    public void setCreadoEn(LocalDateTime creadoEn) { this.creadoEn = creadoEn; }
-
-    public LocalDateTime getActualizadoEn() { return actualizadoEn; }
-    public void setActualizadoEn(LocalDateTime actualizadoEn) { this.actualizadoEn = actualizadoEn; }
-
-    public LocalDateTime getEliminadoEn() { return eliminadoEn; }
-    public void setEliminadoEn(LocalDateTime eliminadoEn) { this.eliminadoEn = eliminadoEn; }
 }
