@@ -2,7 +2,7 @@
 
 Aplicación móvil orientada a facilitar la adherencia a tratamientos médicos mediante recordatorios programados, registro de tomas y seguimiento del cumplimiento a lo largo del tiempo.
 
-> **Nota:** este documento es una primera versión del README para la primera entrega. El modelo de datos, requerimientos y casos de uso son una propuesta inicial en base a la funcionalidad prevista del proyecto.
+> **Nota:** este documento es una primera versión del README para la primera entrega. El modelo de datos, requerimientos y casos de uso son una propuesta inicial en base a la funcionalidad prevista del proyecto. Diccionario de datos y esquema actualizados para que coincidan con las entidades ya subidas al repositorio (`backend/src/main/java/.../model`).
 
 ---
 
@@ -10,7 +10,7 @@ Aplicación móvil orientada a facilitar la adherencia a tratamientos médicos m
 
 1. [Descripción general](#descripción-general)
 2. [Tecnologías](#tecnologías)
-3. [Estructura del repositorio](#estructura-del-repositorio)
+3. [Estructura del repositorio](#estructura-del-repositorio) ([Módulos subidos](#módulos-subidos-al-repositorio))
 4. [Requerimientos](#requerimientos-funcionales)
 5. [Reglas de negocio](#reglas-de-negocio)
 6. [Diccionario de datos](#diccionario-de-datos)
@@ -37,7 +37,7 @@ El sistema permite a un usuario (paciente) registrar los medicamentos que debe t
 | Notificaciones push | Firebase Cloud Messaging (FCM) |
 | Autenticación | JWT propio, manejado en el backend (Spring Boot) |
 | Control de versiones | Git / GitHub |
-| Gestión de dependencias backend | Maven / Gradle *(confirmar cuál se usa)* |
+| Gestión de dependencias backend | Maven |
 
 ---
 
@@ -66,7 +66,7 @@ seguimiento-de-medicacion/
 │   │   │   │   ├── model/       # Entidades
 │   │   │   │   └── dto/         # Objetos de transferencia de datos
 │   │   │   └── resources/
-│   │   │       └── application.yml
+│   │   │       └── application.properties
 │   │   └── test/                # Tests
 │   └── pom.xml
 │
@@ -76,6 +76,24 @@ seguimiento-de-medicacion/
 │
 └── README.md
 ```
+
+### Módulos subidos al repositorio
+
+Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA repository) → `service` → `controller` (REST) → `dto`.
+
+| Módulo | Descripción | Controller REST |
+|---|---|---|
+| `User` | Usuarios (pacientes / caregivers) | ✅ `/users` |
+| `Medication` | Catálogo de medicamentos | ✅ `/medications` |
+| `Treatment` | Tratamiento (medicamento + dosis + frecuencia por usuario) | ✅ `/treatments` |
+| `Reminder` | Recordatorio puntual asociado a un tratamiento | ✅ `/reminders` |
+| `Dose` | Toma de medicación generada por un recordatorio | ✅ `/doses` |
+| `Notification` | Notificación enviada a un usuario | ✅ `/notifications` |
+| `CaregiverLink` | Vínculo entre un caregiver y sus pacientes | ✅ `/caregiver-links` |
+| `MedicalAppointment` | Cita médica entre paciente y médico *(no estaba en el alcance original, ver nota)* | ✅ `/medical-appointments` |
+| `MedicalHistory` | Historial médico de un paciente *(no estaba en el alcance original, ver nota)* | ✅ `/medical-histories` |
+
+> **Nota:** `MedicalAppointment` y `MedicalHistory` se agregaron durante el desarrollo; sus RF y CU están formalizados más abajo (RF-12, RF-13, CU-09, CU-10).
 
 ---
 
@@ -87,13 +105,15 @@ seguimiento-de-medicacion/
 | RF-02 | El sistema debe permitir el inicio de sesión de un usuario registrado. |
 | RF-03 | El sistema debe permitir seleccionar un medicamento del catálogo (o darlo de alta si no existe) con nombre y forma de administración. |
 | RF-04 | El sistema debe permitir crear un tratamiento asociando un medicamento a un usuario, con su dosis y frecuencia particular. |
-| RF-05 | El sistema debe permitir configurar uno o más horarios de recordatorio por tratamiento. |
-| RF-06 | El sistema debe enviar notificaciones push en el horario configurado. |
-| RF-07 | El sistema debe permitir al usuario confirmar o marcar como omitida una toma de medicamento. |
+| RF-05 | El sistema debe permitir configurar uno o más recordatorios puntuales (fecha y hora) por tratamiento. |
+| RF-06 | El sistema debe enviar notificaciones push en el momento configurado. |
+| RF-07 | El sistema debe permitir al usuario confirmar o marcar como omitida una toma de medicación (`dose`). |
 | RF-08 | El sistema debe registrar el historial de tomas (confirmadas, omitidas, pendientes). |
 | RF-09 | El sistema debe mostrar estadísticas o indicadores de adherencia al tratamiento. |
 | RF-10 | El sistema debe permitir editar o eliminar un tratamiento existente. |
-| RF-11 | El sistema debe permitir editar o eliminar un horario de recordatorio. |
+| RF-11 | El sistema debe permitir editar o eliminar un recordatorio. |
+| RF-12 | El sistema debe permitir agendar una cita médica entre un paciente y un médico, con fecha, hora y motivo. |
+| RF-13 | El sistema debe permitir a un paciente ver su historial médico (diagnósticos y observaciones registradas). |
 
 ### Requerimientos no funcionales
 
@@ -111,11 +131,12 @@ seguimiento-de-medicacion/
 
 - **RN-01:** Un usuario solo puede ver y gestionar sus propios tratamientos y recordatorios.
 - **RN-02:** Un tratamiento debe tener al menos un horario de recordatorio asociado para estar activo.
-- **RN-03:** Una toma no puede confirmarse más de una vez para el mismo horario programado.
+- **RN-03:** Una toma no puede confirmarse más de una vez para el mismo horario programado. *(implementado: `DoseService.changeStatus` sólo permite el cambio de estado si la dosis sigue en `pending`)*
 - **RN-04:** Si una toma no se confirma ni se marca como omitida dentro de una ventana de tiempo determinada (ej. 2 horas después del horario), se marca automáticamente como **omitida**.
 - **RN-06:** Un tratamiento eliminado lógicamente (`deleted_at` distinto de NULL) no genera nuevas notificaciones, pero conserva su historial.
-- **RN-07:** No se pueden configurar horarios de recordatorio duplicados (mismo tratamiento, mismo horario exacto).
-- **RN-08:** El alta de medicamentos y tratamientos la realiza el propio paciente o su tutor/responsable (`role = patient` o `caregiver`); el sistema no contempla intervención directa del médico.
+- **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, misma `date_time`). *(pendiente de validar en el código — el modelo lo permite hoy)*
+- **RN-08:** El alta de medicamentos y tratamientos la realiza el propio paciente o su tutor/responsable (`role = patient` o `caregiver`); el sistema no contempla intervención directa del médico, salvo para agendar/gestionar sus propias citas (RN-09).
+- **RN-09:** Una cita médica (`medical_appointment`) sólo puede ser creada o modificada por el paciente involucrado o por el médico (`doctor_id`) asignado a esa cita.
 
 
 
@@ -129,7 +150,7 @@ seguimiento-de-medicacion/
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| id | UUID / BIGINT | Identificador único |
+| id | UUID | Identificador único |
 | name | VARCHAR | Nombre del usuario |
 | email | VARCHAR | Email (único, usado para login) |
 | password_hash | VARCHAR | Contraseña encriptada |
@@ -145,7 +166,7 @@ Catálogo general de medicamentos, independiente de los usuarios (un mismo medic
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| id | UUID / BIGINT | Identificador único |
+| id | UUID | Identificador único |
 | name | VARCHAR | Nombre del medicamento |
 | administration_form | VARCHAR | Oral, inyectable, tópico, etc. |
 | created_at | TIMESTAMP | Fecha de alta del registro |
@@ -158,27 +179,29 @@ Relación entre un usuario y un medicamento. Acá viven los datos que varían se
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| id | UUID / BIGINT | Identificador único |
+| id | UUID | Identificador único |
 | user_id | FK → user.id | Usuario al que pertenece el tratamiento |
 | medication_id | FK → medication.id | Medicamento asociado |
 | dosage | VARCHAR | Dosis (ej. "500mg", "1 comprimido") |
-| frequency | VARCHAR / ENUM | Diaria, semanal, cada X horas, etc. |
-| start_date | DATE | Inicio del tratamiento |
-| end_date | DATE (nullable) | Fin del tratamiento (si aplica) |
-| active | BOOLEAN | Indica si el tratamiento sigue vigente |
+| frequency | VARCHAR | Diaria, semanal, cada X horas, etc. |
+| start_date | TIMESTAMP | Inicio del tratamiento |
+| end_date | TIMESTAMP (nullable) | Fin del tratamiento (si aplica) |
+| completed | BOOLEAN | Indica si el tratamiento fue completado |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
 
-### Tabla: `reminder_schedule`
+### Tabla: `reminder`
+
+> **Nota de diseño (decisión final):** la propuesta original de este documento era un `reminder_schedule` con hora recurrente (`time`) + días de la semana (`days_of_week`), que generaría múltiples `dose` automáticamente. Se decidió quedarse con el diseño más simple que ya estaba implementado en el código: cada `reminder` es una fecha/hora puntual (`date_time`) asociada a un tratamiento, con su propio mensaje y estado de completado. Para repetir un recordatorio en varios días hay que crear un `reminder` por cada fecha. RF-05, RF-11 y RN-07 (más abajo) ya están redactados para este diseño.
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| id | UUID / BIGINT | Identificador único |
+| id | UUID | Identificador único |
 | treatment_id | FK → treatment.id | Tratamiento asociado |
-| time | TIME | Hora del recordatorio |
-| days_of_week | VARCHAR / ARRAY | Días en que aplica (si no es diario) |
-| active | BOOLEAN | Indica si el horario sigue generando notificaciones |
+| date_time | TIMESTAMP | Fecha y hora en que debe notificarse |
+| message | VARCHAR | Texto del recordatorio |
+| completed | BOOLEAN | Si el paciente ya confirmó la toma asociada |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
@@ -187,8 +210,8 @@ Relación entre un usuario y un medicamento. Acá viven los datos que varían se
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| id | UUID / BIGINT | Identificador único |
-| schedule_id | FK → reminder_schedule.id | Horario que generó la toma |
+| id | UUID | Identificador único |
+| reminder_id | FK → reminder.id | Recordatorio que generó la toma |
 | scheduled_at | TIMESTAMP | Momento en que debía tomarse |
 | confirmed_at | TIMESTAMP (nullable) | Momento real de confirmación |
 | status | ENUM | `pending` / `confirmed` / `skipped` |
@@ -198,13 +221,18 @@ Relación entre un usuario y un medicamento. Acá viven los datos que varían se
 
 ### Tabla: `notification`
 
+> **Nota de diseño:** la propuesta original ataba la notificación a una `dose` puntual (`dose_id`) con un estado de envío (`send_status`). Lo implementado la ata al `user` destinatario y, opcionalmente, al `reminder` que la originó, con su propio mensaje y un flag de lectura (`read`) en vez de estado de envío.
+
 | Campo | Tipo | Descripción |
 |---|---|---|
-| id | UUID / BIGINT | Identificador único |
-| dose_id | FK → dose.id | Toma asociada |
+| id | UUID | Identificador único |
+| user_id | FK → user.id | Usuario destinatario de la notificación |
+| reminder_id | FK → reminder.id (nullable) | Recordatorio que originó la notificación, si aplica |
+| message | VARCHAR | Texto de la notificación |
+| read | BOOLEAN | Si el usuario ya la leyó |
 | sent_at | TIMESTAMP | Momento de envío de la notificación |
-| send_status | ENUM | `sent` / `failed` |
 | created_at | TIMESTAMP | Fecha de alta del registro |
+| updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
 
 ### Tabla: `caregiver_link`
@@ -213,13 +241,43 @@ Vínculo entre un tutor/responsable y los pacientes que gestiona. Un `caregiver`
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| id | UUID / BIGINT | Identificador único |
+| id | UUID | Identificador único |
 | caregiver_id | FK → user.id | Usuario con rol `caregiver` |
 | patient_id | FK → user.id | Usuario con rol `patient` gestionado |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el vínculo está activo |
 
+### Tabla: `medical_appointment` *(nueva — no estaba en el alcance original)*
+
+Cita médica entre un paciente y un médico. Ambos son `user`, diferenciados por `role`.
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| id | UUID | Identificador único |
+| patient_id | FK → user.id | Paciente de la cita |
+| doctor_id | FK → user.id | Médico de la cita |
+| date_time | TIMESTAMP | Fecha y hora de la cita |
+| reason | VARCHAR | Motivo de la cita |
+| status | VARCHAR | Estado de la cita (ej. `pending`, `confirmed`, `cancelled`) |
+| created_at | TIMESTAMP | Fecha de alta del registro |
+| updated_at | TIMESTAMP | Fecha de última modificación del registro |
+| deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
+
+### Tabla: `medical_history` *(nueva — no estaba en el alcance original)*
+
+Historial médico de un paciente (diagnósticos y observaciones a lo largo del tiempo).
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| id | UUID | Identificador único |
+| patient_id | FK → user.id | Paciente al que pertenece el registro |
+| diagnosis | VARCHAR | Diagnóstico principal |
+| notes | TEXT (nullable) | Observaciones adicionales del médico |
+| record_date | TIMESTAMP | Fecha del registro del historial |
+| created_at | TIMESTAMP | Fecha de alta del registro |
+| updated_at | TIMESTAMP | Fecha de última modificación del registro |
+| deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
 
 ---
 
@@ -292,31 +350,35 @@ El motor de base de datos es PostgreSQL, hosteado en [Neon](#tecnologías). El e
 
 ### CU-04: Configurar recordatorio
 
+> Actualizado a la implementación actual (`Reminder` puntual). Ver nota de diseño en el [diccionario de datos](#diccionario-de-datos).
+
 - **Actor:** Usuario autenticado
 - **Precondición:** Existe al menos un tratamiento cargado.
 - **Flujo principal:**
   1. El usuario selecciona un tratamiento existente.
-  2. Selecciona "Agregar horario".
-  3. Define la hora y, si aplica, los días de la semana.
-  4. El sistema valida que no exista un horario duplicado (RN-07).
-  5. El sistema guarda el horario y lo activa.
+  2. Selecciona "Agregar recordatorio".
+  3. Define la fecha, hora y un mensaje para el recordatorio.
+  4. El sistema valida que no exista un recordatorio duplicado para ese tratamiento (RN-07).
+  5. El sistema guarda el recordatorio.
 - **Flujos alternativos:**
-  - **4a.** El horario ya existe para ese tratamiento → el sistema rechaza la creación y muestra un aviso.
-- **Postcondición:** El horario queda activo y comenzará a generar notificaciones.
+  - **4a.** El recordatorio ya existe para ese tratamiento y esa fecha/hora → el sistema rechaza la creación y muestra un aviso.
+- **Postcondición:** El recordatorio queda guardado y comenzará a generar notificaciones.
 
 ---
 
 ### CU-05: Recibir notificación de recordatorio
 
+> Actualizado a la implementación actual (`Notification` sin `send_status`, con flag `read`). Ver nota de diseño en el [diccionario de datos](#diccionario-de-datos).
+
 - **Actor:** Sistema (proceso automático) / Usuario
-- **Precondición:** Existe un horario activo cuya hora programada se cumple.
+- **Precondición:** Existe un `reminder` no completado cuya `date_time` se cumple.
 - **Flujo principal:**
-  1. El backend detecta que corresponde generar una notificación para un horario.
-  2. El backend crea el registro de `dose` en estado `pending`.
-  3. El backend envía la notificación push mediante FCM.
+  1. El backend detecta que corresponde generar una notificación para un `reminder`.
+  2. El backend crea el registro de `dose` en estado `pending`, asociado al `reminder`.
+  3. El backend crea la `notification` para el usuario y envía el push mediante FCM.
   4. El usuario recibe la notificación en su dispositivo.
 - **Flujos alternativos:**
-  - **3a.** Falla el envío de la notificación (token inválido, sin conexión, etc.) → se registra el intento como `failed` en la tabla `notification`.
+  - **3a.** Falla el envío del push (token inválido, sin conexión, etc.) *(pendiente definir cómo se registra el fallo — el modelo actual de `notification` no tiene un campo de estado de envío, solo `read`)*.
 - **Postcondición:** Queda un registro de `dose` pendiente y, de ser exitoso, la notificación llega al usuario.
 
 ---
@@ -364,3 +426,28 @@ El motor de base de datos es PostgreSQL, hosteado en [Neon](#tecnologías). El e
 - **Postcondición:** El tratamiento queda actualizado o inactivo, sin afectar el historial ya generado.
 
 ---
+
+### CU-09: Agendar cita médica
+
+- **Actor:** Usuario autenticado (paciente)
+- **Precondición:** El usuario tiene una cuenta creada.
+- **Flujo principal:**
+  1. El paciente accede a "Agendar cita" y busca un médico (`user` con `role` correspondiente).
+  2. Define fecha, hora y motivo de la cita.
+  3. El sistema crea la `medical_appointment` con estado `pending`.
+- **Flujos alternativos:**
+  - **2a.** Campos obligatorios incompletos → el sistema no permite continuar.
+- **Postcondición:** La cita queda registrada y visible tanto para el paciente como para el médico.
+
+---
+
+### CU-10: Ver historial médico
+
+- **Actor:** Usuario autenticado (paciente)
+- **Precondición:** Existen registros de `medical_history` para el paciente.
+- **Flujo principal:**
+  1. El paciente accede a la sección "Historial médico".
+  2. El sistema lista sus registros (`diagnosis`, `notes`, `record_date`) ordenados por fecha.
+- **Flujos alternativos:**
+  - **1a.** No hay registros → el sistema muestra un estado vacío.
+- **Postcondición:** El paciente visualiza su historial médico completo.
