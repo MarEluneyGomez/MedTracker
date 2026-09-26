@@ -72,7 +72,12 @@ seguimiento-de-medicacion/
 │
 ├── database/
 │   ├── schema.sql              # DDL de tipos y tablas
+│   ├── queries.sql             # DML de ejemplo
 │   └── er-diagram.md           # Diagrama de entidad-relación (Mermaid)
+│
+├── docs/
+│   ├── modulos.md               # Listado de módulos funcionales y prioridad
+│   └── arquitectura.md          # Arquitectura, stack y justificación técnica
 │
 └── README.md
 ```
