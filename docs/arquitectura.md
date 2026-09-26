@@ -15,7 +15,7 @@ flowchart LR
 ```
 
 - **Controller**: expone los endpoints REST y traduce entre DTOs y el dominio.
-- **Service**: contiene la lógica de negocio y las reglas descriptas en el README (RN-01 a RN-08).
+- **Service**: contiene la lógica de negocio y las reglas descriptas en el README (RN-01 a RN-09).
 - **Repository**: acceso a datos vía JPA sobre las entidades del [esquema](../database/schema.sql).
 - **Model**: entidades JPA que mapean 1 a 1 con las tablas del [diccionario de datos](../README.md#diccionario-de-datos).
 
@@ -32,4 +32,4 @@ flowchart LR
 
 ## Alcance de esta entrega
 
-Para esta entrega, `/frontend` y `/backend` contienen únicamente la estructura de carpetas propuesta, sin implementación. El desarrollo del código comienza después de la aprobación del tutor, según lo pedido por la consigna.
+Para esta entrega, `/frontend` y `/backend` contienen únicamente la estructura de carpetas propuesta, sin implementación, según lo pedido por la consigna.

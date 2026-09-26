@@ -12,3 +12,5 @@ Módulos funcionales del sistema, derivados de los [requerimientos funcionales](
 | Registro y seguimiento de tomas | Confirmación u omisión de cada toma programada, con marcado automático de tomas vencidas. | Alta |
 | Historial y adherencia | Visualización del historial de tomas y cálculo de indicadores de adherencia al tratamiento. | Media |
 | Vínculo caregiver-paciente | Gestión de la relación entre un tutor/responsable y los pacientes que administra. | Media |
+| Cita médica | Agendamiento de una cita médica entre un paciente y un médico, con fecha, hora y motivo. | Media |
+| Historial médico | Consulta del historial médico del paciente (diagnósticos y observaciones registradas). | Media |
