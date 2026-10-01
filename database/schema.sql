@@ -13,8 +13,11 @@ CREATE TABLE "user" (
     deleted_at TIMESTAMP
 );
 
+-- Catálogo compartido, de solo lectura para los usuarios y sin dato sensible
+-- ni dueño individual: no hay riesgo de enumeración/IDOR, por eso usa clave
+-- autoincremental en vez de UUID.
 CREATE TABLE medication (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id SERIAL PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
     administration_form VARCHAR(50) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT now(),
@@ -25,7 +28,7 @@ CREATE TABLE medication (
 CREATE TABLE treatment (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES "user"(id),
-    medication_id UUID NOT NULL REFERENCES medication(id),
+    medication_id INTEGER NOT NULL REFERENCES medication(id),
     dosage VARCHAR(100) NOT NULL,
     frequency VARCHAR(100) NOT NULL,
     start_date TIMESTAMP NOT NULL,
@@ -36,20 +39,30 @@ CREATE TABLE treatment (
     deleted_at TIMESTAMP
 );
 
--- Recordatorio puntual (fecha/hora única) asociado a un tratamiento.
--- Repetir un recordatorio en varios días requiere crear un reminder por fecha.
+-- Patron recurrente de recordatorio para un tratamiento: una hora del dia
+-- (y, opcionalmente, dias de la semana puntuales) que se repite mientras el
+-- tratamiento este vigente. Para "4 veces al dia" se crean hasta 4 filas de
+-- reminder (una por horario), NO una fila por cada toma real: las tomas
+-- individuales se modelan en "dose", generadas a partir de este patron
+-- (por un job diario, o al consultar) usando treatment.start_date/end_date
+-- como limites. Asi se evita insertar una fila de reminder por cada toma
+-- (ej. 40 filas para 4 veces al dia durante 10 dias).
 CREATE TABLE reminder (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     treatment_id UUID NOT NULL REFERENCES treatment(id),
-    date_time TIMESTAMP NOT NULL,
+    time TIME NOT NULL,
+    days_of_week VARCHAR(20)[],
     message VARCHAR(255) NOT NULL,
-    completed BOOLEAN NOT NULL DEFAULT false,
+    active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     deleted_at TIMESTAMP,
-    UNIQUE (treatment_id, date_time)
+    UNIQUE (treatment_id, time, days_of_week)
 );
 
+-- Cada fila es UNA toma real, generada a partir de un reminder para una
+-- fecha concreta. Aca si corresponde una fila por toma: es lo que permite
+-- llevar el historial de adherencia (RF-08, RF-09, RN-05).
 CREATE TABLE dose (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     reminder_id UUID NOT NULL REFERENCES reminder(id),
@@ -75,14 +88,16 @@ CREATE TABLE notification (
     deleted_at TIMESTAMP
 );
 
+-- Tabla de vinculo puro entre dos usuarios: no tiene identidad propia mas
+-- alla del par (caregiver_id, patient_id), asi que no lleva un "id"
+-- surrogado aparte -- la clave primaria es la propia relacion.
 CREATE TABLE caregiver_link (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     caregiver_id UUID NOT NULL REFERENCES "user"(id),
     patient_id UUID NOT NULL REFERENCES "user"(id),
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     deleted_at TIMESTAMP,
-    UNIQUE (caregiver_id, patient_id)
+    PRIMARY KEY (caregiver_id, patient_id)
 );
 
 CREATE TABLE medical_appointment (
