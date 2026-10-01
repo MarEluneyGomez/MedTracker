@@ -3,21 +3,9 @@
 Basado en el [diccionario de datos](../README.md#diccionario-de-datos) del README.
 
 ```mermaid
-erDiagram
-    USER ||--o{ TREATMENT : "tiene"
-    USER ||--o{ CAREGIVER_LINK : "caregiver"
-    USER ||--o{ CAREGIVER_LINK : "patient"
-    USER ||--o{ NOTIFICATION : "recibe"
-    USER ||--o{ MEDICAL_APPOINTMENT : "paciente"
-    USER ||--o{ MEDICAL_APPOINTMENT : "medico"
-    USER ||--o{ MEDICAL_HISTORY : "tiene"
-    MEDICATION ||--o{ TREATMENT : "es usado en"
-    TREATMENT ||--o{ REMINDER : "tiene"
-    REMINDER ||--o{ DOSE : "genera"
-    REMINDER ||--o{ NOTIFICATION : "origina"
-
-    USER {
-        UUID id PK
+classDiagram
+    class User {
+        UUID id
         VARCHAR name
         VARCHAR email
         VARCHAR password_hash
@@ -28,8 +16,8 @@ erDiagram
         TIMESTAMP deleted_at
     }
 
-    MEDICATION {
-        UUID id PK
+    class Medication {
+        INT id
         VARCHAR name
         VARCHAR administration_form
         TIMESTAMP created_at
@@ -37,10 +25,8 @@ erDiagram
         TIMESTAMP deleted_at
     }
 
-    TREATMENT {
-        UUID id PK
-        UUID user_id FK
-        UUID medication_id FK
+    class Treatment {
+        UUID id
         VARCHAR dosage
         VARCHAR frequency
         TIMESTAMP start_date
@@ -51,20 +37,19 @@ erDiagram
         TIMESTAMP deleted_at
     }
 
-    REMINDER {
-        UUID id PK
-        UUID treatment_id FK
-        TIMESTAMP date_time
+    class Reminder {
+        UUID id
+        TIME time
+        VARCHAR[] days_of_week
         VARCHAR message
-        BOOLEAN completed
+        BOOLEAN active
         TIMESTAMP created_at
         TIMESTAMP updated_at
         TIMESTAMP deleted_at
     }
 
-    DOSE {
-        UUID id PK
-        UUID reminder_id FK
+    class Dose {
+        UUID id
         TIMESTAMP scheduled_at
         TIMESTAMP confirmed_at
         ENUM status
@@ -73,10 +58,8 @@ erDiagram
         TIMESTAMP deleted_at
     }
 
-    NOTIFICATION {
-        UUID id PK
-        UUID user_id FK
-        UUID reminder_id FK
+    class Notification {
+        UUID id
         VARCHAR message
         BOOLEAN read
         TIMESTAMP sent_at
@@ -85,19 +68,14 @@ erDiagram
         TIMESTAMP deleted_at
     }
 
-    CAREGIVER_LINK {
-        UUID id PK
-        UUID caregiver_id FK
-        UUID patient_id FK
+    class CaregiverLink {
         TIMESTAMP created_at
         TIMESTAMP updated_at
         TIMESTAMP deleted_at
     }
 
-    MEDICAL_APPOINTMENT {
-        UUID id PK
-        UUID patient_id FK
-        UUID doctor_id FK
+    class MedicalAppointment {
+        UUID id
         TIMESTAMP date_time
         VARCHAR reason
         VARCHAR status
@@ -106,9 +84,8 @@ erDiagram
         TIMESTAMP deleted_at
     }
 
-    MEDICAL_HISTORY {
-        UUID id PK
-        UUID patient_id FK
+    class MedicalHistory {
+        UUID id
         VARCHAR diagnosis
         TEXT notes
         TIMESTAMP record_date
@@ -116,4 +93,25 @@ erDiagram
         TIMESTAMP updated_at
         TIMESTAMP deleted_at
     }
+
+    User "1" --> "0..*" Treatment : tiene
+    User "1" --> "0..*" Notification : recibe
+    Medication "1" --> "0..*" Treatment : es usado en
+    Treatment "1" --> "0..*" Reminder : tiene
+    Reminder "1" --> "0..*" Dose : genera
+    Reminder "0..1" --> "0..*" Notification : origina
+
+    User "1" --> "0..*" CaregiverLink : caregiver
+    User "1" --> "0..*" CaregiverLink : patient
+
+    User "1" --> "0..*" MedicalAppointment : paciente
+    User "1" --> "0..*" MedicalAppointment : medico
+    User "1" --> "0..*" MedicalHistory : tiene
 ```
+
+## Notas sobre claves
+
+- `Reminder` **no** es una fila por toma: es el patrón recurrente (hora del día + días de la semana) de un tratamiento. Cada toma real se modela en `Dose`, generada a partir de un `Reminder`. Ver la nota de diseño de `reminder` en el [diccionario de datos](../README.md#diccionario-de-datos).
+- `CaregiverLink` no tiene `id` propio: su clave primaria es el par (`caregiver_id`, `patient_id`), porque es una tabla de vínculo puro entre dos `User` sin identidad propia más allá de esa relación.
+- `Medication` usa `id` autoincremental (`INT`) en vez de `UUID`: es un catálogo compartido, de solo lectura para los usuarios, sin dueño individual ni dato sensible, no hay riesgo de enumeración/IDOR.
+- Las demás clases usan `UUID` como clave surrogada porque representan datos de una persona expuestos individualmente por API, donde un ID secuencial permitiría enumerar/adivinar registros de otros usuarios (riesgo IDOR). Ver el criterio completo, tabla por tabla, en la nota de **Criterio de claves primarias** del [diccionario de datos](../README.md#diccionario-de-datos).
