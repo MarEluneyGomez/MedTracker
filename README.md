@@ -120,8 +120,9 @@ seguimiento-de-medicacion/
 - **RN-02:** Un tratamiento debe tener al menos un horario de recordatorio asociado para estar activo.
 - **RN-03:** Una toma no puede confirmarse más de una vez para el mismo horario programado.
 - **RN-04:** Si una toma no se confirma ni se marca como omitida dentro de una ventana de tiempo determinada (ej. 2 horas después del horario), se marca automáticamente como **omitida**.
+- **RN-05:** El porcentaje de adherencia de un tratamiento se calcula como `(dosis en estado confirmed / dosis totales generadas en el período) × 100`, sobre el período que el usuario seleccione en el historial.
 - **RN-06:** Un tratamiento eliminado lógicamente (`deleted_at` distinto de NULL) no genera nuevas notificaciones, pero conserva su historial.
-- **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, misma `date_time`).
+- **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, mismo `time` y mismos `days_of_week`).
 - **RN-08:** El alta de medicamentos y tratamientos la realiza el propio paciente o su tutor/responsable (`role = patient` o `caregiver`); el sistema no contempla intervención directa del médico, salvo para agendar/gestionar sus propias citas (RN-09).
 - **RN-09:** Una cita médica (`medical_appointment`) solo puede ser creada o modificada por el paciente involucrado o por el médico (`doctor_id`) asignado a esa cita.
 
@@ -132,6 +133,14 @@ seguimiento-de-medicacion/
 ## Diccionario de datos
 
 > Nombres de tablas y campos en inglés (consistente con las convenciones de código del proyecto). Las descripciones se mantienen en español para facilitar la lectura del documento.
+>
+> **Criterio de claves primarias:** usamos tres criterios distintos según la naturaleza de cada tabla.
+>
+> **UUID** para toda entidad que representa datos de una persona y se expone individualmente por API (`user`, `treatment`, `reminder`, `dose`, `notification`, `medical_appointment`, `medical_history`): un ID secuencial permitiría enumerar o adivinar registros de otros usuarios (riesgo de enumeración/IDOR) sobre datos personales/médicos sensibles (RNF-04). Como no depende de una secuencia centralizada de la base, además puede generarse en el cliente antes de sincronizar, compatible con el soporte offline parcial previsto (RNF-05).
+>
+> **Autoincremental** para catálogos compartidos, de solo lectura y sin dueño ni dato sensible. En nuestro caso, el único es `medication`: no hay riesgo de enumeración porque no hay nada que proteger ni que atribuir a un usuario puntual.
+>
+> **Clave compuesta** cuando la tabla es un vínculo puro sin identidad propia. En nuestro caso, `caregiver_link`: el par (`caregiver_id`, `patient_id`) ya identifica la fila de forma única, así que agregar un `id` aparte sería redundante.
 
 ### Tabla: `user`
 
@@ -141,7 +150,7 @@ seguimiento-de-medicacion/
 | name | VARCHAR | Nombre del usuario |
 | email | VARCHAR | Email (único, usado para login) |
 | password_hash | VARCHAR | Contraseña encriptada |
-| role | ENUM | `patient` / `caregiver` / `doctor` (paciente, tutor/responsable, o médico — este último solo relevante para `medical_appointment`) |
+| role | ENUM | `patient` / `caregiver` / `doctor` (paciente, tutor/responsable, o médico; este último solo relevante para `medical_appointment`) |
 | fcm_token | VARCHAR | Token del dispositivo para notificaciones push |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
@@ -151,9 +160,11 @@ seguimiento-de-medicacion/
 
 Catálogo general de medicamentos, independiente de los usuarios (un mismo medicamento puede estar asociado a muchos usuarios distintos).
 
+> **Nota de diseño:** a diferencia del resto de las tablas, usa `id` autoincremental en vez de `UUID`: es un catálogo compartido, de solo lectura para los usuarios, sin dueño individual ni dato sensible, así que no hay riesgo de enumeración/IDOR al exponerlo con un ID secuencial. Ver el criterio completo en **Criterio de claves primarias** más arriba.
+
 | Campo | Tipo | Descripción |
 |---|---|---|
-| id | UUID | Identificador único |
+| id | INTEGER (autoincremental) | Identificador único |
 | name | VARCHAR | Nombre del medicamento |
 | administration_form | VARCHAR | Oral, inyectable, tópico, etc. |
 | created_at | TIMESTAMP | Fecha de alta del registro |
@@ -180,25 +191,28 @@ Relación entre un usuario y un medicamento. Acá viven los datos que varían se
 
 ### Tabla: `reminder`
 
-> **Nota de diseño:** cada `reminder` es una fecha/hora puntual asociada a un tratamiento, con su propio mensaje y estado de completado. Para repetir un recordatorio en varios días hay que crear un `reminder` por cada fecha.
+> **Nota de diseño (corregido tras la devolución del profesor):** `reminder` es el **patrón recurrente** de un recordatorio, asociado a un tratamiento: una hora del día (`time`) y, opcionalmente, qué días de la semana aplica (`days_of_week`; `NULL` = todos los días). **No es una fila por cada toma.** Si un tratamiento indica "cada 8 horas" (`treatment.frequency`), se crean hasta 3 `reminder` (uno por horario del día: 08:00, 16:00, 00:00), no uno por cada toma individual. Las tomas puntuales se modelan en `dose` (ver abajo), que sí es una fila por toma real y se genera a partir de estos `reminder` mientras el tratamiento esté vigente (`treatment.start_date` / `end_date`).
 
 | Campo | Tipo | Descripción |
 |---|---|---|
 | id | UUID | Identificador único |
 | treatment_id | FK → treatment.id | Tratamiento asociado |
-| date_time | TIMESTAMP | Fecha y hora en que debe notificarse |
+| time | TIME | Hora del día en que corresponde la toma |
+| days_of_week | VARCHAR[] (nullable) | Días en que aplica; `NULL` = todos los días |
 | message | VARCHAR | Texto del recordatorio |
-| completed | BOOLEAN | Si el paciente ya confirmó la toma asociada |
+| active | BOOLEAN | Si el recordatorio sigue generando tomas |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
 
 ### Tabla: `dose`
 
+Cada fila es **una toma real**, generada a partir de un `reminder` para una fecha concreta (ej. "el `reminder` de las 08:00 generó la toma del 15/10 a las 08:00"). Acá sí corresponde una fila por toma: es lo que permite llevar el historial de adherencia (RF-08, RF-09, RN-05).
+
 | Campo | Tipo | Descripción |
 |---|---|---|
 | id | UUID | Identificador único |
-| reminder_id | FK → reminder.id | Recordatorio que generó la toma |
+| reminder_id | FK → reminder.id | Recordatorio (patrón recurrente) que generó la toma |
 | scheduled_at | TIMESTAMP | Momento en que debía tomarse |
 | confirmed_at | TIMESTAMP (nullable) | Momento real de confirmación |
 | status | ENUM | `pending` / `confirmed` / `skipped` |
@@ -226,11 +240,12 @@ Relación entre un usuario y un medicamento. Acá viven los datos que varían se
 
 Vínculo entre un tutor/responsable y los pacientes que gestiona. Un `caregiver` puede estar vinculado a uno o varios `patient`.
 
+> **Nota de diseño (corregido tras la devolución del profesor):** esta tabla no tiene identidad propia más allá del par (`caregiver_id`, `patient_id`): es una tabla de vínculo pura entre dos usuarios. Por eso no lleva un `id` surrogado aparte, la clave primaria es la propia combinación de ambas claves foráneas.
+
 | Campo | Tipo | Descripción |
 |---|---|---|
-| id | UUID | Identificador único |
-| caregiver_id | FK → user.id | Usuario con rol `caregiver` |
-| patient_id | FK → user.id | Usuario con rol `patient` gestionado |
+| caregiver_id | FK → user.id (PK compuesta) | Usuario con rol `caregiver` |
+| patient_id | FK → user.id (PK compuesta) | Usuario con rol `patient` gestionado |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el vínculo está activo |
@@ -342,27 +357,26 @@ El motor de base de datos es PostgreSQL, hosteado en [Neon](#tecnologías). El e
 - **Flujo principal:**
   1. El usuario selecciona un tratamiento existente.
   2. Selecciona "Agregar recordatorio".
-  3. Define la fecha, hora y un mensaje para el recordatorio.
-  4. El sistema valida que no exista un recordatorio duplicado para ese tratamiento (RN-07).
-  5. El sistema guarda el recordatorio.
+  3. Define una hora del día, opcionalmente los días de la semana en que aplica (o "todos los días"), y un mensaje.
+  4. El sistema valida que no exista un recordatorio duplicado para ese tratamiento, misma hora y mismos días (RN-07).
+  5. El sistema guarda el `reminder` como patrón recurrente.
 - **Flujos alternativos:**
-  - **4a.** El recordatorio ya existe para ese tratamiento y esa fecha/hora → el sistema rechaza la creación y muestra un aviso.
-- **Postcondición:** El recordatorio queda guardado y comenzará a generar notificaciones.
+  - **4a.** El recordatorio ya existe para ese tratamiento, esa hora y esos días → el sistema rechaza la creación y muestra un aviso.
+- **Postcondición:** El `reminder` queda guardado y, mientras el tratamiento esté vigente, generará una `dose` por cada ocurrencia (ver CU-05).
 
 ---
 
 ### CU-05: Recibir notificación de recordatorio
 
 - **Actor:** Sistema (proceso automático) / Usuario
-- **Precondición:** Existe un `reminder` no completado cuya `date_time` se cumple.
+- **Precondición:** Existe un `reminder` activo cuyo `time` (y `days_of_week`, si aplica) se cumple hoy, dentro del rango vigente del tratamiento.
 - **Flujo principal:**
-  1. El backend detecta que corresponde generar una notificación para un `reminder`.
-  2. El backend crea el registro de `dose` en estado `pending`, asociado al `reminder`.
-  3. El backend crea la `notification` para el usuario y envía el push mediante FCM.
-  4. El usuario recibe la notificación en su dispositivo.
+  1. Un proceso automático (ej. un job diario) recorre los `reminder` activos y, para cada uno que corresponda hoy, genera la `dose` de ese día en estado `pending`.
+  2. Al llegar el horario (`scheduled_at`), el backend crea la `notification` para el usuario y envía el push mediante FCM.
+  3. El usuario recibe la notificación en su dispositivo.
 - **Flujos alternativos:**
-  - **3a.** Falla el envío del push (token inválido, sin conexión, etc.) *(a definir: cómo se registra un fallo de envío)*.
-- **Postcondición:** Queda un registro de `dose` pendiente y, de ser exitoso, la notificación llega al usuario.
+  - **2a.** Falla el envío del push (token inválido, sin conexión, etc.) *(a definir: cómo se registra un fallo de envío)*.
+- **Postcondición:** Queda un registro de `dose` pendiente para ese día y, de ser exitoso el envío, la notificación llega al usuario. *(Nota: las `dose` se generan día a día a partir del patrón del `reminder`, no se insertan todas de una vez al crear el tratamiento.)*
 
 ---
 
