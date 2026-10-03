@@ -17,7 +17,6 @@ import java.util.UUID;
 @Builder
 public class CaregiverLinkDTO {
 
-    private UUID id;
     private UUID caregiverId;
     private UUID patientId;
     private LocalDateTime createdAt;
@@ -25,7 +24,6 @@ public class CaregiverLinkDTO {
 
     // Constructor auxiliar para mapear desde la entidad
     public CaregiverLinkDTO(CaregiverLink link) {
-        this.id = link.getId();
         this.caregiverId = link.getCaregiver().getId();
         this.patientId = link.getPatient().getId();
         this.createdAt = link.getCreatedAt();

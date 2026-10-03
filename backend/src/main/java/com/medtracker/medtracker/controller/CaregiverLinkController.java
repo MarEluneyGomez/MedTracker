@@ -28,10 +28,10 @@ public class CaregiverLinkController {
         return ResponseEntity.ok(new CaregiverLinkDTO(created));
     }
 
-    // Buscar enlace por ID
-    @GetMapping("/{id}")
-    public ResponseEntity<CaregiverLinkDTO> findById(@PathVariable UUID id) {
-        Optional<CaregiverLink> link = caregiverLinkService.findById(id);
+    // Buscar enlace por su clave compuesta (caregiverId + patientId)
+    @GetMapping("/{caregiverId}/{patientId}")
+    public ResponseEntity<CaregiverLinkDTO> findById(@PathVariable UUID caregiverId, @PathVariable UUID patientId) {
+        Optional<CaregiverLink> link = caregiverLinkService.findById(caregiverId, patientId);
         return link.map(l -> ResponseEntity.ok(new CaregiverLinkDTO(l)))
                      .orElse(ResponseEntity.notFound().build());
     }

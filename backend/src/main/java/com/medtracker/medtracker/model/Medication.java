@@ -8,7 +8,6 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 @Entity
 @Table(name = "medication")
@@ -19,9 +18,11 @@ import java.util.UUID;
 @Builder
 public class Medication {
 
+    // Catálogo compartido, sin dueño ni dato sensible: usa autoincremental
+    // (BIGSERIAL) en vez de UUID, a diferencia del resto de las entidades.
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
     // Nombre del medicamento
     @Column(nullable = false)

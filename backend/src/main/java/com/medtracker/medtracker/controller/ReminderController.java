@@ -46,10 +46,10 @@ public class ReminderController {
         return ResponseEntity.ok(list);
     }
 
-    // Marcar recordatorio como completado
-    @PutMapping("/{id}/complete")
-    public ResponseEntity<ReminderDTO> markAsCompleted(@PathVariable UUID id) {
-        Optional<Reminder> updated = reminderService.markAsCompleted(id);
+    // Desactivar recordatorio (deja de generar dosis nuevas)
+    @PutMapping("/{id}/deactivate")
+    public ResponseEntity<ReminderDTO> deactivate(@PathVariable UUID id) {
+        Optional<Reminder> updated = reminderService.deactivate(id);
         return updated.map(r -> ResponseEntity.ok(new ReminderDTO(r)))
                            .orElse(ResponseEntity.notFound().build());
     }

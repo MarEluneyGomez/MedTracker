@@ -7,7 +7,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -21,7 +20,7 @@ public class MedicationService {
     }
 
     // Buscar medicamento por ID
-    public Optional<Medication> findById(UUID id) {
+    public Optional<Medication> findById(Long id) {
         return medicationRepository.findById(id);
     }
 

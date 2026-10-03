@@ -8,6 +8,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.UUID;
 
 @Getter
@@ -19,16 +20,18 @@ public class ReminderDTO {
 
     private UUID id;
     private UUID treatmentId;
-    private LocalDateTime dateTime;
+    private LocalTime time;
+    private String[] daysOfWeek;
     private String message;
-    private boolean completed;
+    private boolean active;
 
     // Constructor auxiliar para mapear desde la entidad
     public ReminderDTO(Reminder reminder) {
         this.id = reminder.getId();
         this.treatmentId = reminder.getTreatment().getId();
-        this.dateTime = reminder.getDateTime();
+        this.time = reminder.getTime();
+        this.daysOfWeek = reminder.getDaysOfWeek();
         this.message = reminder.getMessage();
-        this.completed = reminder.isCompleted();
+        this.active = reminder.isActive();
     }
 }

@@ -30,12 +30,12 @@ public class ReminderService {
         return reminderRepository.findAll();
     }
 
-    // Marcar recordatorio como completado
-    public Optional<Reminder> markAsCompleted(UUID id) {
+    // Desactivar un recordatorio (deja de generar dosis nuevas, pero conserva el historial)
+    public Optional<Reminder> deactivate(UUID id) {
         Optional<Reminder> reminderOpt = reminderRepository.findById(id);
         if (reminderOpt.isPresent()) {
             Reminder reminder = reminderOpt.get();
-            reminder.setCompleted(true);
+            reminder.setActive(false);
             reminderRepository.save(reminder);
             return Optional.of(reminder);
         }

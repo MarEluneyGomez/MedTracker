@@ -8,7 +8,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 @RestController
@@ -30,7 +29,7 @@ public class MedicationController {
 
     // Buscar medicamento por ID
     @GetMapping("/{id}")
-    public ResponseEntity<MedicationDTO> findById(@PathVariable UUID id) {
+    public ResponseEntity<MedicationDTO> findById(@PathVariable Long id) {
         Optional<Medication> medication = medicationService.findById(id);
         return medication.map(m -> ResponseEntity.ok(new MedicationDTO(m)))
                           .orElse(ResponseEntity.notFound().build());

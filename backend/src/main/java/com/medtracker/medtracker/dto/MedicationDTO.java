@@ -8,7 +8,6 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 @Getter
 @Setter
@@ -17,7 +16,7 @@ import java.util.UUID;
 @Builder
 public class MedicationDTO {
 
-    private UUID id;
+    private Long id;
     private String name;
     private String administrationForm;
     private LocalDateTime createdAt;
