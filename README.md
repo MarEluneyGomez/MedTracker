@@ -47,13 +47,18 @@ El sistema permite a un usuario (paciente) registrar los medicamentos que debe t
 
 ```
 seguimiento-de-medicacion/
-├── frontend/                  # App React Native
+├── frontend/                  # App React Native (Expo + TypeScript)
+│   ├── assets/                 # Íconos y splash de la app
 │   ├── src/
 │   │   ├── screens/            # Pantallas
 │   │   ├── components/         # Componentes reutilizables
 │   │   ├── navigation/         # Configuración de navegación
 │   │   ├── services/           # Llamadas a la API
 │   │   └── utils/               # Funciones auxiliares
+│   ├── App.tsx                 # Componente raíz
+│   ├── index.ts                # Punto de entrada
+│   ├── app.json                # Configuración de Expo
+│   ├── tsconfig.json
 │   └── package.json
 │
 ├── backend/                   # API Spring Boot
