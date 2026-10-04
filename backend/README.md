@@ -4,24 +4,38 @@ API REST del sistema de seguimiento de medicación, construida con **Spring Boot
 
 ## Estado actual
 
-Para esta entrega, esta carpeta contiene únicamente la estructura de paquetes propuesta (`controller`, `service`, `repository`, `model`, `dto`), sin implementación, según lo pedido por la consigna de esta entrega. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para el detalle de la arquitectura en capas y la justificación del stack.
+Cada módulo del modelo de datos tiene su capa completa (entidad, repositorio, servicio, controller REST y DTO). El listado de módulos y endpoints está en la sección [Módulos del backend](../README.md#módulos-del-backend) del README principal. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para el detalle de la arquitectura en capas y la justificación del stack.
 
 ## Estructura
 
 ```
 backend/
+├── .mvn/wrapper/                # Configuración del Maven Wrapper
 ├── src/
 │   ├── main/
 │   │   ├── java/com/medtracker/medtracker/
+│   │   │   ├── MedtrackerApplication.java
 │   │   │   ├── controller/   # Endpoints REST
 │   │   │   ├── service/      # Lógica de negocio
 │   │   │   ├── repository/   # Acceso a datos (JPA)
 │   │   │   ├── model/        # Entidades
 │   │   │   └── dto/          # Objetos de transferencia de datos
 │   │   └── resources/
+│   │       └── application.properties
 │   └── test/
+├── mvnw / mvnw.cmd           # Maven Wrapper
 └── pom.xml
 ```
+
+## Ejecución
+
+Requiere Java 21. La conexión a la base se toma de las variables de entorno `DATABASE_URL` (en formato `jdbc:postgresql://...`), `DATABASE_USER` y `DATABASE_PASSWORD`:
+
+```bash
+./mvnw spring-boot:run
+```
+
+Hibernate corre con `ddl-auto=validate`: no crea ni modifica tablas, solo verifica que las entidades coincidan con el esquema ya aplicado.
 
 ## Base de datos
 

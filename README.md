@@ -66,7 +66,7 @@ seguimiento-de-medicacion/
 │   │   │   │   ├── model/       # Entidades
 │   │   │   │   └── dto/         # Objetos de transferencia de datos
 │   │   │   └── resources/
-│   │   │       └── application.yml
+│   │   │       └── application.properties
 │   │   └── test/                # Tests
 │   └── pom.xml
 │
@@ -82,6 +82,22 @@ seguimiento-de-medicacion/
 └── README.md
 ```
 
+### Módulos del backend
+
+Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA repository) → `service` → `controller` (REST) → `dto`.
+
+| Módulo | Descripción | Endpoint REST |
+|---|---|---|
+| `User` | Usuarios (pacientes, tutores y médicos) | `/users` |
+| `Medication` | Catálogo de medicamentos | `/medications` |
+| `Treatment` | Tratamiento (medicamento + dosis + frecuencia por usuario) | `/treatments` |
+| `Reminder` | Patrón recurrente de recordatorio asociado a un tratamiento | `/reminders` |
+| `Dose` | Toma real generada a partir de un recordatorio | `/doses` |
+| `Notification` | Notificación enviada a un usuario | `/notifications` |
+| `CaregiverLink` | Vínculo entre un tutor y sus pacientes | `/caregiver-links` |
+| `MedicalAppointment` | Cita médica entre paciente y médico | `/medical-appointments` |
+| `MedicalHistory` | Historial médico de un paciente | `/medical-histories` |
+
 ---
 
 ### Requerimientos funcionales
@@ -92,8 +108,8 @@ seguimiento-de-medicacion/
 | RF-02 | El sistema debe permitir el inicio de sesión de un usuario registrado. |
 | RF-03 | El sistema debe permitir seleccionar un medicamento del catálogo (o darlo de alta si no existe) con nombre y forma de administración. |
 | RF-04 | El sistema debe permitir crear un tratamiento asociando un medicamento a un usuario, con su dosis y frecuencia particular. |
-| RF-05 | El sistema debe permitir configurar uno o más recordatorios puntuales (fecha y hora) por tratamiento. |
-| RF-06 | El sistema debe enviar notificaciones push en el momento configurado. |
+| RF-05 | El sistema debe permitir configurar uno o más horarios de recordatorio por tratamiento. |
+| RF-06 | El sistema debe enviar notificaciones push en el horario configurado. |
 | RF-07 | El sistema debe permitir al usuario confirmar o marcar como omitida una toma de medicamento. |
 | RF-08 | El sistema debe registrar el historial de tomas (confirmadas, omitidas, pendientes). |
 | RF-09 | El sistema debe mostrar estadísticas o indicadores de adherencia al tratamiento. |
@@ -118,7 +134,7 @@ seguimiento-de-medicacion/
 
 - **RN-01:** Un usuario solo puede ver y gestionar sus propios tratamientos y recordatorios.
 - **RN-02:** Un tratamiento debe tener al menos un horario de recordatorio asociado para estar activo.
-- **RN-03:** Una toma no puede confirmarse más de una vez para el mismo horario programado.
+- **RN-03:** Una toma no puede confirmarse más de una vez para el mismo horario programado. *(implementado: `DoseService.changeStatus` solo permite el cambio de estado si la dosis sigue en `pending`)*
 - **RN-04:** Si una toma no se confirma ni se marca como omitida dentro de una ventana de tiempo determinada (ej. 2 horas después del horario), se marca automáticamente como **omitida**.
 - **RN-05:** El porcentaje de adherencia de un tratamiento se calcula como `(dosis en estado confirmed / dosis totales generadas en el período) × 100`, sobre el período que el usuario seleccione en el historial.
 - **RN-06:** Un tratamiento eliminado lógicamente (`deleted_at` distinto de NULL) no genera nuevas notificaciones, pero conserva su historial.
