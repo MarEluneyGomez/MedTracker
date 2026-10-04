@@ -6,6 +6,8 @@ import lombok.Setter;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -41,15 +43,18 @@ public class Notification {
     @Column(nullable = false)
     private boolean read;
 
-    // Fecha y hora en que se envió la notificación
-    @Column(name = "sent_at", nullable = false)
+    // Fecha y hora en que se envió la notificación; se registra al crearla
+    @CreationTimestamp
+    @Column(name = "sent_at", nullable = false, updatable = false)
     private LocalDateTime sentAt;
 
     // Auditoría
-    @Column(name = "created_at")
+    @CreationTimestamp
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    @Column(name = "updated_at")
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
     @Column(name = "deleted_at")

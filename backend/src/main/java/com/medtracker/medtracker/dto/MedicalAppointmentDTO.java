@@ -31,6 +31,6 @@ public class MedicalAppointmentDTO {
         this.doctorId = appointment.getDoctor().getId();
         this.dateTime = appointment.getDateTime();
         this.reason = appointment.getReason();
-        this.status = appointment.getStatus();
+        this.status = appointment.getStatus().name();
     }
 }

@@ -3,6 +3,7 @@ package com.medtracker.medtracker.controller;
 import com.medtracker.medtracker.dto.ReminderDTO;
 import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.service.ReminderService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,7 +26,7 @@ public class ReminderController {
     @PostMapping("/register")
     public ResponseEntity<ReminderDTO> register(@RequestBody Reminder reminder) {
         Reminder created = reminderService.register(reminder);
-        return ResponseEntity.ok(new ReminderDTO(created));
+        return ResponseEntity.status(HttpStatus.CREATED).body(new ReminderDTO(created));
     }
 
     // Buscar recordatorio por ID

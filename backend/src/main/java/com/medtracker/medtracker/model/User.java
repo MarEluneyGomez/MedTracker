@@ -6,6 +6,10 @@ import lombok.Setter;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -32,16 +36,22 @@ public class User {
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
+    // Mapea al tipo enum nativo "user_role" de Postgres (sus valores
+    // coinciden con los nombres de las constantes de Role)
     @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(nullable = false, columnDefinition = "user_role")
     private Role role;
 
     @Column(name = "fcm_token")
     private String fcmToken;
 
-    @Column(name = "created_at")
+    @CreationTimestamp
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    @Column(name = "updated_at")
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
     @Column(name = "deleted_at")
@@ -49,6 +59,7 @@ public class User {
 
     public enum Role {
         PATIENT,
-        CAREGIVER
+        CAREGIVER,
+        DOCTOR
     }
 }

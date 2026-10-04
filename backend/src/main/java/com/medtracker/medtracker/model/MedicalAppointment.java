@@ -6,6 +6,8 @@ import lombok.Setter;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -41,17 +43,27 @@ public class MedicalAppointment {
     @Column(nullable = false)
     private String reason;
 
-    // Estado de la cita (pending, confirmed, cancelled)
+    // Estado de la cita; toda cita nueva arranca pendiente (CU-09)
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private String status;
+    @Builder.Default
+    private AppointmentStatus status = AppointmentStatus.PENDING;
 
     // Auditoría
-    @Column(name = "created_at")
+    @CreationTimestamp
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    @Column(name = "updated_at")
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
+
+    public enum AppointmentStatus {
+        PENDING,
+        CONFIRMED,
+        CANCELLED
+    }
 }

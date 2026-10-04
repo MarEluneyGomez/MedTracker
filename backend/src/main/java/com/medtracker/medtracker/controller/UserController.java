@@ -3,6 +3,7 @@ package com.medtracker.medtracker.controller;
 import com.medtracker.medtracker.dto.UserDTO;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.service.UserService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,7 +26,7 @@ public class UserController {
     @PostMapping("/register")
     public ResponseEntity<UserDTO> register(@RequestBody User user) {
         User created = userService.register(user);
-        return ResponseEntity.ok(new UserDTO(created));
+        return ResponseEntity.status(HttpStatus.CREATED).body(new UserDTO(created));
     }
 
     // Buscar usuario por ID

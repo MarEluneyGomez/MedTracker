@@ -3,6 +3,7 @@ package com.medtracker.medtracker.controller;
 import com.medtracker.medtracker.dto.CaregiverLinkDTO;
 import com.medtracker.medtracker.model.CaregiverLink;
 import com.medtracker.medtracker.service.CaregiverLinkService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,7 +26,7 @@ public class CaregiverLinkController {
     @PostMapping("/register")
     public ResponseEntity<CaregiverLinkDTO> register(@RequestBody CaregiverLink link) {
         CaregiverLink created = caregiverLinkService.register(link);
-        return ResponseEntity.ok(new CaregiverLinkDTO(created));
+        return ResponseEntity.status(HttpStatus.CREATED).body(new CaregiverLinkDTO(created));
     }
 
     // Buscar enlace por su clave compuesta (caregiverId + patientId)

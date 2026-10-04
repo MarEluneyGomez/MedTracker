@@ -56,9 +56,16 @@ CREATE TABLE reminder (
     active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
-    deleted_at TIMESTAMP,
-    UNIQUE (treatment_id, time, days_of_week)
+    deleted_at TIMESTAMP
 );
+
+-- RN-07: un tratamiento no puede tener dos recordatorios con la misma hora y
+-- los mismos dias. NULLS NOT DISTINCT hace que dos "todos los dias"
+-- (days_of_week NULL) cuenten como duplicados, y el WHERE deja fuera a los
+-- eliminados logicamente para poder volver a crear uno igual.
+CREATE UNIQUE INDEX reminder_treatment_time_days_key
+    ON reminder (treatment_id, time, days_of_week) NULLS NOT DISTINCT
+    WHERE deleted_at IS NULL;
 
 -- Cada fila es UNA toma real, generada a partir de un reminder para una
 -- fecha concreta. Aca si corresponde una fila por toma: es lo que permite
@@ -106,7 +113,7 @@ CREATE TABLE medical_appointment (
     doctor_id UUID NOT NULL REFERENCES "user"(id),
     date_time TIMESTAMP NOT NULL,
     reason VARCHAR(255) NOT NULL,
-    status VARCHAR(50) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED')),
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     deleted_at TIMESTAMP

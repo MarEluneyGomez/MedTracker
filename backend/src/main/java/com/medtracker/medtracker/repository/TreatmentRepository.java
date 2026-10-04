@@ -12,7 +12,7 @@ public interface TreatmentRepository extends JpaRepository<Treatment, UUID> {
     List<Treatment> findByUserId(UUID userId);
 
     // Buscar tratamientos por medicamento
-    List<Treatment> findByMedicationId(UUID medicationId);
+    List<Treatment> findByMedicationId(Integer medicationId);
 
     // Buscar tratamientos completados
     List<Treatment> findByCompleted(boolean completed);

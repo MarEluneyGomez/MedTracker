@@ -3,6 +3,7 @@ package com.medtracker.medtracker.controller;
 import com.medtracker.medtracker.dto.MedicalAppointmentDTO;
 import com.medtracker.medtracker.model.MedicalAppointment;
 import com.medtracker.medtracker.service.MedicalAppointmentService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,7 +26,7 @@ public class MedicalAppointmentController {
     @PostMapping("/register")
     public ResponseEntity<MedicalAppointmentDTO> register(@RequestBody MedicalAppointment appointment) {
         MedicalAppointment created = medicalAppointmentService.register(appointment);
-        return ResponseEntity.ok(new MedicalAppointmentDTO(created));
+        return ResponseEntity.status(HttpStatus.CREATED).body(new MedicalAppointmentDTO(created));
     }
 
     // Buscar cita por ID
@@ -66,9 +67,10 @@ public class MedicalAppointmentController {
         return ResponseEntity.ok(list);
     }
 
-    // Cambiar estado de la cita (ej: pending → confirmed)
+    // Cambiar estado de la cita (PENDING, CONFIRMED o CANCELLED)
     @PutMapping("/{id}/status")
-    public ResponseEntity<MedicalAppointmentDTO> changeStatus(@PathVariable UUID id, @RequestParam String status) {
+    public ResponseEntity<MedicalAppointmentDTO> changeStatus(@PathVariable UUID id,
+                                                              @RequestParam MedicalAppointment.AppointmentStatus status) {
         Optional<MedicalAppointment> updated = medicalAppointmentService.changeStatus(id, status);
         return updated.map(a -> ResponseEntity.ok(new MedicalAppointmentDTO(a)))
                           .orElse(ResponseEntity.notFound().build());

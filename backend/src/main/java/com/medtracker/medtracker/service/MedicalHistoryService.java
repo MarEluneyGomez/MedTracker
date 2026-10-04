@@ -1,6 +1,7 @@
 package com.medtracker.medtracker.service;
 
 import com.medtracker.medtracker.model.MedicalHistory;
+import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.MedicalHistoryRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -14,9 +15,11 @@ import java.util.UUID;
 public class MedicalHistoryService {
 
     private final MedicalHistoryRepository medicalHistoryRepository;
+    private final UserService userService;
 
-    // Registrar un nuevo historial médico
+    // Registrar un nuevo historial médico; pertenece siempre a un paciente
     public MedicalHistory register(MedicalHistory history) {
+        history.setPatient(userService.getWithRole(history.getPatient(), User.Role.PATIENT));
         return medicalHistoryRepository.save(history);
     }
 

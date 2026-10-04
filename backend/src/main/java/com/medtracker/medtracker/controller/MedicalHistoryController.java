@@ -3,6 +3,7 @@ package com.medtracker.medtracker.controller;
 import com.medtracker.medtracker.dto.MedicalHistoryDTO;
 import com.medtracker.medtracker.model.MedicalHistory;
 import com.medtracker.medtracker.service.MedicalHistoryService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,7 +26,7 @@ public class MedicalHistoryController {
     @PostMapping("/register")
     public ResponseEntity<MedicalHistoryDTO> register(@RequestBody MedicalHistory history) {
         MedicalHistory created = medicalHistoryService.register(history);
-        return ResponseEntity.ok(new MedicalHistoryDTO(created));
+        return ResponseEntity.status(HttpStatus.CREATED).body(new MedicalHistoryDTO(created));
     }
 
     // Buscar historial por ID

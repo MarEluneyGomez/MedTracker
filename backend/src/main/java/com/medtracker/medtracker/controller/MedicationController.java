@@ -3,6 +3,7 @@ package com.medtracker.medtracker.controller;
 import com.medtracker.medtracker.dto.MedicationDTO;
 import com.medtracker.medtracker.model.Medication;
 import com.medtracker.medtracker.service.MedicationService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -24,7 +25,7 @@ public class MedicationController {
     @PostMapping("/register")
     public ResponseEntity<MedicationDTO> register(@RequestBody Medication medication) {
         Medication created = medicationService.register(medication);
-        return ResponseEntity.ok(new MedicationDTO(created));
+        return ResponseEntity.status(HttpStatus.CREATED).body(new MedicationDTO(created));
     }
 
     // Buscar medicamento por ID

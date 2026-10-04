@@ -6,6 +6,10 @@ import lombok.Setter;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -36,16 +40,21 @@ public class Dose {
     @Column(name = "confirmed_at")
     private LocalDateTime confirmedAt;
 
-    // Estado de la dosis: pending, confirmed, skipped
+    // Estado de la dosis; mapea al tipo enum nativo "dose_status" de Postgres.
+    // Toda toma nueva arranca pendiente.
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private DoseStatus status;
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(nullable = false, columnDefinition = "dose_status")
+    @Builder.Default
+    private DoseStatus status = DoseStatus.PENDING;
 
     // Auditoría
-    @Column(name = "created_at")
+    @CreationTimestamp
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    @Column(name = "updated_at")
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
     @Column(name = "deleted_at")

@@ -64,7 +64,8 @@ seguimiento-de-medicacion/
 │   │   │   │   ├── service/     # Lógica de negocio
 │   │   │   │   ├── repository/  # Acceso a datos (JPA)
 │   │   │   │   ├── model/       # Entidades
-│   │   │   │   └── dto/         # Objetos de transferencia de datos
+│   │   │   │   ├── dto/         # Objetos de transferencia de datos
+│   │   │   │   └── config/      # Configuración (seguridad, hash de contraseñas)
 │   │   │   └── resources/
 │   │   │       └── application.properties
 │   │   └── test/                # Tests
@@ -84,7 +85,9 @@ seguimiento-de-medicacion/
 
 ### Módulos del backend
 
-Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA repository) → `service` → `controller` (REST) → `dto`.
+Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA repository) → `service` → `controller` (REST) → `dto`. Los errores de negocio se responden con 400 (datos inválidos o rol incorrecto), 404 (recurso inexistente) o 409 (duplicados o estados que no admiten el cambio).
+
+> **Autenticación pendiente:** hasta implementar el login con JWT (CU-02), todos los endpoints quedan abiertos (`SecurityConfig`).
 
 | Módulo | Descripción | Endpoint REST |
 |---|---|---|
@@ -138,7 +141,7 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 - **RN-04:** Si una toma no se confirma ni se marca como omitida dentro de una ventana de tiempo determinada (ej. 2 horas después del horario), se marca automáticamente como **omitida**.
 - **RN-05:** El porcentaje de adherencia de un tratamiento se calcula como `(dosis en estado confirmed / dosis totales generadas en el período) × 100`, sobre el período que el usuario seleccione en el historial.
 - **RN-06:** Un tratamiento eliminado lógicamente (`deleted_at` distinto de NULL) no genera nuevas notificaciones, pero conserva su historial.
-- **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, mismo `time` y mismos `days_of_week`).
+- **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, mismo `time` y mismos `days_of_week`). Dos recordatorios "todos los días" (`days_of_week` NULL) a la misma hora también cuentan como duplicados, y los recordatorios eliminados lógicamente no se consideran. *(implementado en `ReminderService` y reforzado en la base con un índice único parcial)*
 - **RN-08:** El alta de medicamentos y tratamientos la realiza el propio paciente o su tutor/responsable (`role = PATIENT` o `CAREGIVER`); el sistema no contempla intervención directa del médico, salvo para agendar/gestionar sus propias citas (RN-09).
 - **RN-09:** Una cita médica (`medical_appointment`) solo puede ser creada o modificada por el paciente involucrado o por el médico (`doctor_id`) asignado a esa cita.
 
@@ -277,7 +280,7 @@ Vínculo entre un tutor/responsable y los pacientes que gestiona. Un usuario `CA
 | doctor_id | FK → user.id | Médico de la cita |
 | date_time | TIMESTAMP | Fecha y hora de la cita |
 | reason | VARCHAR | Motivo de la cita |
-| status | VARCHAR | Estado de la cita (ej. `pending`, `confirmed`, `cancelled`) |
+| status | VARCHAR | Estado de la cita: `PENDING` / `CONFIRMED` / `CANCELLED` (restringido con `CHECK`) |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
@@ -447,7 +450,7 @@ El motor de base de datos es PostgreSQL, hosteado en [Neon](#tecnologías). El e
 - **Flujo principal:**
   1. El paciente accede a "Agendar cita" y busca un médico (`user` con `role` correspondiente).
   2. Define fecha, hora y motivo de la cita.
-  3. El sistema crea la `medical_appointment` con estado `pending`.
+  3. El sistema crea la `medical_appointment` con estado `PENDING`.
 - **Flujos alternativos:**
   - **2a.** Campos obligatorios incompletos → el sistema no permite continuar.
 - **Postcondición:** La cita queda registrada y visible tanto para el paciente como para el médico.

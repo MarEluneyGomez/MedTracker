@@ -3,6 +3,7 @@ package com.medtracker.medtracker.controller;
 import com.medtracker.medtracker.dto.TreatmentDTO;
 import com.medtracker.medtracker.model.Treatment;
 import com.medtracker.medtracker.service.TreatmentService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,7 +26,7 @@ public class TreatmentController {
     @PostMapping("/register")
     public ResponseEntity<TreatmentDTO> register(@RequestBody Treatment treatment) {
         Treatment created = treatmentService.register(treatment);
-        return ResponseEntity.ok(new TreatmentDTO(created));
+        return ResponseEntity.status(HttpStatus.CREATED).body(new TreatmentDTO(created));
     }
 
     // Buscar tratamiento por ID

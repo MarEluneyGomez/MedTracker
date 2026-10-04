@@ -19,7 +19,8 @@ backend/
 │   │   │   ├── service/      # Lógica de negocio
 │   │   │   ├── repository/   # Acceso a datos (JPA)
 │   │   │   ├── model/        # Entidades
-│   │   │   └── dto/          # Objetos de transferencia de datos
+│   │   │   ├── dto/          # Objetos de transferencia de datos
+│   │   │   └── config/       # Configuración (seguridad, hash de contraseñas)
 │   │   └── resources/
 │   │       └── application.properties
 │   └── test/
@@ -36,6 +37,8 @@ Requiere Java 21. La conexión a la base se toma de las variables de entorno `DA
 ```
 
 Hibernate corre con `ddl-auto=validate`: no crea ni modifica tablas, solo verifica que las entidades coincidan con el esquema ya aplicado.
+
+El test `MedtrackerApplicationTests` levanta el contexto completo contra la base, así que solo corre si `DATABASE_URL` está definida.
 
 ## Base de datos
 

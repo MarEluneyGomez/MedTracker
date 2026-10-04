@@ -36,7 +36,7 @@ INSERT INTO caregiver_link (caregiver_id, patient_id) VALUES
     ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111');
 
 INSERT INTO medical_appointment (id, patient_id, doctor_id, date_time, reason, status) VALUES
-    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', '99999999-9999-9999-9999-999999999999', now() + interval '3 days', 'Control de rutina', 'pending');
+    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', '99999999-9999-9999-9999-999999999999', now() + interval '3 days', 'Control de rutina', 'PENDING');
 
 INSERT INTO medical_history (id, patient_id, diagnosis, notes, record_date) VALUES
     ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '11111111-1111-1111-1111-111111111111', 'Hipertensión leve', 'Controlar presión mensualmente', now());

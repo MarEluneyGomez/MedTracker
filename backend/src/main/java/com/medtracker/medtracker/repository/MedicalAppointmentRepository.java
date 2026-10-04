@@ -14,6 +14,6 @@ public interface MedicalAppointmentRepository extends JpaRepository<MedicalAppoi
     // Buscar citas por médico
     List<MedicalAppointment> findByDoctorId(UUID doctorId);
 
-    // Buscar citas por estado (pending, confirmed, cancelled)
-    List<MedicalAppointment> findByStatus(String status);
+    // Buscar citas por estado
+    List<MedicalAppointment> findByStatus(MedicalAppointment.AppointmentStatus status);
 }

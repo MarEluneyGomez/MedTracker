@@ -3,6 +3,7 @@ package com.medtracker.medtracker.controller;
 import com.medtracker.medtracker.dto.NotificationDTO;
 import com.medtracker.medtracker.model.Notification;
 import com.medtracker.medtracker.service.NotificationService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,7 +26,7 @@ public class NotificationController {
     @PostMapping("/register")
     public ResponseEntity<NotificationDTO> register(@RequestBody Notification notification) {
         Notification created = notificationService.register(notification);
-        return ResponseEntity.ok(new NotificationDTO(created));
+        return ResponseEntity.status(HttpStatus.CREATED).body(new NotificationDTO(created));
     }
 
     // Buscar notificación por ID

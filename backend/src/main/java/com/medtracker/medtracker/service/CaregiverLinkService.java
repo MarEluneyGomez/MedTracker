@@ -2,6 +2,7 @@ package com.medtracker.medtracker.service;
 
 import com.medtracker.medtracker.model.CaregiverLink;
 import com.medtracker.medtracker.model.CaregiverLinkId;
+import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.CaregiverLinkRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -15,11 +16,17 @@ import java.util.UUID;
 public class CaregiverLinkService {
 
     private final CaregiverLinkRepository caregiverLinkRepository;
+    private final UserService userService;
 
-    // Registrar un nuevo enlace caregiver-paciente. No hace falta setear
-    // link.setId(...): con @MapsId, Hibernate arma la clave compuesta a
-    // partir de los id de "caregiver" y "patient" al guardar.
+    // Registrar un nuevo enlace caregiver-paciente. La clave compuesta se
+    // arma explícitamente: @MapsId copia los ids de caregiver y patient
+    // dentro de ella, pero necesita que la instancia exista.
     public CaregiverLink register(CaregiverLink link) {
+        User caregiver = userService.getWithRole(link.getCaregiver(), User.Role.CAREGIVER);
+        User patient = userService.getWithRole(link.getPatient(), User.Role.PATIENT);
+        link.setCaregiver(caregiver);
+        link.setPatient(patient);
+        link.setId(new CaregiverLinkId(caregiver.getId(), patient.getId()));
         return caregiverLinkRepository.save(link);
     }
 
