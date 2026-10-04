@@ -19,7 +19,7 @@ public class TreatmentDTO {
 
     private UUID id;
     private UUID userId;
-    private Long medicationId;
+    private Integer medicationId;
     private String dosage;
     private String frequency;
     private LocalDateTime startDate;

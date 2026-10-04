@@ -20,7 +20,7 @@ public class MedicationService {
     }
 
     // Buscar medicamento por ID
-    public Optional<Medication> findById(Long id) {
+    public Optional<Medication> findById(Integer id) {
         return medicationRepository.findById(id);
     }
 

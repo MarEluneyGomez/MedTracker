@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
 @Builder
 public class MedicationDTO {
 
-    private Long id;
+    private Integer id;
     private String name;
     private String administrationForm;
     private LocalDateTime createdAt;

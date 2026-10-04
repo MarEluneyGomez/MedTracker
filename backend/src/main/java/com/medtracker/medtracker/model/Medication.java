@@ -19,10 +19,10 @@ import java.time.LocalDateTime;
 public class Medication {
 
     // Catálogo compartido, sin dueño ni dato sensible: usa autoincremental
-    // (BIGSERIAL) en vez de UUID, a diferencia del resto de las entidades.
+    // (SERIAL) en vez de UUID, a diferencia del resto de las entidades.
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    private Integer id;
 
     // Nombre del medicamento
     @Column(nullable = false)
