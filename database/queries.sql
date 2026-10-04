@@ -1,9 +1,9 @@
 -- Datos de ejemplo (DML) para desarrollo y pruebas sobre el esquema de schema.sql
 
 INSERT INTO "user" (id, name, email, password_hash, role, fcm_token) VALUES
-    ('11111111-1111-1111-1111-111111111111', 'Ana Pérez', 'ana@example.com', '$2a$10$examplehash', 'patient', 'fcm-token-ana'),
-    ('22222222-2222-2222-2222-222222222222', 'Carlos Gómez', 'carlos@example.com', '$2a$10$examplehash', 'caregiver', 'fcm-token-carlos'),
-    ('99999999-9999-9999-9999-999999999999', 'Dra. Laura Ríos', 'laura.rios@example.com', '$2a$10$examplehash', 'doctor', NULL);
+    ('11111111-1111-1111-1111-111111111111', 'Ana Pérez', 'ana@example.com', '$2a$10$examplehash', 'PATIENT', 'fcm-token-ana'),
+    ('22222222-2222-2222-2222-222222222222', 'Carlos Gómez', 'carlos@example.com', '$2a$10$examplehash', 'CAREGIVER', 'fcm-token-carlos'),
+    ('99999999-9999-9999-9999-999999999999', 'Dra. Laura Ríos', 'laura.rios@example.com', '$2a$10$examplehash', 'DOCTOR', NULL);
 
 INSERT INTO medication (id, name, administration_form) VALUES
     (1, 'Paracetamol', 'oral');
@@ -25,9 +25,9 @@ INSERT INTO reminder (id, treatment_id, time, days_of_week, message, active) VAL
 -- los ~30 días de tratamiento (10 días × 3 tomas = 30 dose en total) las
 -- genera el backend, no se insertan todas a mano.
 INSERT INTO dose (id, reminder_id, scheduled_at, status) VALUES
-    ('66666666-6666-6666-6666-666666666661', '55555555-5555-5555-5555-555555555551', date_trunc('day', now()) + interval '8 hours', 'pending'),
-    ('66666666-6666-6666-6666-666666666662', '55555555-5555-5555-5555-555555555552', date_trunc('day', now()) + interval '16 hours', 'pending'),
-    ('66666666-6666-6666-6666-666666666663', '55555555-5555-5555-5555-555555555553', date_trunc('day', now()) + interval '24 hours', 'pending');
+    ('66666666-6666-6666-6666-666666666661', '55555555-5555-5555-5555-555555555551', date_trunc('day', now()) + interval '8 hours', 'PENDING'),
+    ('66666666-6666-6666-6666-666666666662', '55555555-5555-5555-5555-555555555552', date_trunc('day', now()) + interval '16 hours', 'PENDING'),
+    ('66666666-6666-6666-6666-666666666663', '55555555-5555-5555-5555-555555555553', date_trunc('day', now()) + interval '24 hours', 'PENDING');
 
 INSERT INTO notification (id, user_id, reminder_id, message, read) VALUES
     ('77777777-7777-7777-7777-777777777777', '11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555551', 'Es hora de tomar Paracetamol 500mg', false);

@@ -134,12 +134,12 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 
 - **RN-01:** Un usuario solo puede ver y gestionar sus propios tratamientos y recordatorios.
 - **RN-02:** Un tratamiento debe tener al menos un horario de recordatorio asociado para estar activo.
-- **RN-03:** Una toma no puede confirmarse más de una vez para el mismo horario programado. *(implementado: `DoseService.changeStatus` solo permite el cambio de estado si la dosis sigue en `pending`)*
+- **RN-03:** Una toma no puede confirmarse más de una vez para el mismo horario programado. *(implementado: `DoseService.changeStatus` solo permite el cambio de estado si la dosis sigue en `PENDING`)*
 - **RN-04:** Si una toma no se confirma ni se marca como omitida dentro de una ventana de tiempo determinada (ej. 2 horas después del horario), se marca automáticamente como **omitida**.
 - **RN-05:** El porcentaje de adherencia de un tratamiento se calcula como `(dosis en estado confirmed / dosis totales generadas en el período) × 100`, sobre el período que el usuario seleccione en el historial.
 - **RN-06:** Un tratamiento eliminado lógicamente (`deleted_at` distinto de NULL) no genera nuevas notificaciones, pero conserva su historial.
 - **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, mismo `time` y mismos `days_of_week`).
-- **RN-08:** El alta de medicamentos y tratamientos la realiza el propio paciente o su tutor/responsable (`role = patient` o `caregiver`); el sistema no contempla intervención directa del médico, salvo para agendar/gestionar sus propias citas (RN-09).
+- **RN-08:** El alta de medicamentos y tratamientos la realiza el propio paciente o su tutor/responsable (`role = PATIENT` o `CAREGIVER`); el sistema no contempla intervención directa del médico, salvo para agendar/gestionar sus propias citas (RN-09).
 - **RN-09:** Una cita médica (`medical_appointment`) solo puede ser creada o modificada por el paciente involucrado o por el médico (`doctor_id`) asignado a esa cita.
 
 
@@ -166,7 +166,7 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 | name | VARCHAR | Nombre del usuario |
 | email | VARCHAR | Email (único, usado para login) |
 | password_hash | VARCHAR | Contraseña encriptada |
-| role | ENUM | `patient` / `caregiver` / `doctor` (paciente, tutor/responsable, o médico; este último solo relevante para `medical_appointment`) |
+| role | ENUM | `PATIENT` / `CAREGIVER` / `DOCTOR` (paciente, tutor/responsable, o médico; este último solo relevante para `medical_appointment`) |
 | fcm_token | VARCHAR | Token del dispositivo para notificaciones push |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
@@ -231,7 +231,7 @@ Cada fila es **una toma real**, generada a partir de un `reminder` para una fech
 | reminder_id | FK → reminder.id | Recordatorio (patrón recurrente) que generó la toma |
 | scheduled_at | TIMESTAMP | Momento en que debía tomarse |
 | confirmed_at | TIMESTAMP (nullable) | Momento real de confirmación |
-| status | ENUM | `pending` / `confirmed` / `skipped` |
+| status | ENUM | `PENDING` / `CONFIRMED` / `SKIPPED` |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
@@ -254,14 +254,14 @@ Cada fila es **una toma real**, generada a partir de un `reminder` para una fech
 
 ### Tabla: `caregiver_link`
 
-Vínculo entre un tutor/responsable y los pacientes que gestiona. Un `caregiver` puede estar vinculado a uno o varios `patient`.
+Vínculo entre un tutor/responsable y los pacientes que gestiona. Un usuario `CAREGIVER` puede estar vinculado a uno o varios usuarios `PATIENT`.
 
 > **Nota de diseño (corregido tras la devolución del profesor):** esta tabla no tiene identidad propia más allá del par (`caregiver_id`, `patient_id`): es una tabla de vínculo pura entre dos usuarios. Por eso no lleva un `id` surrogado aparte, la clave primaria es la propia combinación de ambas claves foráneas.
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| caregiver_id | FK → user.id (PK compuesta) | Usuario con rol `caregiver` |
-| patient_id | FK → user.id (PK compuesta) | Usuario con rol `patient` gestionado |
+| caregiver_id | FK → user.id (PK compuesta) | Usuario con rol `CAREGIVER` |
+| patient_id | FK → user.id (PK compuesta) | Usuario con rol `PATIENT` gestionado |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el vínculo está activo |
@@ -387,7 +387,7 @@ El motor de base de datos es PostgreSQL, hosteado en [Neon](#tecnologías). El e
 - **Actor:** Sistema (proceso automático) / Usuario
 - **Precondición:** Existe un `reminder` activo cuyo `time` (y `days_of_week`, si aplica) se cumple hoy, dentro del rango vigente del tratamiento.
 - **Flujo principal:**
-  1. Un proceso automático (ej. un job diario) recorre los `reminder` activos y, para cada uno que corresponda hoy, genera la `dose` de ese día en estado `pending`.
+  1. Un proceso automático (ej. un job diario) recorre los `reminder` activos y, para cada uno que corresponda hoy, genera la `dose` de ese día en estado `PENDING`.
   2. Al llegar el horario (`scheduled_at`), el backend crea la `notification` para el usuario y envía el push mediante FCM.
   3. El usuario recibe la notificación en su dispositivo.
 - **Flujos alternativos:**
@@ -399,15 +399,15 @@ El motor de base de datos es PostgreSQL, hosteado en [Neon](#tecnologías). El e
 ### CU-06: Confirmar toma de medicamento
 
 - **Actor:** Usuario autenticado
-- **Precondición:** Existe una `dose` en estado `pending`.
+- **Precondición:** Existe una `dose` en estado `PENDING`.
 - **Flujo principal:**
   1. El usuario abre la notificación o accede desde la app a "Tomas pendientes".
   2. Selecciona la toma correspondiente y confirma que la realizó.
-  3. El sistema actualiza el estado a `confirmed` y registra la fecha/hora real.
+  3. El sistema actualiza el estado a `CONFIRMED` y registra la fecha/hora real.
 - **Flujos alternativos:**
-  - **2a.** El usuario marca la toma como omitida en lugar de confirmarla → el estado pasa a `skipped`.
-  - **2b.** El usuario no realiza ninguna acción dentro de la ventana de tiempo definida → el sistema marca automáticamente la toma como `skipped` (RN-04).
-- **Postcondición:** La toma queda con un estado definitivo (`confirmed` o `skipped`) y pasa a formar parte del historial.
+  - **2a.** El usuario marca la toma como omitida en lugar de confirmarla → el estado pasa a `SKIPPED`.
+  - **2b.** El usuario no realiza ninguna acción dentro de la ventana de tiempo definida → el sistema marca automáticamente la toma como `SKIPPED` (RN-04).
+- **Postcondición:** La toma queda con un estado definitivo (`CONFIRMED` o `SKIPPED`) y pasa a formar parte del historial.
 
 ---
 

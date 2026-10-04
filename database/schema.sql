@@ -1,5 +1,5 @@
-CREATE TYPE user_role AS ENUM ('patient', 'caregiver', 'doctor');
-CREATE TYPE dose_status AS ENUM ('pending', 'confirmed', 'skipped');
+CREATE TYPE user_role AS ENUM ('PATIENT', 'CAREGIVER', 'DOCTOR');
+CREATE TYPE dose_status AS ENUM ('PENDING', 'CONFIRMED', 'SKIPPED');
 
 CREATE TABLE "user" (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -68,7 +68,7 @@ CREATE TABLE dose (
     reminder_id UUID NOT NULL REFERENCES reminder(id),
     scheduled_at TIMESTAMP NOT NULL,
     confirmed_at TIMESTAMP,
-    status dose_status NOT NULL DEFAULT 'pending',
+    status dose_status NOT NULL DEFAULT 'PENDING',
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     deleted_at TIMESTAMP
