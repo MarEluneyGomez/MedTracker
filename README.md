@@ -52,12 +52,16 @@ seguimiento-de-medicacion/
 │   ├── src/
 │   │   ├── screens/            # Pantallas
 │   │   ├── components/         # Componentes reutilizables
-│   │   ├── navigation/         # Configuración de navegación
-│   │   ├── services/           # Llamadas a la API
+│   │   ├── navigation/         # Navegación según la sesión y el rol
+│   │   ├── context/            # Estado compartido (sesión del usuario)
+│   │   ├── services/           # Llamadas a la API y datos de prueba
+│   │   ├── types/              # Tipos de los datos que devuelve el backend
+│   │   ├── theme/              # Paleta de colores y estilos compartidos
 │   │   └── utils/               # Funciones auxiliares
 │   ├── App.tsx                 # Componente raíz
 │   ├── index.ts                # Punto de entrada
 │   ├── app.json                # Configuración de Expo
+│   ├── .prettierrc             # Reglas de formato del código
 │   ├── tsconfig.json
 │   └── package.json
 │
@@ -84,6 +88,9 @@ seguimiento-de-medicacion/
 ├── docs/
 │   ├── modulos.md               # Listado de módulos funcionales y prioridad
 │   └── arquitectura.md          # Arquitectura, stack y justificación técnica
+│
+├── .vscode/
+│   └── settings.json           # Formateo automático al guardar (Prettier)
 │
 └── README.md
 ```
