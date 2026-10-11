@@ -73,7 +73,8 @@ seguimiento-de-medicacion/
 ├── database/
 │   ├── schema.sql              # DDL de tipos y tablas
 │   ├── queries.sql             # DML de ejemplo
-│   └── er-diagram.md           # Diagrama de entidad-relación (Mermaid)
+│   ├── er-diagram.svg          # Diagrama de entidad-relación (exportado)
+│   └── er-diagram.md           # Diagrama de entidad-relación (embebe el SVG)
 │
 ├── docs/
 │   ├── modulos.md               # Listado de módulos funcionales y prioridad
