@@ -17,4 +17,9 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     // Buscar usuarios por rol
     List<User> findByRole(User.Role role);
+
+    // Usuarios vigentes (sin borrado lógico), con o sin filtro de rol
+    List<User> findByDeletedAtIsNull();
+
+    List<User> findByRoleAndDeletedAtIsNull(User.Role role);
 }

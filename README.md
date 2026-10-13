@@ -87,10 +87,11 @@ seguimiento-de-medicacion/
 
 Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA repository) → `service` → `controller` (REST) → `dto`. Los errores de negocio se responden con 400 (datos inválidos o rol incorrecto), 404 (recurso inexistente) o 409 (duplicados o estados que no admiten el cambio).
 
-> **Autenticación pendiente:** hasta implementar el login con JWT (CU-02), todos los endpoints quedan abiertos (`SecurityConfig`).
+> **Autenticación pendiente:** `POST /auth/login` ya valida las credenciales (CU-02), pero todavía no emite token de sesión: hasta implementar JWT, todos los endpoints quedan abiertos (`SecurityConfig`). Para frenar fuerza bruta, tras 5 intentos fallidos el login se bloquea 15 minutos (por email y por IP) y responde 429.
 
 | Módulo | Descripción | Endpoint REST |
 |---|---|---|
+| `Auth` | Inicio de sesión (CU-02) | `/auth` |
 | `User` | Usuarios (pacientes, tutores y médicos) | `/users` |
 | `Medication` | Catálogo de medicamentos | `/medications` |
 | `Treatment` | Tratamiento (medicamento + dosis + frecuencia por usuario) | `/treatments` |
@@ -100,6 +101,30 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 | `CaregiverLink` | Vínculo entre un tutor y sus pacientes | `/caregiver-links` |
 | `MedicalAppointment` | Cita médica entre paciente y médico | `/medical-appointments` |
 | `MedicalHistory` | Historial médico de un paciente | `/medical-histories` |
+
+#### Endpoints de consulta, edición y procesos
+
+| Método y ruta | Descripción |
+|---|---|
+| `POST /auth/login` | Body `{email, password}`. 200 con el usuario (sin token por ahora), 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
+| `GET /users?role=DOCTOR` | Lista usuarios vigentes en versión reducida (`id`, `name`, `email`, `role`; sin `fcmToken`). `role` es opcional. |
+| `GET /treatments/user/{userId}` | Tratamientos vigentes (sin eliminados) del usuario. |
+| `PUT /treatments/{id}` | Edita `dosage`, `frequency`, `startDate` y `endDate` (CU-08). 400 si `endDate` < `startDate`; 404 si no existe o está eliminado. |
+| `DELETE /treatments/{id}` | Eliminación lógica + desactiva sus recordatorios (RN-06); conserva las dosis ya generadas. 204. |
+| `GET /reminders/treatment/{treatmentId}` | Recordatorios vigentes (sin eliminados) del tratamiento. |
+| `PUT /reminders/{id}` | Edita `time`, `daysOfWeek` y `message` (RF-11), con la misma normalización de días y validación de duplicados (RN-07), sin contar el propio recordatorio. |
+| `DELETE /reminders/{id}` | Eliminación lógica (`deleted_at`) y `active=false`: deja de generar dosis. 204. |
+| `GET /doses/user/{userId}?date=YYYY-MM-DD` | Dosis del usuario para ese día (por defecto, hoy), ordenadas por hora. No incluye dosis de tratamientos o recordatorios eliminados. |
+| `POST /doses/generate-daily` | **Herramienta de desarrollo/testing:** dispara a demanda la generación de dosis de hoy (la misma que corre sola cada día a medianoche, RF-06/CU-05). Es idempotente. Devuelve `{"generated": n}`. |
+
+La zona horaria que define "hoy" y la hora del job diario se configura con `medtracker.timezone` (variable `MEDTRACKER_TIMEZONE`, por defecto `America/Argentina/Buenos_Aires`). Para que la generación sea idempotente también a nivel base, `database/schema.sql` incluye el índice único `dose_reminder_scheduled_key`; en una base ya creada hay que aplicarlo a mano:
+
+```sql
+-- Antes: si devuelve filas, hay dosis duplicadas que depurar o el índice falla
+SELECT reminder_id, scheduled_at, count(*) FROM dose GROUP BY 1, 2 HAVING count(*) > 1;
+
+CREATE UNIQUE INDEX dose_reminder_scheduled_key ON dose (reminder_id, scheduled_at);
+```
 
 ---
 

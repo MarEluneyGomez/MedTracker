@@ -81,6 +81,11 @@ CREATE TABLE dose (
     deleted_at TIMESTAMP
 );
 
+-- Un reminder genera como maximo una toma por horario: hace idempotente el job
+-- diario de generacion de dosis aunque corra dos veces a la vez.
+CREATE UNIQUE INDEX dose_reminder_scheduled_key
+    ON dose (reminder_id, scheduled_at);
+
 -- Asociada al usuario destinatario y, opcionalmente, al reminder que la originó,
 -- con flag de lectura en vez de un estado de envío separado.
 CREATE TABLE notification (
