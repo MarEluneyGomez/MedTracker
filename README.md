@@ -64,9 +64,10 @@ seguimiento-de-medicacion/
 │   │   │   │   ├── service/     # Lógica de negocio
 │   │   │   │   ├── repository/  # Acceso a datos (JPA)
 │   │   │   │   ├── model/       # Entidades
-│   │   │   │   └── dto/         # Objetos de transferencia de datos
+│   │   │   │   ├── dto/         # Objetos de transferencia de datos
+│   │   │   │   └── config/      # Configuración (seguridad, hash de contraseñas)
 │   │   │   └── resources/
-│   │   │       └── application.yml
+│   │   │       └── application.properties
 │   │   └── test/                # Tests
 │   └── pom.xml
 │
@@ -83,6 +84,49 @@ seguimiento-de-medicacion/
 └── README.md
 ```
 
+### Módulos del backend
+
+Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA repository) → `service` → `controller` (REST) → `dto`. Los errores de negocio se responden con 400 (datos inválidos o rol incorrecto), 404 (recurso inexistente) o 409 (duplicados o estados que no admiten el cambio).
+
+> **Autenticación pendiente:** `POST /auth/login` ya valida las credenciales (CU-02), pero todavía no emite token de sesión: hasta implementar JWT, todos los endpoints quedan abiertos (`SecurityConfig`). Para frenar fuerza bruta, tras 5 intentos fallidos el login se bloquea 15 minutos (por email y por IP) y responde 429.
+
+| Módulo | Descripción | Endpoint REST |
+|---|---|---|
+| `Auth` | Inicio de sesión (CU-02) | `/auth` |
+| `User` | Usuarios (pacientes, tutores y médicos) | `/users` |
+| `Medication` | Catálogo de medicamentos | `/medications` |
+| `Treatment` | Tratamiento (medicamento + dosis + frecuencia por usuario) | `/treatments` |
+| `Reminder` | Patrón recurrente de recordatorio asociado a un tratamiento | `/reminders` |
+| `Dose` | Toma real generada a partir de un recordatorio | `/doses` |
+| `Notification` | Notificación enviada a un usuario | `/notifications` |
+| `CaregiverLink` | Vínculo entre un tutor y sus pacientes | `/caregiver-links` |
+| `MedicalAppointment` | Cita médica entre paciente y médico | `/medical-appointments` |
+| `MedicalHistory` | Historial médico de un paciente | `/medical-histories` |
+
+#### Endpoints de consulta, edición y procesos
+
+| Método y ruta | Descripción |
+|---|---|
+| `POST /auth/login` | Body `{email, password}`. 200 con el usuario (sin token por ahora), 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
+| `GET /users?role=DOCTOR` | Lista usuarios vigentes en versión reducida (`id`, `name`, `email`, `role`; sin `fcmToken`). `role` es opcional. |
+| `GET /treatments/user/{userId}` | Tratamientos vigentes (sin eliminados) del usuario. |
+| `PUT /treatments/{id}` | Edita `dosage`, `frequency`, `startDate` y `endDate` (CU-08). 400 si `endDate` < `startDate`; 404 si no existe o está eliminado. |
+| `DELETE /treatments/{id}` | Eliminación lógica + desactiva sus recordatorios (RN-06); conserva las dosis ya generadas. 204. |
+| `GET /reminders/treatment/{treatmentId}` | Recordatorios vigentes (sin eliminados) del tratamiento. |
+| `PUT /reminders/{id}` | Edita `time`, `daysOfWeek` y `message` (RF-11), con la misma normalización de días y validación de duplicados (RN-07), sin contar el propio recordatorio. |
+| `DELETE /reminders/{id}` | Eliminación lógica (`deleted_at`) y `active=false`: deja de generar dosis. 204. |
+| `GET /doses/user/{userId}?date=YYYY-MM-DD` | Dosis del usuario para ese día (por defecto, hoy), ordenadas por hora. No incluye dosis de tratamientos o recordatorios eliminados. |
+| `POST /doses/generate-daily` | **Herramienta de desarrollo/testing:** dispara a demanda la generación de dosis de hoy (la misma que corre sola cada día a medianoche, RF-06/CU-05). Es idempotente. Devuelve `{"generated": n}`. |
+
+La zona horaria que define "hoy" y la hora del job diario se configura con `medtracker.timezone` (variable `MEDTRACKER_TIMEZONE`, por defecto `America/Argentina/Buenos_Aires`). Para que la generación sea idempotente también a nivel base, `database/schema.sql` incluye el índice único `dose_reminder_scheduled_key`; en una base ya creada hay que aplicarlo a mano:
+
+```sql
+-- Antes: si devuelve filas, hay dosis duplicadas que depurar o el índice falla
+SELECT reminder_id, scheduled_at, count(*) FROM dose GROUP BY 1, 2 HAVING count(*) > 1;
+
+CREATE UNIQUE INDEX dose_reminder_scheduled_key ON dose (reminder_id, scheduled_at);
+```
+
 ---
 
 ### Requerimientos funcionales
@@ -93,8 +137,8 @@ seguimiento-de-medicacion/
 | RF-02 | El sistema debe permitir el inicio de sesión de un usuario registrado. |
 | RF-03 | El sistema debe permitir seleccionar un medicamento del catálogo (o darlo de alta si no existe) con nombre y forma de administración. |
 | RF-04 | El sistema debe permitir crear un tratamiento asociando un medicamento a un usuario, con su dosis y frecuencia particular. |
-| RF-05 | El sistema debe permitir configurar uno o más recordatorios puntuales (fecha y hora) por tratamiento. |
-| RF-06 | El sistema debe enviar notificaciones push en el momento configurado. |
+| RF-05 | El sistema debe permitir configurar uno o más horarios de recordatorio por tratamiento. |
+| RF-06 | El sistema debe enviar notificaciones push en el horario configurado. |
 | RF-07 | El sistema debe permitir al usuario confirmar o marcar como omitida una toma de medicamento. |
 | RF-08 | El sistema debe registrar el historial de tomas (confirmadas, omitidas, pendientes). |
 | RF-09 | El sistema debe mostrar estadísticas o indicadores de adherencia al tratamiento. |
@@ -119,12 +163,12 @@ seguimiento-de-medicacion/
 
 - **RN-01:** Un usuario solo puede ver y gestionar sus propios tratamientos y recordatorios.
 - **RN-02:** Un tratamiento debe tener al menos un horario de recordatorio asociado para estar activo.
-- **RN-03:** Una toma no puede confirmarse más de una vez para el mismo horario programado.
+- **RN-03:** Una toma no puede confirmarse más de una vez para el mismo horario programado. *(implementado: `DoseService.changeStatus` solo permite el cambio de estado si la dosis sigue en `PENDING`)*
 - **RN-04:** Si una toma no se confirma ni se marca como omitida dentro de una ventana de tiempo determinada (ej. 2 horas después del horario), se marca automáticamente como **omitida**.
 - **RN-05:** El porcentaje de adherencia de un tratamiento se calcula como `(dosis en estado confirmed / dosis totales generadas en el período) × 100`, sobre el período que el usuario seleccione en el historial.
 - **RN-06:** Un tratamiento eliminado lógicamente (`deleted_at` distinto de NULL) no genera nuevas notificaciones, pero conserva su historial.
-- **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, mismo `time` y mismos `days_of_week`).
-- **RN-08:** El alta de medicamentos y tratamientos la realiza el propio paciente o su tutor/responsable (`role = patient` o `caregiver`); el sistema no contempla intervención directa del médico, salvo para agendar/gestionar sus propias citas (RN-09).
+- **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, mismo `time` y mismos `days_of_week`). Dos recordatorios "todos los días" (`days_of_week` NULL) a la misma hora también cuentan como duplicados, y los recordatorios eliminados lógicamente no se consideran. *(implementado en `ReminderService` y reforzado en la base con un índice único parcial)*
+- **RN-08:** El alta de medicamentos y tratamientos la realiza el propio paciente o su tutor/responsable (`role = PATIENT` o `CAREGIVER`); el sistema no contempla intervención directa del médico, salvo para agendar/gestionar sus propias citas (RN-09).
 - **RN-09:** Una cita médica (`medical_appointment`) solo puede ser creada o modificada por el paciente involucrado o por el médico (`doctor_id`) asignado a esa cita.
 
 
@@ -151,7 +195,7 @@ seguimiento-de-medicacion/
 | name | VARCHAR | Nombre del usuario |
 | email | VARCHAR | Email (único, usado para login) |
 | password_hash | VARCHAR | Contraseña encriptada |
-| role | ENUM | `patient` / `caregiver` / `doctor` (paciente, tutor/responsable, o médico; este último solo relevante para `medical_appointment`) |
+| role | ENUM | `PATIENT` / `CAREGIVER` / `DOCTOR` (paciente, tutor/responsable, o médico; este último solo relevante para `medical_appointment`) |
 | fcm_token | VARCHAR | Token del dispositivo para notificaciones push |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
@@ -216,7 +260,7 @@ Cada fila es **una toma real**, generada a partir de un `reminder` para una fech
 | reminder_id | FK → reminder.id | Recordatorio (patrón recurrente) que generó la toma |
 | scheduled_at | TIMESTAMP | Momento en que debía tomarse |
 | confirmed_at | TIMESTAMP (nullable) | Momento real de confirmación |
-| status | ENUM | `pending` / `confirmed` / `skipped` |
+| status | ENUM | `PENDING` / `CONFIRMED` / `SKIPPED` |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
@@ -239,14 +283,14 @@ Cada fila es **una toma real**, generada a partir de un `reminder` para una fech
 
 ### Tabla: `caregiver_link`
 
-Vínculo entre un tutor/responsable y los pacientes que gestiona. Un `caregiver` puede estar vinculado a uno o varios `patient`.
+Vínculo entre un tutor/responsable y los pacientes que gestiona. Un usuario `CAREGIVER` puede estar vinculado a uno o varios usuarios `PATIENT`.
 
 > **Nota de diseño (corregido tras la devolución del profesor):** esta tabla no tiene identidad propia más allá del par (`caregiver_id`, `patient_id`): es una tabla de vínculo pura entre dos usuarios. Por eso no lleva un `id` surrogado aparte, la clave primaria es la propia combinación de ambas claves foráneas.
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| caregiver_id | FK → user.id (PK compuesta) | Usuario con rol `caregiver` |
-| patient_id | FK → user.id (PK compuesta) | Usuario con rol `patient` gestionado |
+| caregiver_id | FK → user.id (PK compuesta) | Usuario con rol `CAREGIVER` |
+| patient_id | FK → user.id (PK compuesta) | Usuario con rol `PATIENT` gestionado |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el vínculo está activo |
@@ -262,7 +306,7 @@ Vínculo entre un tutor/responsable y los pacientes que gestiona. Un `caregiver`
 | doctor_id | FK → user.id | Médico de la cita |
 | date_time | TIMESTAMP | Fecha y hora de la cita |
 | reason | VARCHAR | Motivo de la cita |
-| status | VARCHAR | Estado de la cita (ej. `pending`, `confirmed`, `cancelled`) |
+| status | VARCHAR | Estado de la cita: `PENDING` / `CONFIRMED` / `CANCELLED` (restringido con `CHECK`) |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
@@ -372,7 +416,7 @@ El motor de base de datos es PostgreSQL, hosteado en [Neon](#tecnologías). El e
 - **Actor:** Sistema (proceso automático) / Usuario
 - **Precondición:** Existe un `reminder` activo cuyo `time` (y `days_of_week`, si aplica) se cumple hoy, dentro del rango vigente del tratamiento.
 - **Flujo principal:**
-  1. Un proceso automático (ej. un job diario) recorre los `reminder` activos y, para cada uno que corresponda hoy, genera la `dose` de ese día en estado `pending`.
+  1. Un proceso automático (ej. un job diario) recorre los `reminder` activos y, para cada uno que corresponda hoy, genera la `dose` de ese día en estado `PENDING`.
   2. Al llegar el horario (`scheduled_at`), el backend crea la `notification` para el usuario y envía el push mediante FCM.
   3. El usuario recibe la notificación en su dispositivo.
 - **Flujos alternativos:**
@@ -384,15 +428,15 @@ El motor de base de datos es PostgreSQL, hosteado en [Neon](#tecnologías). El e
 ### CU-06: Confirmar toma de medicamento
 
 - **Actor:** Usuario autenticado
-- **Precondición:** Existe una `dose` en estado `pending`.
+- **Precondición:** Existe una `dose` en estado `PENDING`.
 - **Flujo principal:**
   1. El usuario abre la notificación o accede desde la app a "Tomas pendientes".
   2. Selecciona la toma correspondiente y confirma que la realizó.
-  3. El sistema actualiza el estado a `confirmed` y registra la fecha/hora real.
+  3. El sistema actualiza el estado a `CONFIRMED` y registra la fecha/hora real.
 - **Flujos alternativos:**
-  - **2a.** El usuario marca la toma como omitida en lugar de confirmarla → el estado pasa a `skipped`.
-  - **2b.** El usuario no realiza ninguna acción dentro de la ventana de tiempo definida → el sistema marca automáticamente la toma como `skipped` (RN-04).
-- **Postcondición:** La toma queda con un estado definitivo (`confirmed` o `skipped`) y pasa a formar parte del historial.
+  - **2a.** El usuario marca la toma como omitida en lugar de confirmarla → el estado pasa a `SKIPPED`.
+  - **2b.** El usuario no realiza ninguna acción dentro de la ventana de tiempo definida → el sistema marca automáticamente la toma como `SKIPPED` (RN-04).
+- **Postcondición:** La toma queda con un estado definitivo (`CONFIRMED` o `SKIPPED`) y pasa a formar parte del historial.
 
 ---
 
@@ -432,7 +476,7 @@ El motor de base de datos es PostgreSQL, hosteado en [Neon](#tecnologías). El e
 - **Flujo principal:**
   1. El paciente accede a "Agendar cita" y busca un médico (`user` con `role` correspondiente).
   2. Define fecha, hora y motivo de la cita.
-  3. El sistema crea la `medical_appointment` con estado `pending`.
+  3. El sistema crea la `medical_appointment` con estado `PENDING`.
 - **Flujos alternativos:**
   - **2a.** Campos obligatorios incompletos → el sistema no permite continuar.
 - **Postcondición:** La cita queda registrada y visible tanto para el paciente como para el médico.

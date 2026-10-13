@@ -1,5 +1,5 @@
-CREATE TYPE user_role AS ENUM ('patient', 'caregiver', 'doctor');
-CREATE TYPE dose_status AS ENUM ('pending', 'confirmed', 'skipped');
+CREATE TYPE user_role AS ENUM ('PATIENT', 'CAREGIVER', 'DOCTOR');
+CREATE TYPE dose_status AS ENUM ('PENDING', 'CONFIRMED', 'SKIPPED');
 
 CREATE TABLE "user" (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -56,9 +56,16 @@ CREATE TABLE reminder (
     active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
-    deleted_at TIMESTAMP,
-    UNIQUE (treatment_id, time, days_of_week)
+    deleted_at TIMESTAMP
 );
+
+-- RN-07: un tratamiento no puede tener dos recordatorios con la misma hora y
+-- los mismos dias. NULLS NOT DISTINCT hace que dos "todos los dias"
+-- (days_of_week NULL) cuenten como duplicados, y el WHERE deja fuera a los
+-- eliminados logicamente para poder volver a crear uno igual.
+CREATE UNIQUE INDEX reminder_treatment_time_days_key
+    ON reminder (treatment_id, time, days_of_week) NULLS NOT DISTINCT
+    WHERE deleted_at IS NULL;
 
 -- Cada fila es UNA toma real, generada a partir de un reminder para una
 -- fecha concreta. Aca si corresponde una fila por toma: es lo que permite
@@ -68,11 +75,16 @@ CREATE TABLE dose (
     reminder_id UUID NOT NULL REFERENCES reminder(id),
     scheduled_at TIMESTAMP NOT NULL,
     confirmed_at TIMESTAMP,
-    status dose_status NOT NULL DEFAULT 'pending',
+    status dose_status NOT NULL DEFAULT 'PENDING',
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     deleted_at TIMESTAMP
 );
+
+-- Un reminder genera como maximo una toma por horario: hace idempotente el job
+-- diario de generacion de dosis aunque corra dos veces a la vez.
+CREATE UNIQUE INDEX dose_reminder_scheduled_key
+    ON dose (reminder_id, scheduled_at);
 
 -- Asociada al usuario destinatario y, opcionalmente, al reminder que la originó,
 -- con flag de lectura en vez de un estado de envío separado.
@@ -106,7 +118,7 @@ CREATE TABLE medical_appointment (
     doctor_id UUID NOT NULL REFERENCES "user"(id),
     date_time TIMESTAMP NOT NULL,
     reason VARCHAR(255) NOT NULL,
-    status VARCHAR(50) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED')),
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     deleted_at TIMESTAMP
