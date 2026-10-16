@@ -5,6 +5,8 @@ import com.medtracker.medtracker.repository.DoseRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -15,6 +17,7 @@ import java.util.UUID;
 public class DoseService {
 
     private final DoseRepository doseRepository;
+    private final Clock clock;
 
     // Registrar una nueva dosis
     public Dose register(Dose dose) {
@@ -36,6 +39,12 @@ public class DoseService {
         return doseRepository.findByReminderId(reminderId);
     }
 
+    // Dosis del usuario para un día (pantalla "Hoy"); sin fecha usa hoy
+    public List<Dose> findByUserAndDate(UUID userId, LocalDate date) {
+        LocalDate day = date != null ? date : LocalDate.now(clock);
+        return doseRepository.findByUserAndPeriod(userId, day.atStartOfDay(), day.plusDays(1).atStartOfDay());
+    }
+
     // Cambiar estado de la dosis (RN-03: una toma ya confirmada/omitida no puede volver a cambiar de estado)
     public Optional<Dose> changeStatus(UUID id, String status) {
         Optional<Dose> doseOpt = doseRepository.findById(id);
@@ -48,7 +57,7 @@ public class DoseService {
                 Dose.DoseStatus newStatus = Dose.DoseStatus.valueOf(status.toUpperCase());
                 dose.setStatus(newStatus);
                 if (newStatus == Dose.DoseStatus.CONFIRMED) {
-                    dose.setConfirmedAt(LocalDateTime.now());
+                    dose.setConfirmedAt(LocalDateTime.now(clock));
                 }
                 doseRepository.save(dose);
                 return Optional.of(dose);

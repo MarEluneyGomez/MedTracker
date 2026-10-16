@@ -1,6 +1,7 @@
 package com.medtracker.medtracker.controller;
 
 import com.medtracker.medtracker.dto.UserDTO;
+import com.medtracker.medtracker.dto.UserSummaryDTO;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.service.UserService;
 import org.springframework.http.HttpStatus;
@@ -37,12 +38,13 @@ public class UserController {
                     .orElse(ResponseEntity.notFound().build());
     }
 
-    // Listar todos los usuarios
+    // Listar usuarios; con ?role= se filtra por rol (ej. elegir un médico).
+    // Devuelve la versión reducida, sin datos del dispositivo (fcmToken).
     @GetMapping
-    public ResponseEntity<List<UserDTO>> findAll() {
-        List<UserDTO> list = userService.findAll()
+    public ResponseEntity<List<UserSummaryDTO>> findAll(@RequestParam(required = false) User.Role role) {
+        List<UserSummaryDTO> list = userService.findAll(role)
                 .stream()
-                .map(UserDTO::new)
+                .map(UserSummaryDTO::new)
                 .collect(Collectors.toList());
         return ResponseEntity.ok(list);
     }

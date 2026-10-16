@@ -47,6 +47,29 @@ public class ReminderController {
         return ResponseEntity.ok(list);
     }
 
+    // Listar los recordatorios vigentes de un tratamiento
+    @GetMapping("/treatment/{treatmentId}")
+    public ResponseEntity<List<ReminderDTO>> findByTreatment(@PathVariable UUID treatmentId) {
+        List<ReminderDTO> list = reminderService.findByTreatment(treatmentId)
+                .stream()
+                .map(ReminderDTO::new)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(list);
+    }
+
+    // Editar recordatorio (RF-11): hora, días y mensaje
+    @PutMapping("/{id}")
+    public ResponseEntity<ReminderDTO> update(@PathVariable UUID id, @RequestBody Reminder reminder) {
+        return ResponseEntity.ok(new ReminderDTO(reminderService.update(id, reminder)));
+    }
+
+    // Eliminar recordatorio (RF-11): borrado lógico, deja de generar dosis
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable UUID id) {
+        reminderService.delete(id);
+        return ResponseEntity.noContent().build();
+    }
+
     // Desactivar recordatorio (deja de generar dosis nuevas)
     @PutMapping("/{id}/deactivate")
     public ResponseEntity<ReminderDTO> deactivate(@PathVariable UUID id) {

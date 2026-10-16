@@ -47,6 +47,29 @@ public class TreatmentController {
         return ResponseEntity.ok(list);
     }
 
+    // Listar los tratamientos vigentes de un usuario
+    @GetMapping("/user/{userId}")
+    public ResponseEntity<List<TreatmentDTO>> findByUser(@PathVariable UUID userId) {
+        List<TreatmentDTO> list = treatmentService.findByUser(userId)
+                .stream()
+                .map(TreatmentDTO::new)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(list);
+    }
+
+    // Editar tratamiento (CU-08): dosis, frecuencia y fechas
+    @PutMapping("/{id}")
+    public ResponseEntity<TreatmentDTO> update(@PathVariable UUID id, @RequestBody Treatment treatment) {
+        return ResponseEntity.ok(new TreatmentDTO(treatmentService.update(id, treatment)));
+    }
+
+    // Eliminar tratamiento (CU-08): borrado lógico y recordatorios desactivados
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable UUID id) {
+        treatmentService.delete(id);
+        return ResponseEntity.noContent().build();
+    }
+
     // Marcar tratamiento como completado
     @PutMapping("/{id}/complete")
     public ResponseEntity<TreatmentDTO> markAsCompleted(@PathVariable UUID id) {
