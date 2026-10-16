@@ -3,13 +3,25 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { colors } from '../theme/colors';
-import WelcomeScreen from '../screens/WelcomeScreen';
 import type { UserRole } from '../types/api';
+import type { RootStackParamList } from './types';
 import PatientTabs from './PatientTabs';
 import CaregiverTabs from './CaregiverTabs';
 import DoctorTabs from './DoctorTabs';
+import LoginScreen from '../screens/LoginScreen';
+import RegisterScreen from '../screens/RegisterScreen';
+import WelcomeScreen from '../screens/WelcomeScreen';
 
-const Stack = createNativeStackNavigator();
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+// Barra con la flecha de volver, sin título y con el fondo de la app
+const backHeaderOptions = {
+  headerShown: true,
+  title: '',
+  headerStyle: { backgroundColor: colors.background },
+  headerShadowVisible: false,
+  headerTintColor: colors.primary,
+};
 
 function tabsForRole(role: UserRole) {
   switch (role) {
@@ -39,7 +51,11 @@ export default function RootNavigator() {
         {user ? (
           <Stack.Screen name="Main" component={tabsForRole(user.role)} />
         ) : (
-          <Stack.Screen name="Welcome" component={WelcomeScreen} />
+          <>
+            <Stack.Screen name="Welcome" component={WelcomeScreen} />
+            <Stack.Screen name="Login" component={LoginScreen} options={backHeaderOptions} />
+            <Stack.Screen name="Register" component={RegisterScreen} options={backHeaderOptions} />
+          </>
         )}
       </Stack.Navigator>
     </NavigationContainer>

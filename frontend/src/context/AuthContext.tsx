@@ -1,11 +1,19 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { clearSession, loadSession, login, saveSession } from '../services/auth';
+import {
+  clearSession,
+  loadSession,
+  login,
+  register,
+  saveSession,
+  type RegisterData,
+} from '../services/auth';
 import type { User } from '../types/api';
 
 type AuthContextValue = {
   user: User | null;
   isRestoring: boolean;
   signIn: (email: string, password: string) => Promise<void>;
+  signUp: (data: RegisterData) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -30,13 +38,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(session.user);
   }
 
+  async function signUp(data: RegisterData) {
+    const session = await register(data);
+    await saveSession(session);
+    setUser(session.user);
+  }
+
   async function signOut() {
     await clearSession();
     setUser(null);
   }
 
   return (
-    <AuthContext.Provider value={{ user, isRestoring, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, isRestoring, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,5 +1,5 @@
-import type { User } from '../types/api';
-import { ApiError } from './api';
+import type { User, UserRole } from '../types/api';
+import { ApiError, apiRequest } from './api';
 import { MOCK_PASSWORD, mockUsers } from './mocks/users';
 import * as SecureStore from 'expo-secure-store';
 
@@ -17,6 +17,23 @@ export async function login(email: string, password: string): Promise<Session> {
   }
 
   return { user, token: 'mock-token' };
+}
+
+export type RegisterData = {
+  name: string;
+  email: string;
+  password: string;
+  role: UserRole;
+};
+
+export async function register(data: RegisterData): Promise<Session> {
+  const user = await apiRequest<User>('POST', '/users/register', {
+    name: data.name.trim(),
+    email: data.email.trim().toLowerCase(),
+    passwordHash: data.password,
+    role: data.role,
+  });
+  return { user, token: null };
 }
 
 const SESSION_KEY = 'medtracker.session';

@@ -1,34 +1,23 @@
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { StyleSheet, Text, View } from 'react-native';
-import { colors } from '../theme/colors';
 import AppButton from '../components/AppButton';
+import { colors } from '../theme/colors';
+import type { RootStackParamList } from '../navigation/types';
 import Screen from '../components/Screen';
-import { ApiError } from '../services/api';
-import { useAuth } from '../context/AuthContext';
+import Logo from '../components/Logo';
 
 export default function WelcomeScreen() {
-  const { signIn } = useAuth();
-
-  // Provisorio: accesos rápidos con los usuarios de prueba hasta que exista
-  // la pantalla de login
-  async function signInAs(email: string) {
-    try {
-      await signIn(email, '1234');
-    } catch (error) {
-      if (error instanceof ApiError) {
-        console.log('Login falló:', error.status, error.message);
-      }
-    }
-  }
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   return (
     <Screen>
       <View style={styles.container}>
-        <Text style={styles.title}>MedTracker</Text>
+        <Logo />
         <Text style={styles.subtitle}>Tu medicación, siempre a tiempo</Text>
         <View style={styles.actions}>
-          <AppButton title="Entrar como paciente" onPress={() => signInAs('paciente@demo.com')} />
-          <AppButton title="Entrar como tutor" onPress={() => signInAs('tutor@demo.com')} />
-          <AppButton title="Entrar como médico" onPress={() => signInAs('medico@demo.com')} />
+          <AppButton title="Iniciar Sesión" onPress={() => navigation.navigate('Login')} />
+          <AppButton title="Crear cuenta" onPress={() => navigation.navigate('Register')} />
         </View>
       </View>
     </Screen>
@@ -40,11 +29,6 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: colors.text,
   },
   subtitle: {
     marginTop: 8,

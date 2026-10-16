@@ -4,23 +4,25 @@ App móvil del sistema de seguimiento de medicación, construida con **React Nat
 
 ## Estado actual
 
-Base de la app armada (Expo SDK 57): cliente de API, sesión de usuario y navegación según el rol. Las pantallas de cada sección son provisorias y se completan en las etapas siguientes. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
+Base de la app armada (Expo SDK 57): cliente de API, sesión de usuario, navegación según el rol y las pantallas de inicio de sesión y registro. Las pantallas de cada sección son provisorias y se completan en las etapas siguientes. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
 
-Al abrir la app sin sesión se ve la pantalla de bienvenida, y al iniciar sesión, las pestañas que corresponden al rol:
+Al abrir la app sin sesión se ve la pantalla de bienvenida, con las opciones de iniciar sesión (CU-02) o crear una cuenta (CU-01). Al iniciar sesión se ven las pestañas que corresponden al rol:
 
 - **Paciente:** Hoy, Tratamientos, Citas y Perfil.
 - **Tutor:** Pacientes y Perfil.
 - **Médico:** Citas y Perfil.
 
-## Login de prueba
+## Registro e inicio de sesión
 
-El backend todavía no tiene endpoint de login, así que la app lo simula con usuarios de prueba (`src/services/mocks/users.ts`). Todos usan la contraseña `1234`:
+- **Registro:** usa el endpoint real `POST /users/register`, así que necesita el backend corriendo (ver [Conexión con el backend](#conexión-con-el-backend)). Pide nombre, email, contraseña (con su repetición) y rol, y valida los datos antes de enviarlos. Al registrarse, el usuario queda con la sesión iniciada.
+- **Inicio de sesión:** el login todavía es simulado, con usuarios de prueba (`src/services/mocks/users.ts`), hasta conectar el endpoint `POST /auth/login` del backend. Todos usan la contraseña `1234`:
+  - `paciente@demo.com`
+  - `tutor@demo.com`
+  - `medico@demo.com`
 
-- `paciente@demo.com`
-- `tutor@demo.com`
-- `medico@demo.com`
+  Mientras la app corre en modo desarrollo, la pantalla de inicio de sesión muestra además un botón de acceso rápido para cada uno. En la app compilada para publicar esos botones no aparecen (`__DEV__`).
 
-La pantalla de bienvenida tiene un botón para entrar con cada uno. La sesión se guarda cifrada en el dispositivo (`expo-secure-store`), así que se mantiene al cerrar y volver a abrir la app.
+La sesión se guarda cifrada en el dispositivo (`expo-secure-store`), así que se mantiene al cerrar y volver a abrir la app.
 
 ## Estructura
 
@@ -28,9 +30,9 @@ La pantalla de bienvenida tiene un botón para entrar con cada uno. La sesión s
 frontend/
 ├── assets/                 # Íconos y splash de la app
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, pestañas de cada rol, perfil)
-│   ├── components/         # Componentes reutilizables (AppButton, Screen)
-│   ├── navigation/         # RootNavigator y las pestañas de cada rol
+│   ├── screens/            # Pantallas (bienvenida, login, registro, pestañas de cada rol, perfil)
+│   ├── components/         # Componentes reutilizables (AppButton, Screen, TextField, RoleSelector, Logo)
+│   ├── navigation/         # RootNavigator, pestañas de cada rol y lista de pantallas (types.ts)
 │   ├── context/            # AuthContext: sesión compartida por toda la app
 │   ├── services/
 │   │   ├── api.ts          # Cliente HTTP y manejo de errores (ApiError)
