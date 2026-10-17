@@ -1,22 +1,19 @@
 import type { User, UserRole } from '../types/api';
-import { ApiError, apiRequest } from './api';
-import { MOCK_PASSWORD, mockUsers } from './mocks/users';
+import { apiRequest } from './api';
 import * as SecureStore from 'expo-secure-store';
 
 export type Session = {
   user: User;
+  // null mientras el backend no emita JWT
   token: string | null;
 };
 
-// MOCK: el backend todavía no tiene endpoint de login (CU-02)
 export async function login(email: string, password: string): Promise<Session> {
-  const user = mockUsers.find((u) => u.email === email.trim().toLowerCase());
-
-  if (!user || password !== MOCK_PASSWORD) {
-    throw new ApiError(401, 'Email o contraseña incorrectos.');
-  }
-
-  return { user, token: 'mock-token' };
+  const user = await apiRequest<User>('POST', '/auth/login', {
+    email: email.trim().toLowerCase(),
+    password,
+  });
+  return { user, token: null };
 }
 
 export type RegisterData = {

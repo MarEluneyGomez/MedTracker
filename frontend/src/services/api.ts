@@ -43,10 +43,28 @@ export async function apiRequest<T>(method: HttpMethod, path: string, body?: unk
   }
 
   if (!response.ok) {
-    throw new ApiError(
-      response.status,
-      ERROR_MESSAGES[response.status] ?? 'Ocurrió un error inesperado, intenta de nuevo.',
-    );
+    throw new ApiError(response.status, await readErrorMessage(response));
   }
+
   return (await response.json()) as T;
+}
+// Usa el mensaje que manda el backend, salvo que esté vacío o sea un
+// mensaje técnico; en ese caso usa el de la tabla según el código.
+async function readErrorMessage(response: Response): Promise<string> {
+  const fallback =
+    ERROR_MESSAGES[response.status] ?? 'Ocurrió un error inesperado, intenta de nuevo.';
+  try {
+    const data = await response.json();
+    const message = typeof data.message === 'string' ? data.message.trim() : '';
+    const isTechnical =
+      message === 'No message available' ||
+      message.startsWith('Validation failed') ||
+      message.startsWith('JSON parse error');
+    if (message && !isTechnical) {
+      return message;
+    }
+  } catch {
+    return fallback; // El cuerpo no es JSON: se usa el mensaje de la tabla
+  }
+  return fallback;
 }

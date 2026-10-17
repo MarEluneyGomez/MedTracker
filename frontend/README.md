@@ -14,13 +14,20 @@ Al abrir la app sin sesión se ve la pantalla de bienvenida, con las opciones de
 
 ## Registro e inicio de sesión
 
-- **Registro:** usa el endpoint real `POST /users/register`, así que necesita el backend corriendo (ver [Conexión con el backend](#conexión-con-el-backend)). Pide nombre, email, contraseña (con su repetición) y rol, y valida los datos antes de enviarlos. Al registrarse, el usuario queda con la sesión iniciada.
-- **Inicio de sesión:** el login todavía es simulado, con usuarios de prueba (`src/services/mocks/users.ts`), hasta conectar el endpoint `POST /auth/login` del backend. Todos usan la contraseña `1234`:
-  - `paciente@demo.com`
-  - `tutor@demo.com`
-  - `medico@demo.com`
+Las dos pantallas usan el backend real, así que necesitan el backend corriendo (ver [Conexión con el backend](#conexión-con-el-backend)).
 
-  Mientras la app corre en modo desarrollo, la pantalla de inicio de sesión muestra además un botón de acceso rápido para cada uno. En la app compilada para publicar esos botones no aparecen (`__DEV__`).
+- **Registro** (`POST /users/register`): pide nombre, email, contraseña (con su repetición) y rol, y valida los datos antes de enviarlos. Al registrarse, el usuario queda con la sesión iniciada.
+- **Inicio de sesión** (`POST /auth/login`): después de 5 intentos fallidos con el mismo email, el backend lo bloquea por 15 minutos.
+
+Los mensajes de error que se muestran son los que devuelve el backend (por ejemplo "Credenciales incorrectas"); si no manda ninguno, se usa un mensaje genérico según el código de respuesta.
+
+**Usuarios de prueba:** en la base de desarrollo hay un usuario por rol, todos con la contraseña `demo1234`:
+
+- `paciente@demo.com`
+- `tutor@demo.com`
+- `medico@demo.com`
+
+Mientras la app corre en modo desarrollo, la pantalla de inicio de sesión muestra un botón de acceso rápido para cada uno. En la app compilada para publicar esos botones no aparecen (`__DEV__`).
 
 La sesión se guarda cifrada en el dispositivo (`expo-secure-store`), así que se mantiene al cerrar y volver a abrir la app.
 
@@ -36,8 +43,7 @@ frontend/
 │   ├── context/            # AuthContext: sesión compartida por toda la app
 │   ├── services/
 │   │   ├── api.ts          # Cliente HTTP y manejo de errores (ApiError)
-│   │   ├── auth.ts         # Login y guardado de la sesión
-│   │   └── mocks/          # Datos de prueba mientras faltan endpoints
+│   │   └── auth.ts         # Login, registro y guardado de la sesión
 │   ├── types/              # Tipos de los DTOs del backend
 │   ├── theme/              # Paleta de colores
 │   └── utils/              # Funciones auxiliares

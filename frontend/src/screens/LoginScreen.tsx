@@ -36,7 +36,7 @@ export default function LoginScreen() {
   async function signInAs(demoEmail: string) {
     setError(null);
     try {
-      await signIn(demoEmail, '1234');
+      await signIn(demoEmail, 'demo1234');
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Ocurrió un error inesperado.');
     }
