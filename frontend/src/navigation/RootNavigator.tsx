@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { colors } from '../theme/colors';
 import type { UserRole } from '../types/api';
 import type { RootStackParamList } from './types';
+import { backHeaderOptions } from './headerOptions';
 import PatientTabs from './PatientTabs';
 import CaregiverTabs from './CaregiverTabs';
 import DoctorTabs from './DoctorTabs';
@@ -13,15 +14,6 @@ import RegisterScreen from '../screens/RegisterScreen';
 import WelcomeScreen from '../screens/WelcomeScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
-
-// Barra con la flecha de volver, sin título y con el fondo de la app
-const backHeaderOptions = {
-  headerShown: true,
-  title: '',
-  headerStyle: { backgroundColor: colors.background },
-  headerShadowVisible: false,
-  headerTintColor: colors.primary,
-};
 
 function tabsForRole(role: UserRole) {
   switch (role) {

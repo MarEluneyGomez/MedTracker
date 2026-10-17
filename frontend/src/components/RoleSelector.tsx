@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors } from '../theme/colors';
+import { fieldLabel } from '../theme/typography';
 import type { UserRole } from '../types/api';
 
 const OPTIONS: { value: UserRole; label: string }[] = [
@@ -38,12 +39,7 @@ export default function RoleSelector({ value, onChange }: RoleSelectorProps) {
 }
 
 const styles = StyleSheet.create({
-  label: {
-    marginBottom: 6,
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.text,
-  },
+  label: fieldLabel,
   option: {
     flex: 1,
     alignItems: 'center',

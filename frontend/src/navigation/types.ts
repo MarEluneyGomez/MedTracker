@@ -4,3 +4,8 @@ export type RootStackParamList = {
   Register: undefined;
   Main: undefined;
 };
+
+export type TreatmentsStackParamList = {
+  TreatmentsList: undefined;
+  TreatmentForm: { treatmentId?: string } | undefined;
+};

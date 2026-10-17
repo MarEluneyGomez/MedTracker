@@ -17,12 +17,10 @@ const palette = {
 } as const;
 
 export const colors = {
-  // Fondos
   background: palette.lavender50,
   surface: palette.white,
   surfaceTinted: palette.lavender100,
 
-  // Marca y acciones
   primary: palette.slateBlue,
   onPrimary: palette.white,
   accent: palette.lavender300,
@@ -44,9 +42,9 @@ export const colors = {
   warning: palette.amber,
   warningBackground: palette.amberTint,
 
-  // Bordes y separadores
   border: palette.lavender100,
   borderStrong: palette.lavender300,
+  overlay: 'rgba(42, 36, 85, 0.4)',
 } as const;
 
 export type ColorName = keyof typeof colors;

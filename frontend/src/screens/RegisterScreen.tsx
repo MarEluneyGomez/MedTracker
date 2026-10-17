@@ -6,8 +6,10 @@ import RoleSelector from '../components/RoleSelector';
 import Screen from '../components/Screen';
 import TextField from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
+import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import { ApiError } from '../services/api';
 import { colors } from '../theme/colors';
+import { fieldError } from '../theme/typography';
 import type { UserRole } from '../types/api';
 
 type FieldErrors = {
@@ -29,6 +31,7 @@ export default function RegisterScreen() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const scrollRef = useFlashScrollIndicators<ScrollView>();
 
   function validate(): FieldErrors {
     const errors: FieldErrors = {};
@@ -69,8 +72,13 @@ export default function RegisterScreen() {
   }
 
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+    <Screen hasHeader>
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
+        persistentScrollbar
+      >
         <Logo />
         <Text style={styles.title}>Crear cuenta</Text>
         <TextField label="Nombre" value={name} onChangeText={setName} error={fieldErrors.name} />
@@ -126,8 +134,5 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: colors.text,
   },
-  error: {
-    fontSize: 14,
-    color: colors.error,
-  },
+  error: fieldError,
 });

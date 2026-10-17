@@ -4,7 +4,7 @@ App móvil del sistema de seguimiento de medicación, construida con **React Nat
 
 ## Estado actual
 
-Base de la app armada (Expo SDK 57): cliente de API, sesión de usuario, navegación según el rol y las pantallas de inicio de sesión y registro. Las pantallas de cada sección son provisorias y se completan en las etapas siguientes. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
+Base de la app armada (Expo SDK 57): cliente de API, sesión de usuario, navegación según el rol, las pantallas de inicio de sesión y registro, y la gestión de tratamientos del paciente. El resto de las pantallas de cada sección son provisorias y se completan en las etapas siguientes. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
 
 Al abrir la app sin sesión se ve la pantalla de bienvenida, con las opciones de iniciar sesión (CU-02) o crear una cuenta (CU-01). Al iniciar sesión se ven las pestañas que corresponden al rol:
 
@@ -19,7 +19,7 @@ Las dos pantallas usan el backend real, así que necesitan el backend corriendo 
 - **Registro** (`POST /users/register`): pide nombre, email, contraseña (con su repetición) y rol, y valida los datos antes de enviarlos. Al registrarse, el usuario queda con la sesión iniciada.
 - **Inicio de sesión** (`POST /auth/login`): después de 5 intentos fallidos con el mismo email, el backend lo bloquea por 15 minutos.
 
-Los mensajes de error que se muestran son los que devuelve el backend (por ejemplo "Credenciales incorrectas"); si no manda ninguno, se usa un mensaje genérico según el código de respuesta.
+Los mensajes de error que se muestran son los que devuelve el backend (por ejemplo "Credenciales incorrectas"); si no manda ninguno, o si es un mensaje técnico de Spring, se usa un mensaje genérico según el código de respuesta. Si el servidor no responde en 15 segundos, se avisa que no se pudo conectar.
 
 **Usuarios de prueba:** en la base de desarrollo hay un usuario por rol, todos con la contraseña `demo1234`:
 
@@ -31,22 +31,48 @@ Mientras la app corre en modo desarrollo, la pantalla de inicio de sesión muest
 
 La sesión se guarda cifrada en el dispositivo (`expo-secure-store`), así que se mantiene al cerrar y volver a abrir la app.
 
+## Tratamientos
+
+La pestaña Tratamientos del paciente cubre CU-03 (agregar tratamiento) y CU-08 (editar o eliminar tratamiento):
+
+- **Lista** (`GET /treatments/user/{userId}`): cada tratamiento muestra el medicamento, la dosis y la frecuencia. Al tocarlo se despliega el detalle (forma de administración, fechas y estado) con las acciones. Se actualiza al volver a la pantalla y deslizando hacia abajo.
+- **Nuevo tratamiento** (`POST /treatments/register`): el medicamento se busca en el catálogo sin distinguir mayúsculas ni tildes; si no existe, se puede agregar indicando cómo se toma (`POST /medications/register`).
+- **Editar** (`PUT /treatments/{id}`): usa el mismo formulario con los datos cargados. El medicamento no se puede cambiar: para otro medicamento se crea otro tratamiento.
+- **Marcar como completado** (`PUT /treatments/{id}/complete`) y **Eliminar** (`DELETE /treatments/{id}`, con confirmación, porque también desactiva sus recordatorios).
+
+La dosis y la frecuencia se eligen con opciones (cantidad y unidad; "Cada 8 horas", "Cada 1 día" u otra a medida) y se guardan como texto con un formato fijo, por ejemplo "2 comprimidos" y "Cada 8 horas". Así se pueden volver a leer al editar y más adelante sugerir los horarios de los recordatorios. Las fechas se eligen con un calendario propio (`react-native-calendars`) que sigue la estética de la app; la fecha de fin es opcional y se guarda al final del día, para que el último día también cuente.
+
 ## Estructura
 
 ```
 frontend/
 ├── assets/                 # Íconos y splash de la app
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, login, registro, pestañas de cada rol, perfil)
-│   ├── components/         # Componentes reutilizables (AppButton, Screen, TextField, RoleSelector, Logo)
-│   ├── navigation/         # RootNavigator, pestañas de cada rol y lista de pantallas (types.ts)
+│   ├── screens/            # Pantallas (bienvenida, login, registro, tratamientos y su formulario, pestañas de cada rol, perfil)
+│   ├── components/         # Componentes reutilizables
+│   │   ├── AppButton, Screen, TextField, Logo
+│   │   ├── RoleSelector, ChipSelector # Selección entre opciones
+│   │   ├── DateField # Campo de fecha con calendario
+│   │   └── MedicationPicker, DosagePicker, FrequencyPicker # Partes del formulario de tratamiento
+│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, headerOptions y lista de pantallas (types.ts)
 │   ├── context/            # AuthContext: sesión compartida por toda la app
+│   ├── hooks/
+│   │   └── useFlashScrollIndicators.ts # Muestra la barra de scroll al abrir una lista en iOS
 │   ├── services/
 │   │   ├── api.ts          # Cliente HTTP y manejo de errores (ApiError)
-│   │   └── auth.ts         # Login, registro y guardado de la sesión
+│   │   ├── auth.ts         # Login, registro y guardado de la sesión
+│   │   ├── medications.ts  # Catálogo de medicamentos
+│   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
 │   ├── types/              # Tipos de los DTOs del backend
-│   ├── theme/              # Paleta de colores
-│   └── utils/              # Funciones auxiliares
+│   ├── theme/
+│   │   ├── colors.ts       # Paleta de colores
+│   │   └── typography.ts   # Estilos de texto compartidos (etiquetas y errores de campos)
+│   └── utils/
+│       ├── dates.ts        # Conversión de fechas entre la app y el backend
+│       ├── dosage.ts       # Formato y lectura de la dosis
+│       ├── frequency.ts    # Formato y lectura de la frecuencia
+│       ├── text.ts         # Mayúscula inicial y búsqueda sin tildes
+│       └── calendarLocale.ts # Calendario en español
 ├── App.tsx                 # Componente raíz
 ├── index.ts                # Punto de entrada
 ├── app.json                # Configuración de Expo

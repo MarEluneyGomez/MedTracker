@@ -24,6 +24,9 @@ export class ApiError extends Error {
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:8080';
 
+const REQUEST_TIMEOUT_MS = 15000;
+const NO_CONTENT = 204;
+
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 export async function apiRequest<T>(method: HttpMethod, path: string, body?: unknown): Promise<T> {
@@ -34,20 +37,27 @@ export async function apiRequest<T>(method: HttpMethod, path: string, body?: unk
     options.body = JSON.stringify(body);
   }
 
-  let response: Response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
+  let response: Response;
   try {
-    response = await fetch(`${API_URL}${path}`, options);
+    response = await fetch(`${API_URL}${path}`, { ...options, signal: controller.signal });
   } catch {
     throw new ApiError(0, 'No se pudo conectar con el servidor. Revisá tu conexión.');
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (!response.ok) {
     throw new ApiError(response.status, await readErrorMessage(response));
   }
-
+  if (response.status === NO_CONTENT) {
+    return undefined as T;
+  }
   return (await response.json()) as T;
 }
+
 // Usa el mensaje que manda el backend, salvo que esté vacío o sea un
 // mensaje técnico; en ese caso usa el de la tabla según el código.
 async function readErrorMessage(response: Response): Promise<string> {
@@ -59,7 +69,8 @@ async function readErrorMessage(response: Response): Promise<string> {
     const isTechnical =
       message === 'No message available' ||
       message.startsWith('Validation failed') ||
-      message.startsWith('JSON parse error');
+      message.startsWith('JSON parse error') ||
+      message.startsWith('No static resource');
     if (message && !isTechnical) {
       return message;
     }

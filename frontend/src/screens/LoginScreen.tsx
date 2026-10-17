@@ -7,6 +7,7 @@ import TextField from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
 import { ApiError } from '../services/api';
 import { colors } from '../theme/colors';
+import { fieldError } from '../theme/typography';
 
 export default function LoginScreen() {
   const { signIn } = useAuth();
@@ -32,7 +33,6 @@ export default function LoginScreen() {
     }
   }
 
-  // Acceso rápido con los usuarios de prueba, solo en desarrollo
   async function signInAs(demoEmail: string) {
     setError(null);
     try {
@@ -43,7 +43,7 @@ export default function LoginScreen() {
   }
 
   return (
-    <Screen>
+    <Screen hasHeader>
       <View style={styles.container}>
         <Logo />
         <Text style={styles.title}>Iniciar sesión</Text>
@@ -87,10 +87,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: colors.text,
   },
-  error: {
-    fontSize: 14,
-    color: colors.error,
-  },
+  error: fieldError,
   devAccess: {
     marginTop: 24,
     gap: 12,
