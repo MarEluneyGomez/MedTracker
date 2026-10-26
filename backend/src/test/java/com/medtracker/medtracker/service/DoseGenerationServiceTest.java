@@ -2,6 +2,7 @@ package com.medtracker.medtracker.service;
 
 import com.medtracker.medtracker.model.Dose;
 import com.medtracker.medtracker.model.Reminder;
+import com.medtracker.medtracker.model.Treatment;
 import com.medtracker.medtracker.repository.DoseRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,7 +48,104 @@ class DoseGenerationServiceTest {
     }
 
     private Reminder reminder(LocalTime time, String[] days) {
-        return Reminder.builder().id(UUID.randomUUID()).time(time).daysOfWeek(days).message("m").build();
+        Treatment active = Treatment.builder().startDate(WEDNESDAY.minusDays(10).atStartOfDay()).build();
+        return reminderOf(active, time, days);
+    }
+
+    private Reminder reminderOf(Treatment treatment, LocalTime time, String[] days) {
+        return Reminder.builder().id(UUID.randomUUID()).treatment(treatment).time(time)
+                .daysOfWeek(days).message("m").active(true).build();
+    }
+
+    @Test
+    void skipsWhenTreatmentHasNotStartedYet() {
+        Treatment future = Treatment.builder().startDate(WEDNESDAY.plusDays(1).atStartOfDay()).build();
+        eligible(reminderOf(future, LocalTime.of(8, 0), null));
+
+        assertThat(service.generateFor(WEDNESDAY)).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void skipsWhenTreatmentAlreadyEnded() {
+        Treatment ended = Treatment.builder().startDate(WEDNESDAY.minusDays(10).atStartOfDay())
+                .endDate(WEDNESDAY.minusDays(1).atTime(23, 59)).build();
+        eligible(reminderOf(ended, LocalTime.of(8, 0), null));
+
+        assertThat(service.generateFor(WEDNESDAY)).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void generatesOnTheLastDayOfTheTreatment() {
+        Treatment lastDay = Treatment.builder().startDate(WEDNESDAY.minusDays(10).atStartOfDay())
+                .endDate(WEDNESDAY.atStartOfDay()).build();
+        eligible(reminderOf(lastDay, LocalTime.of(8, 0), null));
+
+        assertThat(service.generateFor(WEDNESDAY)).isEqualTo(1);
+    }
+
+    @Test
+    void generateTodayForReminderCreatesTodaysDose() {
+        Reminder r = reminder(LocalTime.of(8, 0), new String[]{"WED"});
+        when(reminderRepository.findById(r.getId())).thenReturn(java.util.Optional.of(r));
+
+        assertThat(service.generateTodayForReminder(r.getId())).isEqualTo(1);
+        verify(doseRepository).save(any(Dose.class));
+    }
+
+    @Test
+    void generateTodayForReminderSkipsWhenTodayIsNotInDays() {
+        Reminder r = reminder(LocalTime.of(8, 0), new String[]{"MON"});
+        when(reminderRepository.findById(r.getId())).thenReturn(java.util.Optional.of(r));
+
+        assertThat(service.generateTodayForReminder(r.getId())).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void generateTodayForReminderSkipsWhenTreatmentNotInRange() {
+        Treatment future = Treatment.builder().startDate(WEDNESDAY.plusDays(2).atStartOfDay()).build();
+        Reminder r = reminderOf(future, LocalTime.of(8, 0), null);
+        when(reminderRepository.findById(r.getId())).thenReturn(java.util.Optional.of(r));
+
+        assertThat(service.generateTodayForReminder(r.getId())).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void generateTodayForReminderIsIdempotent() {
+        Reminder r = reminder(LocalTime.of(8, 0), null);
+        when(reminderRepository.findById(r.getId())).thenReturn(java.util.Optional.of(r));
+        when(doseRepository.existsByReminderIdAndScheduledAt(r.getId(), LocalDateTime.of(2026, 10, 14, 8, 0)))
+                .thenReturn(true);
+
+        assertThat(service.generateTodayForReminder(r.getId())).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void rescheduleMovesOnlyTodaysPendingDose() {
+        Reminder r = reminder(LocalTime.of(9, 30), null);
+        Dose pending = Dose.builder().reminder(r).scheduledAt(LocalDateTime.of(2026, 10, 14, 8, 0)).build();
+        when(doseRepository.findByReminderAndStatusInPeriod(r.getId(), Dose.DoseStatus.PENDING,
+                WEDNESDAY.atStartOfDay(), WEDNESDAY.plusDays(1).atStartOfDay())).thenReturn(List.of(pending));
+
+        service.rescheduleTodayPending(r);
+
+        assertThat(pending.getScheduledAt()).isEqualTo(LocalDateTime.of(2026, 10, 14, 9, 30));
+        verify(doseRepository).save(pending);
+    }
+
+    @Test
+    void rescheduleDoesNothingWithoutPendingDose() {
+        Reminder r = reminder(LocalTime.of(9, 30), null);
+        when(doseRepository.findByReminderAndStatusInPeriod(r.getId(), Dose.DoseStatus.PENDING,
+                WEDNESDAY.atStartOfDay(), WEDNESDAY.plusDays(1).atStartOfDay())).thenReturn(List.of());
+
+        service.rescheduleTodayPending(r);
+
+        verify(doseRepository, never()).save(any());
     }
 
     private void eligible(Reminder... reminders) {

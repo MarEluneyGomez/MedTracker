@@ -30,6 +30,7 @@ public class UserService {
         if (user.getPasswordHash() == null || user.getPasswordHash().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La contraseña es obligatoria");
         }
+        user.setEmail(normalizeEmail(user.getEmail()));
         if (userRepository.existsByEmail(user.getEmail())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "El email ya está registrado");
         }
@@ -75,12 +76,13 @@ public class UserService {
     // Todo fallo de credenciales responde igual (401) para no revelar si el
     // email existe, y se limita por email y por IP para frenar fuerza bruta.
     public User login(String email, String password, String clientIp) {
-        String emailKey = "email:" + (email == null ? "" : email.trim().toLowerCase(Locale.ROOT));
+        String normalizedEmail = normalizeEmail(email);
+        String emailKey = "email:" + (normalizedEmail == null ? "" : normalizedEmail);
         String ipKey = "ip:" + clientIp;
         loginAttemptService.ensureNotLocked(emailKey);
         loginAttemptService.ensureNotLocked(ipKey);
 
-        Optional<User> userOpt = userRepository.findByEmail(email == null ? null : email.trim())
+        Optional<User> userOpt = userRepository.findByEmail(normalizedEmail)
                 .filter(user -> user.getDeletedAt() == null);
         // Si el usuario no existe se compara igual contra un hash ficticio, así
         // el tiempo de respuesta no delata qué emails están registrados
@@ -109,6 +111,11 @@ public class UserService {
 
     // Buscar usuario por email (para login)
     public Optional<User> findByEmail(String email) {
-        return userRepository.findByEmail(email);
+        return userRepository.findByEmail(normalizeEmail(email));
+    }
+
+    // "Juan@Mail.com " y "juan@mail.com" son la misma cuenta
+    private String normalizeEmail(String email) {
+        return email == null ? null : email.trim().toLowerCase(Locale.ROOT);
     }
 }

@@ -20,6 +20,9 @@ public class MedicalHistoryService {
     // Registrar un nuevo historial médico; pertenece siempre a un paciente
     public MedicalHistory register(MedicalHistory history) {
         history.setPatient(userService.getWithRole(history.getPatient(), User.Role.PATIENT));
+        // Evita pisar un historial existente por id o resucitar uno eliminado
+        history.setId(null);
+        history.setDeletedAt(null);
         return medicalHistoryRepository.save(history);
     }
 

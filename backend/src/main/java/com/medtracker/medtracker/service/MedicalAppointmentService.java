@@ -25,6 +25,9 @@ public class MedicalAppointmentService {
         appointment.setPatient(userService.getWithRole(appointment.getPatient(), User.Role.PATIENT));
         appointment.setDoctor(userService.getWithRole(appointment.getDoctor(), User.Role.DOCTOR));
         appointment.setStatus(MedicalAppointment.AppointmentStatus.PENDING);
+        // Evita pisar una cita existente por id o resucitar una eliminada
+        appointment.setId(null);
+        appointment.setDeletedAt(null);
         return medicalAppointmentRepository.save(appointment);
     }
 

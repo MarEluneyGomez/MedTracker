@@ -113,6 +113,56 @@ class UserServiceTest {
     }
 
     @Test
+    void registerNormalizesEmailBeforeCheckingAndSaving() {
+        User incoming = user();
+        incoming.setEmail("  Ana@Mail.COM ");
+        when(userRepository.existsByEmail("ana@mail.com")).thenReturn(false);
+        when(passwordEncoder.encode("hash")).thenReturn("encoded");
+        when(userRepository.save(incoming)).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(userService.register(incoming).getEmail()).isEqualTo("ana@mail.com");
+    }
+
+    @Test
+    void registerRejectsEmailThatDiffersOnlyInCase() {
+        User incoming = user();
+        incoming.setEmail("ANA@mail.com");
+        when(userRepository.existsByEmail("ana@mail.com")).thenReturn(true);
+
+        assertThatThrownBy(() -> userService.register(incoming))
+                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+        verify(userRepository, never()).save(incoming);
+    }
+
+    @Test
+    void registerForcesDeletedAtToNullSoItCannotBeBornSoftDeleted() {
+        User incoming = user();
+        incoming.setDeletedAt(LocalDateTime.now());
+        when(userRepository.existsByEmail("ana@mail.com")).thenReturn(false);
+        when(passwordEncoder.encode("hash")).thenReturn("encoded");
+        when(userRepository.save(incoming)).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(userService.register(incoming).getDeletedAt()).isNull();
+    }
+
+    @Test
+    void loginMatchesEmailRegardlessOfCaseAndSpaces() {
+        User user = user();
+        when(userRepository.findByEmail("ana@mail.com")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("secreto", "hash")).thenReturn(true);
+
+        assertThat(userService.login(" Ana@MAIL.com ", "secreto", "1.1.1.1")).isSameAs(user);
+        verify(loginAttemptService).recordSuccess("email:ana@mail.com");
+    }
+
+    @Test
+    void findByEmailNormalizesBeforeSearching() {
+        when(userRepository.findByEmail("ana@mail.com")).thenReturn(Optional.of(user()));
+
+        assertThat(userService.findByEmail("Ana@Mail.com")).isPresent();
+    }
+
+    @Test
     void findAllWithoutRoleReturnsAllActiveUsers() {
         when(userRepository.findByDeletedAtIsNull()).thenReturn(List.of(user()));
 

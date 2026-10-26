@@ -5,7 +5,9 @@ import com.medtracker.medtracker.model.CaregiverLinkId;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.CaregiverLinkRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Optional;
@@ -26,7 +28,20 @@ public class CaregiverLinkService {
         User patient = userService.getWithRole(link.getPatient(), User.Role.PATIENT);
         link.setCaregiver(caregiver);
         link.setPatient(patient);
-        link.setId(new CaregiverLinkId(caregiver.getId(), patient.getId()));
+        CaregiverLinkId id = new CaregiverLinkId(caregiver.getId(), patient.getId());
+        Optional<CaregiverLink> existing = caregiverLinkRepository.findById(id);
+        if (existing.isPresent()) {
+            CaregiverLink current = existing.get();
+            if (current.getDeletedAt() == null) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "El cuidador ya está vinculado a ese paciente");
+            }
+            // Vínculo dado de baja: se reactiva en vez de insertar uno nuevo
+            current.setDeletedAt(null);
+            return caregiverLinkRepository.save(current);
+        }
+        link.setId(id);
+        link.setDeletedAt(null);
         return caregiverLinkRepository.save(link);
     }
 

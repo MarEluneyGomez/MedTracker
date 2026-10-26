@@ -17,6 +17,9 @@ public class NotificationService {
 
     // Registrar una nueva notificación
     public Notification register(Notification notification) {
+        // Evita pisar una notificación existente por id o resucitar una eliminada
+        notification.setId(null);
+        notification.setDeletedAt(null);
         return notificationRepository.save(notification);
     }
 

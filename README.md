@@ -113,6 +113,9 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 | `DELETE /treatments/{id}` | Eliminación lógica + desactiva sus recordatorios (RN-06); conserva las dosis ya generadas. 204. |
 | `GET /reminders/treatment/{treatmentId}` | Recordatorios vigentes (sin eliminados) del tratamiento. |
 | `PUT /reminders/{id}` | Edita `time`, `daysOfWeek` y `message` (RF-11), con la misma normalización de días y validación de duplicados (RN-07), sin contar el propio recordatorio. |
+| `POST /reminders/register` | Además de guardar, si hoy coincide con `daysOfWeek` y el tratamiento está vigente hoy, genera ya la dosis de hoy (idempotente). `PUT /reminders/{id}` mueve al nuevo horario la dosis `PENDING` de hoy; las `CONFIRMED`/`SKIPPED` no se tocan. |
+| `PUT /doses/{id}/confirm`, `PUT /doses/{id}/skip` | 404 si la dosis no existe; 409 si ya no está `PENDING` (RN-03). |
+| `POST /caregiver-links/register` | 409 si el vínculo cuidador-paciente ya existe y está activo; si estaba dado de baja lógicamente, se reactiva. |
 | `DELETE /reminders/{id}` | Eliminación lógica (`deleted_at`) y `active=false`: deja de generar dosis. 204. |
 | `GET /doses/user/{userId}?date=YYYY-MM-DD` | Dosis del usuario para ese día (por defecto, hoy), ordenadas por hora. No incluye dosis de tratamientos o recordatorios eliminados. |
 | `POST /doses/generate-daily` | **Herramienta de desarrollo/testing:** dispara a demanda la generación de dosis de hoy (la misma que corre sola cada día a medianoche, RF-06/CU-05). Es idempotente. Devuelve `{"generated": n}`. |
@@ -338,6 +341,50 @@ El motor de base de datos es PostgreSQL, hosteado en [Neon](#tecnologías). El e
   psql "$DATABASE_URL" -f database/schema.sql
   ```
   El valor de `DATABASE_URL` debe declararse entre comillas, ya que el parámetro `channel_binding` de la cadena de conexión de Neon incluye un `&` que, sin comillas, bash interpreta como operador de segundo plano.
+
+### Cambios de esquema sobre una base ya creada
+
+`database/schema.sql` crea todo desde cero. Si la base se creó con una versión anterior del esquema, hay que aplicar a mano estos cambios (en el SQL Editor de Neon o con `psql`). Cada uno ya está reflejado en `schema.sql`.
+
+**1. Valores de enum en mayúsculas.** Los enums Java (`User.Role`, `Dose.DoseStatus`) usan nombres en mayúsculas, así que los valores de `user_role` y `dose_status` en Postgres deben coincidir exactamente. Las versiones anteriores del esquema los definían en minúsculas. `RENAME VALUE` actualiza también las filas y los defaults existentes:
+
+```sql
+ALTER TYPE user_role RENAME VALUE 'patient' TO 'PATIENT';
+ALTER TYPE user_role RENAME VALUE 'caregiver' TO 'CAREGIVER';
+ALTER TYPE user_role RENAME VALUE 'doctor' TO 'DOCTOR';
+ALTER TYPE dose_status RENAME VALUE 'pending' TO 'PENDING';
+ALTER TYPE dose_status RENAME VALUE 'confirmed' TO 'CONFIRMED';
+ALTER TYPE dose_status RENAME VALUE 'skipped' TO 'SKIPPED';
+```
+
+**2. Índice único parcial de recordatorios (RN-07).** Requiere PostgreSQL 15 o superior (`NULLS NOT DISTINCT`). Impide dos recordatorios vigentes del mismo tratamiento con la misma hora y los mismos días; los eliminados lógicamente no cuentan.
+
+```sql
+-- Antes: si devuelve filas, hay recordatorios duplicados que depurar o el índice falla
+SELECT treatment_id, time, days_of_week, count(*) FROM reminder
+WHERE deleted_at IS NULL GROUP BY 1, 2, 3 HAVING count(*) > 1;
+
+CREATE UNIQUE INDEX reminder_treatment_time_days_key
+    ON reminder (treatment_id, time, days_of_week) NULLS NOT DISTINCT
+    WHERE deleted_at IS NULL;
+```
+
+**3. Índice único de dosis.** `dose_reminder_scheduled_key` sobre `dose (reminder_id, scheduled_at)` hace idempotente la generación de dosis (job de medianoche, arranque de la aplicación y alta de recordatorios). Su SQL y el chequeo previo están en la sección de la API, junto al endpoint `POST /doses/generate-daily`.
+
+**4. Emails en minúsculas.** El backend normaliza el email (`trim` + minúsculas) al registrar y al iniciar sesión, por lo que las cuentas guardadas con mayúsculas dejarían de poder entrar. Primero, detectar cuentas que ya difieren solo en mayúsculas (si devuelve filas, resolverlas a mano antes del `UPDATE`, porque el `UNIQUE` de `email` haría fallar la normalización):
+
+```sql
+SELECT lower(trim(email)) AS email_normalizado, count(*) AS cuentas, array_agg(id) AS ids
+FROM "user"
+GROUP BY lower(trim(email))
+HAVING count(*) > 1;
+```
+
+Recién sin resultados, normalizar las existentes:
+
+```sql
+UPDATE "user" SET email = lower(trim(email)) WHERE email <> lower(trim(email));
+```
 
 ---
 

@@ -3,12 +3,15 @@ package com.medtracker.medtracker.service;
 import com.medtracker.medtracker.model.Dose;
 import com.medtracker.medtracker.repository.DoseRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -21,6 +24,9 @@ public class DoseService {
 
     // Registrar una nueva dosis
     public Dose register(Dose dose) {
+        // Evita pisar una dosis existente por id o resucitar una eliminada
+        dose.setId(null);
+        dose.setDeletedAt(null);
         return doseRepository.save(dose);
     }
 
@@ -51,7 +57,8 @@ public class DoseService {
         if (doseOpt.isPresent()) {
             Dose dose = doseOpt.get();
             if (dose.getStatus() != Dose.DoseStatus.PENDING) {
-                return Optional.empty();
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "La toma ya fue " + dose.getStatus().name().toLowerCase(Locale.ROOT));
             }
             try {
                 Dose.DoseStatus newStatus = Dose.DoseStatus.valueOf(status.toUpperCase());

@@ -2,7 +2,9 @@ package com.medtracker.medtracker.service;
 
 import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.repository.ReminderRepository;
+import com.medtracker.medtracker.repository.TreatmentRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -17,6 +19,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ReminderService {
@@ -25,6 +28,8 @@ public class ReminderService {
     private static final List<String> WEEK_DAYS = List.of("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN");
 
     private final ReminderRepository reminderRepository;
+    private final TreatmentRepository treatmentRepository;
+    private final DoseGenerationService doseGenerationService;
     private final Clock clock;
 
     // Registrar un nuevo recordatorio (CU-04)
@@ -32,9 +37,27 @@ public class ReminderService {
         if (reminder.getTreatment() == null || reminder.getTreatment().getId() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Falta el tratamiento del recordatorio");
         }
+        // El body trae solo el id del tratamiento: se carga el real (vigente) para
+        // que la dosis de hoy se evalúe contra sus fechas reales
+        reminder.setTreatment(treatmentRepository.findById(reminder.getTreatment().getId())
+                .filter(treatment -> treatment.getDeletedAt() == null)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Tratamiento no encontrado: " + reminder.getTreatment().getId())));
         reminder.setDaysOfWeek(normalizeDays(reminder.getDaysOfWeek()));
         ensureNotDuplicated(reminder.getTreatment().getId(), reminder.getTime(), reminder.getDaysOfWeek(), null);
-        return reminderRepository.save(reminder);
+        // El body llega como entidad: sin esto un id existente haría merge y
+        // pisaría otro recordatorio, y un deletedAt resucitaría uno eliminado
+        reminder.setId(null);
+        reminder.setDeletedAt(null);
+        Reminder saved = reminderRepository.save(reminder);
+        try {
+            // Si hoy toca, la dosis se genera ya, sin esperar al job de medianoche
+            doseGenerationService.generateTodayForReminder(saved.getId());
+        } catch (RuntimeException e) {
+            // El recordatorio ya quedó guardado; el job o el arranque lo recuperan
+            log.error("No se pudo generar la dosis de hoy del recordatorio {}", saved.getId(), e);
+        }
+        return saved;
     }
 
     // RN-07: no puede haber dos recordatorios del mismo tratamiento con la
@@ -103,7 +126,15 @@ public class ReminderService {
         reminder.setTime(changes.getTime());
         reminder.setDaysOfWeek(days);
         reminder.setMessage(changes.getMessage());
-        return reminderRepository.save(reminder);
+        Reminder saved = reminderRepository.save(reminder);
+        // La dosis PENDING de hoy sigue el nuevo horario; las ya resueltas no se tocan
+        try {
+            doseGenerationService.rescheduleTodayPending(saved);
+        } catch (RuntimeException e) {
+            // La edición ya quedó guardada; no se le informa un error al cliente
+            log.error("No se pudo reprogramar la dosis de hoy del recordatorio {}", saved.getId(), e);
+        }
+        return saved;
     }
 
     // Eliminar un recordatorio (RF-11): borrado lógico y se desactiva para que

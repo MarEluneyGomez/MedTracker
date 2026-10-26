@@ -77,6 +77,19 @@ class TreatmentServiceTest {
     }
 
     @Test
+    void registerIgnoresClientSuppliedIdAndDeletedAt() {
+        Treatment incoming = existing(UUID.randomUUID());
+        incoming.setDeletedAt(NOW.minusDays(1));
+        when(userService.getWithRole(any(), any())).thenReturn(new com.medtracker.medtracker.model.User());
+        when(treatmentRepository.save(incoming)).thenAnswer(inv -> inv.getArgument(0));
+
+        Treatment saved = service.register(incoming);
+
+        assertThat(saved.getId()).isNull();
+        assertThat(saved.getDeletedAt()).isNull();
+    }
+
+    @Test
     void updateRejectsEndDateBeforeStartDate() {
         UUID id = UUID.randomUUID();
         when(treatmentRepository.findById(id)).thenReturn(Optional.of(existing(id)));

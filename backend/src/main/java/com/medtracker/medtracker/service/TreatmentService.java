@@ -31,6 +31,10 @@ public class TreatmentService {
     public Treatment register(Treatment treatment) {
         treatment.setUser(userService.getWithRole(treatment.getUser(), User.Role.PATIENT));
         validateDates(treatment.getStartDate(), treatment.getEndDate());
+        // El body llega como entidad: sin esto un id existente haría merge y
+        // pisaría otro registro, y un deletedAt resucitaría uno eliminado
+        treatment.setId(null);
+        treatment.setDeletedAt(null);
         return treatmentRepository.save(treatment);
     }
 

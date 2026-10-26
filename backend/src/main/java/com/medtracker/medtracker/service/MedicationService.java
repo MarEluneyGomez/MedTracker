@@ -16,6 +16,9 @@ public class MedicationService {
 
     // Registrar un nuevo medicamento
     public Medication register(Medication medication) {
+        // Evita pisar un medicamento existente por id o resucitar uno eliminado
+        medication.setId(null);
+        medication.setDeletedAt(null);
         return medicationRepository.save(medication);
     }
 
