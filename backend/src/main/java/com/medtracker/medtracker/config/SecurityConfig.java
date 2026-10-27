@@ -2,6 +2,7 @@ package com.medtracker.medtracker.config;
 
 import com.medtracker.medtracker.security.JwtAuthenticationFilter;
 import com.medtracker.medtracker.security.JwtService;
+import com.medtracker.medtracker.security.RestAccessDeniedHandler;
 import com.medtracker.medtracker.security.RestAuthenticationEntryPoint;
 import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
@@ -27,7 +28,8 @@ public class SecurityConfig {
     // RN-09) se valida en los services con AccessPolicy, usando el usuario del token.
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService,
-                                                   RestAuthenticationEntryPoint entryPoint) throws Exception {
+                                                   RestAuthenticationEntryPoint entryPoint,
+                                                   RestAccessDeniedHandler accessDeniedHandler) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
@@ -40,7 +42,9 @@ public class SecurityConfig {
                 .headers(headers -> headers
                         .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'none'; frame-ancestors 'none'"))
                         .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.NO_REFERRER)))
-                .exceptionHandling(ex -> ex.authenticationEntryPoint(entryPoint))
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint(entryPoint)
+                        .accessDeniedHandler(accessDeniedHandler))
                 .authorizeHttpRequests(auth -> auth
                         // Sin esto, los errores que Spring reenvía a /error (400, 404,
                         // 409...) se convertirían en 401

@@ -87,7 +87,7 @@ class AuthorizationIntegrationTest {
     @Configuration
     @EnableWebMvc
     @EnableWebSecurity
-    @Import({SecurityConfig.class, RestAuthenticationEntryPoint.class,
+    @Import({SecurityConfig.class, RestAuthenticationEntryPoint.class, RestAccessDeniedHandler.class,
             AuthController.class, UserController.class, TreatmentController.class, ReminderController.class,
             DoseController.class, MedicalAppointmentController.class, CaregiverLinkController.class,
             MedicalHistoryController.class, NotificationController.class,

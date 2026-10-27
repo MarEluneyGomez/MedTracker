@@ -6,9 +6,9 @@ import com.medtracker.medtracker.service.MedicationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 @RestController
@@ -31,9 +31,10 @@ public class MedicationController {
     // Buscar medicamento por ID
     @GetMapping("/{id}")
     public ResponseEntity<MedicationDTO> findById(@PathVariable Integer id) {
-        Optional<Medication> medication = medicationService.findById(id);
-        return medication.map(m -> ResponseEntity.ok(new MedicationDTO(m)))
-                          .orElse(ResponseEntity.notFound().build());
+        Medication medication = medicationService.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Medicamento no encontrado: " + id));
+        return ResponseEntity.ok(new MedicationDTO(medication));
     }
 
     // Listar todos los medicamentos

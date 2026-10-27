@@ -145,6 +145,29 @@ La identidad sale siempre del token. Un recurso ajeno, inexistente o eliminado l
 - `GET /users/{id}` da acceso al perfil reducido también con un turno `CANCELLED` (`shareAppointment` no filtra el estado), a diferencia del historial médico.
 - `POST /doses/generate-daily` todavía no aplica autorización: cualquier usuario autenticado puede dispararlo. Es idempotente (no duplica dosis: consulta `existsByReminderIdAndScheduledAt` antes de crear) y queda pendiente para otra tanda.
 
+#### Formato de errores
+
+Toda respuesta de error (incluidos el 401 y el 403 de la cadena de seguridad) tiene el mismo JSON: `timestamp`, `status`, `error`, `message`, `path`. Lo arma `GlobalExceptionHandler`; los mensajes que escriben los services (`ResponseStatusException`) se devuelven tal cual y el resto sale con un texto genérico en español, sin SQL, nombres de constraints, tablas, columnas ni clases Java. El detalle completo queda solo en el log del servidor.
+
+| Situación | Status | `message` |
+|---|---|---|
+| `ResponseStatusException` de un service | el suyo | el mensaje del service |
+| JSON ilegible, o enum inválido en el body | 400 | El cuerpo de la solicitud no es válido |
+| Tipo inválido en path o query (UUID, enum, fecha) | 400 | El valor del parámetro 'X' no es válido |
+| Parámetro obligatorio faltante | 400 | Falta el parámetro obligatorio 'X' |
+| Falla de `@Valid` | 400 | Los datos enviados no son válidos |
+| Método no soportado / tipo de contenido no soportado / ruta inexistente | 405 / 415 / 404 | mensaje genérico |
+| Unique (SQLState 23505) | 409 | Ya existe un registro con esos datos |
+| FK inexistente (23503) o referencia sin `id` (ej. `"medication": {}`) | 400 | Una de las referencias indicadas no existe |
+| NOT NULL (23502) | 400 | Faltan datos obligatorios |
+| Valor demasiado largo (22001) | 400 | Alguno de los valores supera el largo permitido |
+| CHECK (23514) u otro error de dato (22xxx) | 400 | Alguno de los valores no es válido |
+| Cualquier otra excepción | 500 | Ocurrió un error interno |
+
+El SQL por consola (`spring.jpa.show-sql`) está apagado; se activa con la variable `JPA_SHOW_SQL=true`.
+
+**Pendiente.** `DoseService.changeStatus` atrapa `IllegalArgumentException` y devuelve vacío (el controller lo traduce a 404). Hoy es código inalcanzable porque los controllers solo pasan `CONFIRMED` o `SKIPPED`, pero podría tragarse una excepción real del `save`; queda para una tanda de limpieza.
+
 #### Alta de médicos
 
 El auto-registro (`POST /users/register`) no permite el rol `DOCTOR`: si no, cualquiera podría registrarse como médico y la RN-09 perdería sentido. Un médico se da de alta a mano en la base, con una de estas dos variantes (sin credenciales reales en el repositorio):

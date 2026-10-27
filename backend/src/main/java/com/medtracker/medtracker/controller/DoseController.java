@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -93,7 +94,7 @@ public class DoseController {
                                            @PathVariable UUID id) {
         Optional<Dose> updated = doseService.changeStatus(principal, id, "CONFIRMED");
         return updated.map(d -> ResponseEntity.ok(new DoseDTO(d)))
-                          .orElse(ResponseEntity.notFound().build());
+                          .orElseThrow(() -> doseNotFound(id));
     }
 
     // Marcar una toma como omitida (RF-07): pasa a estado SKIPPED
@@ -102,6 +103,10 @@ public class DoseController {
                                         @PathVariable UUID id) {
         Optional<Dose> updated = doseService.changeStatus(principal, id, "SKIPPED");
         return updated.map(d -> ResponseEntity.ok(new DoseDTO(d)))
-                          .orElse(ResponseEntity.notFound().build());
+                          .orElseThrow(() -> doseNotFound(id));
+    }
+
+    private ResponseStatusException doseNotFound(UUID id) {
+        return new ResponseStatusException(HttpStatus.NOT_FOUND, "Toma no encontrada: " + id);
     }
 }

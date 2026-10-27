@@ -50,7 +50,7 @@ class JwtSecurityIntegrationTest {
     @Configuration
     @EnableWebMvc
     @EnableWebSecurity
-    @Import({SecurityConfig.class, RestAuthenticationEntryPoint.class, AuthController.class, UserController.class,
+    @Import({SecurityConfig.class, RestAuthenticationEntryPoint.class, RestAccessDeniedHandler.class, AuthController.class, UserController.class,
             ProbeController.class})
     static class TestConfig {
         @Bean
