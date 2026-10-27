@@ -2,10 +2,12 @@ package com.medtracker.medtracker.controller;
 
 import com.medtracker.medtracker.dto.DoctorSummaryDTO;
 import com.medtracker.medtracker.dto.UserDTO;
+import com.medtracker.medtracker.dto.UserRegisterRequestDTO;
 import com.medtracker.medtracker.dto.UserSummaryDTO;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.service.UserService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -26,8 +28,8 @@ public class UserController {
 
     // Registrar usuario (público). Solo PATIENT o CAREGIVER; sin rol, PATIENT.
     @PostMapping("/register")
-    public ResponseEntity<UserDTO> register(@RequestBody User user) {
-        User created = userService.register(user);
+    public ResponseEntity<UserDTO> register(@Valid @RequestBody UserRegisterRequestDTO request) {
+        User created = userService.register(request.toEntity());
         return ResponseEntity.status(HttpStatus.CREATED).body(new UserDTO(created));
     }
 

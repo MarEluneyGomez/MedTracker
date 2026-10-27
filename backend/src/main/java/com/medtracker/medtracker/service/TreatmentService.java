@@ -1,8 +1,10 @@
 package com.medtracker.medtracker.service;
 
+import com.medtracker.medtracker.model.Medication;
 import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.model.Treatment;
 import com.medtracker.medtracker.model.User;
+import com.medtracker.medtracker.repository.MedicationRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
@@ -24,6 +26,7 @@ public class TreatmentService {
 
     private final TreatmentRepository treatmentRepository;
     private final ReminderRepository reminderRepository;
+    private final MedicationRepository medicationRepository;
     private final UserService userService;
     private final AccessPolicy accessPolicy;
     private final Clock clock;
@@ -36,14 +39,33 @@ public class TreatmentService {
             accessPolicy.requireCanManagePatient(principal, treatment.getUser().getId());
         }
         treatment.setUser(userService.getWithRole(treatment.getUser(), User.Role.PATIENT));
+        treatment.setMedication(requireMedication(treatment.getMedication()));
         validateDates(treatment.getStartDate(), treatment.getEndDate());
         validateTimes(treatment.getStartDate(), treatment.getEndDate(),
                 treatment.getStartTime(), treatment.getEndTime());
-        // El body llega como entidad: sin esto un id existente haría merge y
-        // pisaría otro registro, y un deletedAt resucitaría uno eliminado
+        // El controller ya arma la entidad desde un DTO sin estos campos; igual
+        // se limpian por si otro llamador pasara un id existente (haría merge y
+        // pisaría otro registro) o un deletedAt (resucitaría uno eliminado)
         treatment.setId(null);
         treatment.setDeletedAt(null);
+        treatment.setCompleted(false);
         return treatmentRepository.save(treatment);
+    }
+
+    // El body trae solo el id del medicamento: se carga el real, que debe
+    // existir y no estar dado de baja. Se chequea después de la autorización
+    // sobre el paciente, para no revelar el catálogo a quien no puede crear.
+    private Medication requireMedication(Medication reference) {
+        if (reference == null || reference.getId() == null) {
+            throw medicationNotFound();
+        }
+        return medicationRepository.findById(reference.getId())
+                .filter(medication -> medication.getDeletedAt() == null)
+                .orElseThrow(this::medicationNotFound);
+    }
+
+    private ResponseStatusException medicationNotFound() {
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST, "El medicamento indicado no existe");
     }
 
     private void validateDates(LocalDateTime startDate, LocalDateTime endDate) {

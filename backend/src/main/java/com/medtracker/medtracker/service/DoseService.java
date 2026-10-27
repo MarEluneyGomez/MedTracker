@@ -13,7 +13,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
-import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -72,23 +71,20 @@ public class DoseService {
     }
 
     // Cambiar estado de la dosis (RN-03: una toma ya confirmada/omitida no puede volver a cambiar de estado)
-    public Optional<Dose> changeStatus(AuthenticatedUser principal, UUID id, String status) {
+    public Dose changeStatus(AuthenticatedUser principal, UUID id, Dose.DoseStatus newStatus) {
+        if (newStatus == Dose.DoseStatus.PENDING) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Una toma solo puede pasar a CONFIRMED o SKIPPED");
+        }
         Dose dose = accessPolicy.requireDose(principal, id);
         if (dose.getStatus() != Dose.DoseStatus.PENDING) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "La toma ya fue " + dose.getStatus().name().toLowerCase(Locale.ROOT));
         }
-        try {
-            Dose.DoseStatus newStatus = Dose.DoseStatus.valueOf(status.toUpperCase());
-            dose.setStatus(newStatus);
-            if (newStatus == Dose.DoseStatus.CONFIRMED) {
-                dose.setConfirmedAt(LocalDateTime.now(clock));
-            }
-            doseRepository.save(dose);
-            return Optional.of(dose);
-        } catch (IllegalArgumentException e) {
-            // Estado inválido
-            return Optional.empty();
+        dose.setStatus(newStatus);
+        if (newStatus == Dose.DoseStatus.CONFIRMED) {
+            dose.setConfirmedAt(LocalDateTime.now(clock));
         }
+        return doseRepository.save(dose);
     }
 }

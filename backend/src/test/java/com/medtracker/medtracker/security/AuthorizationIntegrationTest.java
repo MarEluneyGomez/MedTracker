@@ -24,6 +24,7 @@ import com.medtracker.medtracker.repository.CaregiverLinkRepository;
 import com.medtracker.medtracker.repository.DoseRepository;
 import com.medtracker.medtracker.repository.MedicalAppointmentRepository;
 import com.medtracker.medtracker.repository.MedicalHistoryRepository;
+import com.medtracker.medtracker.repository.MedicationRepository;
 import com.medtracker.medtracker.repository.NotificationRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
@@ -116,6 +117,11 @@ class AuthorizationIntegrationTest {
         }
 
         @Bean
+        MedicationRepository medicationRepository() {
+            return Mockito.mock(MedicationRepository.class);
+        }
+
+        @Bean
         ReminderRepository reminderRepository() {
             return Mockito.mock(ReminderRepository.class);
         }
@@ -164,6 +170,8 @@ class AuthorizationIntegrationTest {
     private UserRepository userRepository;
     @Autowired
     private TreatmentRepository treatmentRepository;
+    @Autowired
+    private MedicationRepository medicationRepository;
     @Autowired
     private ReminderRepository reminderRepository;
     @Autowired
@@ -219,8 +227,9 @@ class AuthorizationIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        Mockito.reset(userRepository, treatmentRepository, reminderRepository, doseRepository,
+        Mockito.reset(userRepository, treatmentRepository, medicationRepository, reminderRepository, doseRepository,
                 appointmentRepository, caregiverLinkRepository, medicalHistoryRepository, notificationRepository);
+        when(medicationRepository.findById(1)).thenReturn(Optional.of(medication()));
         mockMvc =MockMvcBuilders.webAppContextSetup(context)
                 .addFilters((Filter) context.getBean("springSecurityFilterChain"))
                 .build();
@@ -616,19 +625,19 @@ class AuthorizationIntegrationTest {
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(json(post("/users/register"),
-                        "{\"name\":\"X\",\"email\":\"x1@mail.com\",\"passwordHash\":\"pw\",\"role\":\"DOCTOR\"}"))
+                        "{\"name\":\"X\",\"email\":\"x1@mail.com\",\"passwordHash\":\"Secreto123\",\"role\":\"DOCTOR\"}"))
                 .andExpect(status().isBadRequest());
         mockMvc.perform(json(post("/users/register"),
-                        "{\"name\":\"X\",\"email\":\"x2@mail.com\",\"passwordHash\":\"pw\",\"role\":\"ADMIN\"}"))
+                        "{\"name\":\"X\",\"email\":\"x2@mail.com\",\"passwordHash\":\"Secreto123\",\"role\":\"ADMIN\"}"))
                 .andExpect(status().isBadRequest());
         verify(userRepository, never()).save(any());
 
         mockMvc.perform(json(post("/users/register"),
-                        "{\"name\":\"X\",\"email\":\"x3@mail.com\",\"passwordHash\":\"pw\",\"role\":\"CAREGIVER\"}"))
+                        "{\"name\":\"X\",\"email\":\"x3@mail.com\",\"passwordHash\":\"Secreto123\",\"role\":\"CAREGIVER\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.role").value("CAREGIVER"));
         mockMvc.perform(json(post("/users/register"),
-                        "{\"name\":\"X\",\"email\":\"x4@mail.com\",\"passwordHash\":\"pw\"}"))
+                        "{\"name\":\"X\",\"email\":\"x4@mail.com\",\"passwordHash\":\"Secreto123\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.role").value("PATIENT"));
     }
