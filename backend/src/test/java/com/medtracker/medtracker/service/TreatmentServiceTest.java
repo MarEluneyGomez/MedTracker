@@ -1,8 +1,10 @@
 package com.medtracker.medtracker.service;
 
+import com.medtracker.medtracker.model.Medication;
 import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.model.Treatment;
 import com.medtracker.medtracker.model.User;
+import com.medtracker.medtracker.repository.MedicationRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
@@ -20,6 +22,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -35,11 +38,14 @@ import static org.mockito.Mockito.when;
 class TreatmentServiceTest {
 
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 13, 12, 0);
+    private static final Integer MEDICATION_ID = 7;
 
     @Mock
     private TreatmentRepository treatmentRepository;
     @Mock
     private ReminderRepository reminderRepository;
+    @Mock
+    private MedicationRepository medicationRepository;
     @Mock
     private UserService userService;
     @Mock
@@ -51,12 +57,19 @@ class TreatmentServiceTest {
     @BeforeEach
     void setUp() {
         Clock clock = Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC);
-        service = new TreatmentService(treatmentRepository, reminderRepository, userService, accessPolicy, clock);
+        service = new TreatmentService(treatmentRepository, reminderRepository, medicationRepository,
+                userService, accessPolicy, clock);
     }
 
     private Treatment existing(UUID id) {
         return Treatment.builder().id(id).dosage("1 comp").frequency("cada 8 hs")
-                .startDate(NOW.minusDays(5)).build();
+                .startDate(NOW.minusDays(5)).medication(Medication.builder().id(MEDICATION_ID).build()).build();
+    }
+
+    // El medicamento del body existe y está vigente
+    private void stubMedication() {
+        when(medicationRepository.findById(MEDICATION_ID))
+                .thenReturn(Optional.of(Medication.builder().id(MEDICATION_ID).build()));
     }
 
     private Treatment changes(LocalDateTime start, LocalDateTime end) {
@@ -87,13 +100,63 @@ class TreatmentServiceTest {
     void registerIgnoresClientSuppliedIdAndDeletedAt() {
         Treatment incoming = existing(UUID.randomUUID());
         incoming.setDeletedAt(NOW.minusDays(1));
+        incoming.setCompleted(true);
         when(userService.getWithRole(any(), any())).thenReturn(new com.medtracker.medtracker.model.User());
+        stubMedication();
         when(treatmentRepository.save(incoming)).thenAnswer(inv -> inv.getArgument(0));
 
         Treatment saved = service.register(principal, incoming);
 
         assertThat(saved.getId()).isNull();
         assertThat(saved.getDeletedAt()).isNull();
+        assertThat(saved.isCompleted()).isFalse();
+    }
+
+    @Test
+    void registerWithAMissingMedicationIs400WithASpecificMessage() {
+        Treatment incoming = existing(null);
+        when(userService.getWithRole(any(), any())).thenReturn(new com.medtracker.medtracker.model.User());
+        when(medicationRepository.findById(MEDICATION_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST))
+                .hasMessageContaining("El medicamento indicado no existe");
+        verify(treatmentRepository, never()).save(any());
+    }
+
+    @Test
+    void registerWithASoftDeletedMedicationIs400() {
+        Treatment incoming = existing(null);
+        when(userService.getWithRole(any(), any())).thenReturn(new com.medtracker.medtracker.model.User());
+        when(medicationRepository.findById(MEDICATION_ID)).thenReturn(Optional.of(
+                Medication.builder().id(MEDICATION_ID).deletedAt(NOW.minusDays(1)).build()));
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST))
+                .hasMessageContaining("El medicamento indicado no existe");
+        verify(treatmentRepository, never()).save(any());
+    }
+
+    @Test
+    void registerWithoutAMedicationReferenceIs400() {
+        Treatment incoming = existing(null);
+        incoming.setMedication(null);
+        when(userService.getWithRole(any(), any())).thenReturn(new com.medtracker.medtracker.model.User());
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        verify(medicationRepository, never()).findById(any());
+    }
+
+    @Test
+    void theMedicationIsOnlyCheckedAfterTheUserIsAuthorized() {
+        Treatment incoming = existing(null);
+        when(userService.getWithRole(any(), any()))
+                .thenThrow(new ResponseStatusException(HttpStatus.BAD_REQUEST));
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        verify(medicationRepository, never()).findById(any());
     }
 
     @Test
@@ -111,7 +174,9 @@ class TreatmentServiceTest {
         Treatment incoming = changes(NOW.toLocalDate().atStartOfDay(), NOW.toLocalDate().atTime(23, 0));
         incoming.setStartTime(LocalTime.of(15, 0));
         incoming.setEndTime(LocalTime.of(10, 0));
+        incoming.setMedication(Medication.builder().id(MEDICATION_ID).build());
         when(userService.getWithRole(any(), any())).thenReturn(new com.medtracker.medtracker.model.User());
+        stubMedication();
 
         assertThatThrownBy(() -> service.register(principal, incoming))
                 .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
@@ -248,6 +313,7 @@ class TreatmentServiceTest {
         Treatment incoming = existing(null);
         incoming.setUser(User.builder().id(owner).build());
         when(userService.getWithRole(any(), any())).thenReturn(User.builder().id(owner).build());
+        stubMedication();
         when(treatmentRepository.save(incoming)).thenAnswer(inv -> inv.getArgument(0));
 
         service.register(principal, incoming);

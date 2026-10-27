@@ -50,8 +50,9 @@ public class UserService {
         if (userRepository.existsByEmail(user.getEmail())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "El email ya está registrado");
         }
-        // El body llega como entidad: si el cliente mandara un id existente,
-        // save() haría merge y pisaría la cuenta de otro usuario
+        // El controller ya arma la entidad desde un DTO sin id; igual se limpia
+        // por si otro llamador pasara uno existente: save() haría merge y
+        // pisaría la cuenta de otro usuario
         user.setId(null);
         user.setDeletedAt(null);
         user.setPasswordHash(passwordEncoder.encode(user.getPasswordHash()));
@@ -64,20 +65,18 @@ public class UserService {
     }
 
     // Obtener el usuario referenciado y verificar que tenga el rol esperado
-    // (ej. que el "doctor" de una cita sea realmente un DOCTOR)
+    // (ej. que el "doctor" de una cita sea realmente un DOCTOR). Un usuario
+    // inexistente, eliminado o con otro rol responde igual (400): si no, el
+    // mensaje permitiría averiguar qué ids existen y qué rol tienen.
     public User getWithRole(User reference, User.Role role) {
         if (reference == null || reference.getId() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Falta el usuario con rol " + role);
         }
-        User user = userRepository.findById(reference.getId())
+        return userRepository.findById(reference.getId())
                 .filter(found -> found.getDeletedAt() == null)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "Usuario no encontrado: " + reference.getId()));
-        if (user.getRole() != role) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "El usuario " + user.getId() + " no tiene rol " + role);
-        }
-        return user;
+                .filter(found -> found.getRole() == role)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "El usuario indicado no existe o no tiene el rol requerido (" + role + ")"));
     }
 
     // Usuario que el solicitante puede ver: él mismo, un usuario vinculado

@@ -15,6 +15,7 @@ import com.medtracker.medtracker.service.LoginAttemptService;
 import com.medtracker.medtracker.service.UserService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.Setter;
 import org.hibernate.exception.ConstraintViolationException;
@@ -112,6 +113,9 @@ class GlobalExceptionHandlerTest {
     public static class ValidBody {
         @NotBlank
         private String email;
+
+        @Size(max = 5)
+        private String code;
     }
 
     @RestController
@@ -325,10 +329,11 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void beanValidationFailureIs400WithoutFieldsOrValues() throws Exception {
+    void beanValidationFailureIs400NamingTheFieldsButNeverTheValues() throws Exception {
         JsonNode json = errorOf(post("/probe/valid").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"email\":\"\"}"), 400, "/probe/valid");
-        assertThat(json.get("message").asString()).isEqualTo("Los datos enviados no son válidos");
+                .content("{\"email\":\"\",\"code\":\"valor-secreto-123\"}"), 400, "/probe/valid");
+        assertThat(json.get("message").asString()).isEqualTo("Campos inválidos: code, email");
+        assertThat(json.toString()).doesNotContain("valor-secreto-123");
     }
 
     @Test

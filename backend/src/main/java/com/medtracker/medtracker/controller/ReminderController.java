@@ -1,9 +1,12 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.ReminderCreateRequestDTO;
 import com.medtracker.medtracker.dto.ReminderDTO;
+import com.medtracker.medtracker.dto.ReminderUpdateRequestDTO;
 import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.service.ReminderService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -26,8 +29,8 @@ public class ReminderController {
     // Registrar recordatorio
     @PostMapping("/register")
     public ResponseEntity<ReminderDTO> register(@AuthenticationPrincipal AuthenticatedUser principal,
-                                                @RequestBody Reminder reminder) {
-        Reminder created = reminderService.register(principal, reminder);
+                                                @Valid @RequestBody ReminderCreateRequestDTO request) {
+        Reminder created = reminderService.register(principal, request.toEntity());
         return ResponseEntity.status(HttpStatus.CREATED).body(new ReminderDTO(created));
     }
 
@@ -62,8 +65,9 @@ public class ReminderController {
     // Editar recordatorio (RF-11): hora, días y mensaje
     @PutMapping("/{id}")
     public ResponseEntity<ReminderDTO> update(@AuthenticationPrincipal AuthenticatedUser principal,
-                                              @PathVariable UUID id, @RequestBody Reminder reminder) {
-        return ResponseEntity.ok(new ReminderDTO(reminderService.update(principal, id, reminder)));
+                                              @PathVariable UUID id,
+                                              @Valid @RequestBody ReminderUpdateRequestDTO request) {
+        return ResponseEntity.ok(new ReminderDTO(reminderService.update(principal, id, request.toEntity())));
     }
 
     // Eliminar recordatorio (RF-11): borrado lógico, deja de generar dosis

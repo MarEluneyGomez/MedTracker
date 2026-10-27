@@ -154,7 +154,7 @@ class JwtSecurityIntegrationTest {
                         .content("{\"email\":\"ana@mail.com\",\"password\":\"secreto\"}"))
                 .andExpect(status().isOk());
         mockMvc.perform(post("/users/register").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"Ana\",\"email\":\"ana@mail.com\",\"passwordHash\":\"secreto\"}"))
+                        .content("{\"name\":\"Ana\",\"email\":\"ana@mail.com\",\"passwordHash\":\"Secreto123\"}"))
                 .andExpect(status().isCreated());
     }
 

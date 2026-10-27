@@ -1,9 +1,12 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.TreatmentCreateRequestDTO;
 import com.medtracker.medtracker.dto.TreatmentDTO;
+import com.medtracker.medtracker.dto.TreatmentUpdateRequestDTO;
 import com.medtracker.medtracker.model.Treatment;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.service.TreatmentService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -26,8 +29,8 @@ public class TreatmentController {
     // Registrar tratamiento
     @PostMapping("/register")
     public ResponseEntity<TreatmentDTO> register(@AuthenticationPrincipal AuthenticatedUser principal,
-                                                 @RequestBody Treatment treatment) {
-        Treatment created = treatmentService.register(principal, treatment);
+                                                 @Valid @RequestBody TreatmentCreateRequestDTO request) {
+        Treatment created = treatmentService.register(principal, request.toEntity());
         return ResponseEntity.status(HttpStatus.CREATED).body(new TreatmentDTO(created));
     }
 
@@ -62,8 +65,9 @@ public class TreatmentController {
     // Editar tratamiento (CU-08): dosis, frecuencia y fechas
     @PutMapping("/{id}")
     public ResponseEntity<TreatmentDTO> update(@AuthenticationPrincipal AuthenticatedUser principal,
-                                               @PathVariable UUID id, @RequestBody Treatment treatment) {
-        return ResponseEntity.ok(new TreatmentDTO(treatmentService.update(principal, id, treatment)));
+                                               @PathVariable UUID id,
+                                               @Valid @RequestBody TreatmentUpdateRequestDTO request) {
+        return ResponseEntity.ok(new TreatmentDTO(treatmentService.update(principal, id, request.toEntity())));
     }
 
     // Eliminar tratamiento (CU-08): borrado lógico y recordatorios desactivados

@@ -87,7 +87,7 @@ public class ReminderService {
         for (String day : normalized) {
             if (!WEEK_DAYS.contains(day)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Día de la semana inválido: '" + day + "'. Valores permitidos: " + WEEK_DAYS);
+                        "Día de la semana inválido. Valores permitidos: " + WEEK_DAYS);
             }
         }
         return normalized.stream()

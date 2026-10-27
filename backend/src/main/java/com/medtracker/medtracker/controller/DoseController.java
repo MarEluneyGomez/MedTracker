@@ -1,21 +1,21 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.DoseCreateRequestDTO;
 import com.medtracker.medtracker.dto.DoseDTO;
 import com.medtracker.medtracker.model.Dose;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.service.DoseGenerationService;
 import com.medtracker.medtracker.service.DoseService;
+import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -34,8 +34,8 @@ public class DoseController {
     // Registrar una nueva dosis (normalmente la crea el backend al generar la notificación, RF-06)
     @PostMapping("/register")
     public ResponseEntity<DoseDTO> register(@AuthenticationPrincipal AuthenticatedUser principal,
-                                            @RequestBody Dose dose) {
-        Dose created = doseService.register(principal, dose);
+                                            @Valid @RequestBody DoseCreateRequestDTO request) {
+        Dose created = doseService.register(principal, request.toEntity());
         return ResponseEntity.status(HttpStatus.CREATED).body(new DoseDTO(created));
     }
 
@@ -92,21 +92,13 @@ public class DoseController {
     @PutMapping("/{id}/confirm")
     public ResponseEntity<DoseDTO> confirm(@AuthenticationPrincipal AuthenticatedUser principal,
                                            @PathVariable UUID id) {
-        Optional<Dose> updated = doseService.changeStatus(principal, id, "CONFIRMED");
-        return updated.map(d -> ResponseEntity.ok(new DoseDTO(d)))
-                          .orElseThrow(() -> doseNotFound(id));
+        return ResponseEntity.ok(new DoseDTO(doseService.changeStatus(principal, id, Dose.DoseStatus.CONFIRMED)));
     }
 
     // Marcar una toma como omitida (RF-07): pasa a estado SKIPPED
     @PutMapping("/{id}/skip")
     public ResponseEntity<DoseDTO> skip(@AuthenticationPrincipal AuthenticatedUser principal,
                                         @PathVariable UUID id) {
-        Optional<Dose> updated = doseService.changeStatus(principal, id, "SKIPPED");
-        return updated.map(d -> ResponseEntity.ok(new DoseDTO(d)))
-                          .orElseThrow(() -> doseNotFound(id));
-    }
-
-    private ResponseStatusException doseNotFound(UUID id) {
-        return new ResponseStatusException(HttpStatus.NOT_FOUND, "Toma no encontrada: " + id);
+        return ResponseEntity.ok(new DoseDTO(doseService.changeStatus(principal, id, Dose.DoseStatus.SKIPPED)));
     }
 }

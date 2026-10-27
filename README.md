@@ -110,7 +110,7 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 | `POST /auth/login` | Body `{email, password}`. 200 con el JWT (`accessToken`) y el usuario, 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
 | `GET /users?role=DOCTOR` | Lista los médicos vigentes con `id` y `name` solamente, para elegir uno al agendar una cita. Cualquier otro `role`, o sin `role`, devuelve solo al propio usuario y a sus vinculados (`id`, `name`, `email` y `role`; sin `fcmToken`). |
 | `GET /users/{id}` | El propio perfil completo; un vinculado o la contraparte de una cita compartida, en versión reducida (`id`, `name`, `email` y `role`; sin `fcmToken`). Cualquier otro usuario: 404. Solo el listado de médicos (`GET /users?role=DOCTOR`) va sin `email`. |
-| `POST /users/register` | Solo roles `PATIENT` o `CAREGIVER`; sin `role` queda `PATIENT`. `DOCTOR` responde 400 (ver [Alta de médicos](#alta-de-médicos)). |
+| `POST /users/register` | Solo roles `PATIENT` o `CAREGIVER`; sin `role` queda `PATIENT`. `DOCTOR` responde 400 (ver [Alta de médicos](#alta-de-médicos)). La contraseña se manda en `passwordHash` (también se acepta `password`) y tiene una política mínima: ver [Validación de entradas](#validación-de-entradas). |
 | `GET /treatments/user/{userId}` | Tratamientos vigentes (sin eliminados) del usuario. 403 si `userId` no es el propio ni el de un paciente que el usuario cuida. |
 | `PUT /treatments/{id}` | Edita `dosage`, `frequency`, `startDate` y `endDate` (CU-08). 400 si `endDate` < `startDate`; 404 si no existe o está eliminado. |
 | `DELETE /treatments/{id}` | Eliminación lógica + desactiva sus recordatorios (RN-06); conserva las dosis ya generadas. 204. |
@@ -123,6 +123,26 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 | `DELETE /reminders/{id}` | Eliminación lógica (`deleted_at`) y `active=false`: deja de generar dosis. 204. |
 | `GET /doses/user/{userId}?date=YYYY-MM-DD` | Dosis del usuario para ese día (por defecto, hoy), ordenadas por hora. No incluye dosis de tratamientos o recordatorios eliminados. 403 si `userId` no es el propio ni el de un paciente que el usuario cuida. |
 | `POST /doses/generate-daily` | **Herramienta de desarrollo/testing:** dispara a demanda la generación de dosis de hoy (la misma que corre sola cada día a medianoche, RF-06/CU-05). Es idempotente. Devuelve `{"generated": n}`. |
+
+#### Validación de entradas
+
+Los endpoints de la tanda A reciben un DTO de entrada con Bean Validation (`@Valid`) y no la entidad JPA, así que el cliente solo puede mandar los campos que le corresponden. La forma del JSON no cambió: las referencias siguen siendo objetos con `id`. Los campos que no figuran en la tabla se **ignoran** sin error (por ejemplo `id`, `deletedAt`, `createdAt` o un objeto referenciado completo en lugar de `{id}`); esto evita romper al frontend si manda de más, pero el cliente no se entera de que se descartaron.
+
+| Endpoint | Campos aceptados | Obligatorios | Límites |
+|---|---|---|---|
+| `POST /users/register` | `name`, `email`, `passwordHash` (alias `password`), `role`, `fcmToken` | `name`, `email`, contraseña | `name` ≤ 150; `email` con formato válido y ≤ 254; `fcmToken` ≤ 255; `role` solo `PATIENT` o `CAREGIVER` |
+| `POST /treatments/register` | `user{id}`, `medication{id}`, `dosage`, `frequency`, `startDate`, `endDate`, `startTime`, `endTime` | `user.id`, `medication.id`, `dosage`, `frequency`, `startDate` | `dosage` y `frequency` ≤ 100. Nace con `completed=false` |
+| `PUT /treatments/{id}` | `dosage`, `frequency`, `startDate`, `endDate`, `startTime`, `endTime` | `dosage`, `frequency`, `startDate` | `dosage` y `frequency` ≤ 100 |
+| `POST /reminders/register` | `treatment{id}`, `time`, `daysOfWeek`, `message` | `treatment.id`, `time`, `message` | `message` ≤ 255; `daysOfWeek` hasta 7 elementos. Nace con `active=true` |
+| `PUT /reminders/{id}` | `time`, `daysOfWeek`, `message` | `time`, `message` | igual que el alta |
+| `POST /doses/register` | `reminder{id}`, `scheduledAt` | `reminder.id`, `scheduledAt` | Nace `PENDING`; el estado y `confirmedAt` no se aceptan |
+
+- **Contraseña de registro.** Entre 8 y 72 caracteres, con al menos una letra y un dígito, y como máximo **72 bytes en UTF-8** (límite de BCrypt: una `ñ` ocupa 2 bytes, así que una contraseña con acentos puede ser rechazada antes de los 72 caracteres). El login no aplica esta política, para no dejar afuera a quienes ya tienen una contraseña anterior; una contraseña de más de 72 bytes en el login responde 401 "Credenciales incorrectas" como cualquier contraseña incorrecta.
+- **Mensaje de error.** Una falla de validación responde 400 con `Campos inválidos: a, b`: solo los **nombres** de los campos (ordenados, sin repetir; los anidados como `medication.id`), nunca el valor rechazado. La contraseña se nombra `password`, venga como `passwordHash` o como `password`.
+- **Orden.** La validación corre antes que la autorización por dueño: con un body inválido se responde 400 antes que 403 o 404.
+- **Medicamento.** En `POST /treatments/register`, un medicamento inexistente o dado de baja responde 400 "El medicamento indicado no existe". Se chequea después de autorizar sobre el paciente.
+- **Usuarios referenciados.** Un usuario inexistente, eliminado o con un rol que no corresponde (por ejemplo un `doctor` que no es `DOCTOR`) responde siempre el mismo 400 "El usuario indicado no existe o no tiene el rol requerido (ROL)", para que no se pueda averiguar qué ids existen ni qué rol tienen.
+- **Todavía con entidad (tanda B).** `POST /medical-appointments/register`, `/medical-histories/register`, `/caregiver-links/register` y `/medications/register` siguen recibiendo la entidad; su validación queda para la tanda B.
 
 #### Autorización por dueño (RN-01, RN-09)
 
@@ -145,6 +165,9 @@ La identidad sale siempre del token. Un recurso ajeno, inexistente o eliminado l
 
 - `GET /users/{id}` da acceso al perfil reducido también con un turno `CANCELLED` (`shareAppointment` no filtra el estado), a diferencia del historial médico.
 - `POST /doses/generate-daily` todavía no aplica autorización: cualquier usuario autenticado puede dispararlo. Es idempotente (no duplica dosis: consulta `existsByReminderIdAndScheduledAt` antes de crear) y queda pendiente para otra tanda.
+- Cualquier usuario autenticado, incluso un `DOCTOR`, puede dar de alta medicamentos en el catálogo (RN-08 dice solo `PATIENT` o `CAREGIVER`).
+- `POST /doses/register` no valida que `scheduledAt` caiga dentro de las fechas del tratamiento.
+- `MedicationService.findAll` devuelve también los medicamentos dados de baja.
 
 #### Formato de errores
 
@@ -156,7 +179,7 @@ Toda respuesta de error (incluidos el 401 y el 403 de la cadena de seguridad) ti
 | JSON ilegible, o enum inválido en el body | 400 | El cuerpo de la solicitud no es válido |
 | Tipo inválido en path o query (UUID, enum, fecha) | 400 | El valor del parámetro 'X' no es válido |
 | Parámetro obligatorio faltante | 400 | Falta el parámetro obligatorio 'X' |
-| Falla de `@Valid` | 400 | Los datos enviados no son válidos |
+| Falla de `@Valid` | 400 | Campos inválidos: a, b (solo los nombres de los campos, nunca los valores) |
 | Método no soportado / tipo de contenido no soportado / ruta inexistente | 405 / 415 / 404 | mensaje genérico |
 | Unique (SQLState 23505) | 409 | Ya existe un registro con esos datos |
 | FK inexistente (23503) o referencia sin `id` (ej. `"medication": {}`) | 400 | Una de las referencias indicadas no existe |
@@ -167,7 +190,7 @@ Toda respuesta de error (incluidos el 401 y el 403 de la cadena de seguridad) ti
 
 El SQL por consola (`spring.jpa.show-sql`) está apagado; se activa con la variable `JPA_SHOW_SQL=true`.
 
-**Pendiente.** `DoseService.changeStatus` atrapa `IllegalArgumentException` y devuelve vacío (el controller lo traduce a 404). Hoy es código inalcanzable porque los controllers solo pasan `CONFIRMED` o `SKIPPED`, pero podría tragarse una excepción real del `save`; queda para una tanda de limpieza.
+`DoseService.changeStatus` recibe el estado como `Dose.DoseStatus` (solo `CONFIRMED` o `SKIPPED`; `PENDING` responde 400) y ya no atrapa excepciones: un fallo real del `save` sale como 500 genérico en vez de disfrazarse de 404.
 
 #### Alta de médicos
 

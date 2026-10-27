@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -25,6 +26,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.stream.Collectors;
 
 // Un único formato de error para toda la API (timestamp, status, error,
 // message, path) y ningún detalle interno: los mensajes de los services
@@ -143,8 +145,8 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         if (ex instanceof HttpMessageNotReadableException) {
             return "El cuerpo de la solicitud no es válido";
         }
-        if (ex instanceof MethodArgumentNotValidException) {
-            return "Los datos enviados no son válidos";
+        if (ex instanceof MethodArgumentNotValidException invalid) {
+            return invalidFieldsMessage(invalid);
         }
         if (ex instanceof MissingServletRequestParameterException missing) {
             return "Falta el parámetro obligatorio '" + missing.getParameterName() + "'";
@@ -160,6 +162,20 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             case 415 -> "Tipo de contenido no soportado";
             default -> reasonPhrase(status);
         };
+    }
+
+    // Nombra los campos inválidos ("Campos inválidos: email, password") usando
+    // solo getField(): nunca el valor rechazado ni el mensaje de la regla, que
+    // podrían traer lo que mandó el cliente (una contraseña, por ejemplo).
+    private static String invalidFieldsMessage(MethodArgumentNotValidException ex) {
+        String fields = ex.getBindingResult().getFieldErrors().stream()
+                .map(FieldError::getField)
+                // "daysOfWeek[3]" -> "daysOfWeek": sin índices ni claves del cliente
+                .map(field -> field.replaceAll("\\[[^\\]]*\\]", ""))
+                .distinct()
+                .sorted()
+                .collect(Collectors.joining(", "));
+        return fields.isEmpty() ? "Los datos enviados no son válidos" : "Campos inválidos: " + fields;
     }
 
     // SQLState de la violación, buscado en la cadena de causas (el PSQLException

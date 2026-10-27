@@ -63,11 +63,24 @@ class DoseServiceTest {
         Dose pending = dose(Dose.DoseStatus.PENDING);
         when(accessPolicy.requireDose(principal, pending.getId())).thenReturn(pending);
 
-        Optional<Dose> result = service.changeStatus(principal, pending.getId(), "CONFIRMED");
+        when(doseRepository.save(pending)).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThat(result).isPresent();
-        assertThat(result.get().getStatus()).isEqualTo(Dose.DoseStatus.CONFIRMED);
-        assertThat(result.get().getConfirmedAt()).isEqualTo(NOW);
+        Dose result = service.changeStatus(principal, pending.getId(), Dose.DoseStatus.CONFIRMED);
+
+        assertThat(result.getStatus()).isEqualTo(Dose.DoseStatus.CONFIRMED);
+        assertThat(result.getConfirmedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void skippingPendingDoseKeepsConfirmedAtEmpty() {
+        Dose pending = dose(Dose.DoseStatus.PENDING);
+        when(accessPolicy.requireDose(principal, pending.getId())).thenReturn(pending);
+        when(doseRepository.save(pending)).thenAnswer(inv -> inv.getArgument(0));
+
+        Dose result = service.changeStatus(principal, pending.getId(), Dose.DoseStatus.SKIPPED);
+
+        assertThat(result.getStatus()).isEqualTo(Dose.DoseStatus.SKIPPED);
+        assertThat(result.getConfirmedAt()).isNull();
     }
 
     @Test
@@ -75,7 +88,7 @@ class DoseServiceTest {
         Dose confirmed = dose(Dose.DoseStatus.CONFIRMED);
         when(accessPolicy.requireDose(principal, confirmed.getId())).thenReturn(confirmed);
 
-        assertThatThrownBy(() -> service.changeStatus(principal, confirmed.getId(), "CONFIRMED"))
+        assertThatThrownBy(() -> service.changeStatus(principal, confirmed.getId(), Dose.DoseStatus.CONFIRMED))
                 .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
         verify(doseRepository, never()).save(any());
     }
@@ -85,7 +98,7 @@ class DoseServiceTest {
         Dose skipped = dose(Dose.DoseStatus.SKIPPED);
         when(accessPolicy.requireDose(principal, skipped.getId())).thenReturn(skipped);
 
-        assertThatThrownBy(() -> service.changeStatus(principal, skipped.getId(), "CONFIRMED"))
+        assertThatThrownBy(() -> service.changeStatus(principal, skipped.getId(), Dose.DoseStatus.CONFIRMED))
                 .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
     }
 
@@ -94,17 +107,28 @@ class DoseServiceTest {
         UUID id = UUID.randomUUID();
         when(accessPolicy.requireDose(principal, id)).thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND));
 
-        assertThatThrownBy(() -> service.changeStatus(principal, id, "CONFIRMED"))
+        assertThatThrownBy(() -> service.changeStatus(principal, id, Dose.DoseStatus.CONFIRMED))
                 .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
         verify(doseRepository, never()).save(any());
     }
 
     @Test
-    void invalidStatusStaysEmptySoTheControllerAnswers404() {
+    void changingToPendingIs400AndNothingIsSaved() {
+        UUID id = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.changeStatus(principal, id, Dose.DoseStatus.PENDING))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void aFailureWhileSavingIsNotSwallowedAsA404() {
         Dose pending = dose(Dose.DoseStatus.PENDING);
         when(accessPolicy.requireDose(principal, pending.getId())).thenReturn(pending);
+        when(doseRepository.save(pending)).thenThrow(new IllegalArgumentException("fallo real"));
 
-        assertThat(service.changeStatus(principal, pending.getId(), "NOPE")).isEmpty();
+        assertThatThrownBy(() -> service.changeStatus(principal, pending.getId(), Dose.DoseStatus.CONFIRMED))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

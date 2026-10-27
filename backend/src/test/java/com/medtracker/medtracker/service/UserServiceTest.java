@@ -50,6 +50,41 @@ class UserServiceTest {
     }
 
     @Test
+    void getWithRoleReturnsAnActiveUserWithTheExpectedRole() {
+        User doctor = User.builder().id(UUID.randomUUID()).role(User.Role.DOCTOR).build();
+        when(userRepository.findById(doctor.getId())).thenReturn(Optional.of(doctor));
+
+        assertThat(userService.getWithRole(User.builder().id(doctor.getId()).build(), User.Role.DOCTOR))
+                .isSameAs(doctor);
+    }
+
+    @Test
+    void getWithRoleAnswersTheSameForUnknownDeletedAndWrongRoleUsers() {
+        User patient = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT).build();
+        User deleted = User.builder().id(UUID.randomUUID()).role(User.Role.DOCTOR)
+                .deletedAt(LocalDateTime.of(2026, 1, 1, 0, 0)).build();
+        UUID unknown = UUID.randomUUID();
+        when(userRepository.findById(patient.getId())).thenReturn(Optional.of(patient));
+        when(userRepository.findById(deleted.getId())).thenReturn(Optional.of(deleted));
+        when(userRepository.findById(unknown)).thenReturn(Optional.empty());
+
+        for (UUID id : List.of(patient.getId(), deleted.getId(), unknown)) {
+            assertThatThrownBy(() -> userService.getWithRole(User.builder().id(id).build(), User.Role.DOCTOR))
+                    .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST))
+                    .hasMessageContaining("El usuario indicado no existe o no tiene el rol requerido (DOCTOR)")
+                    .hasMessageNotContaining(id.toString());
+        }
+    }
+
+    @Test
+    void getWithRoleWithoutAReferenceIs400() {
+        assertThatThrownBy(() -> userService.getWithRole(null, User.Role.PATIENT))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        assertThatThrownBy(() -> userService.getWithRole(new User(), User.Role.PATIENT))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+    }
+
+    @Test
     void loginReturnsUserWhenCredentialsMatch() {
         User user = user();
         when(userRepository.findByEmail("ana@mail.com")).thenReturn(Optional.of(user));
