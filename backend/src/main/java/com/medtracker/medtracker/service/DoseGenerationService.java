@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -81,7 +82,8 @@ public class DoseGenerationService {
     private boolean createDoseIfDue(Reminder reminder, LocalDate day) {
         // Los días se guardan como MON..SUN, igual que las 3 primeras letras del enum
         String dayCode = day.getDayOfWeek().name().substring(0, 3);
-        if (!treatmentActiveOn(reminder.getTreatment(), day) || !appliesOn(reminder, dayCode)) {
+        if (!treatmentActiveOn(reminder.getTreatment(), day, reminder.getTime())
+                || !appliesOn(reminder, dayCode)) {
             return false;
         }
         LocalDateTime scheduledAt = day.atTime(reminder.getTime());
@@ -95,14 +97,29 @@ public class DoseGenerationService {
         return true;
     }
 
-    // El día debe caer dentro de [startDate, endDate] del tratamiento (solo fechas)
-    private boolean treatmentActiveOn(Treatment treatment, LocalDate day) {
+    // El día debe caer dentro de [startDate, endDate] del tratamiento (la hora de
+    // esos campos se ignora). Si el día es el primero/último y el tratamiento
+    // tiene startTime/endTime, la hora de la toma debe respetarlos (inclusive).
+    private boolean treatmentActiveOn(Treatment treatment, LocalDate day, LocalTime time) {
         if (treatment == null || treatment.getDeletedAt() != null || treatment.isCompleted()
                 || treatment.getStartDate() == null) {
             return false;
         }
-        return treatment.getStartDate().toLocalDate().compareTo(day) <= 0
-                && (treatment.getEndDate() == null || treatment.getEndDate().toLocalDate().compareTo(day) >= 0);
+        LocalDate startDay = treatment.getStartDate().toLocalDate();
+        if (startDay.compareTo(day) > 0) {
+            return false;
+        }
+        if (startDay.equals(day) && treatment.getStartTime() != null && time.isBefore(treatment.getStartTime())) {
+            return false;
+        }
+        if (treatment.getEndDate() == null) {
+            return true;
+        }
+        LocalDate endDay = treatment.getEndDate().toLocalDate();
+        if (endDay.compareTo(day) < 0) {
+            return false;
+        }
+        return !(endDay.equals(day) && treatment.getEndTime() != null && time.isAfter(treatment.getEndTime()));
     }
 
     // days_of_week vacío o null = todos los días

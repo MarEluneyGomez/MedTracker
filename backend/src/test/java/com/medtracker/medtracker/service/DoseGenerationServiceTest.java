@@ -85,6 +85,73 @@ class DoseGenerationServiceTest {
         assertThat(service.generateFor(WEDNESDAY)).isEqualTo(1);
     }
 
+    private Treatment withTimes(LocalDateTime start, LocalDateTime end, LocalTime startTime, LocalTime endTime) {
+        return Treatment.builder().startDate(start).endDate(end).startTime(startTime).endTime(endTime).build();
+    }
+
+    @Test
+    void skipsEarlyDoseWhenTreatmentStartsLaterToday() {
+        Treatment startsLater = withTimes(WEDNESDAY.atStartOfDay(), null, LocalTime.of(15, 0), null);
+        eligible(reminderOf(startsLater, LocalTime.of(8, 0), null));
+
+        assertThat(service.generateFor(WEDNESDAY)).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void generatesDoseAtOrAfterStartTimeOnFirstDay() {
+        Treatment startsLater = withTimes(WEDNESDAY.atStartOfDay(), null, LocalTime.of(15, 0), null);
+        eligible(reminderOf(startsLater, LocalTime.of(15, 0), null), reminderOf(startsLater, LocalTime.of(20, 0), null));
+
+        assertThat(service.generateFor(WEDNESDAY)).isEqualTo(2);
+    }
+
+    @Test
+    void skipsLateDoseWhenTreatmentEndsEarlierToday() {
+        Treatment endsEarlier = withTimes(WEDNESDAY.minusDays(5).atStartOfDay(), WEDNESDAY.atStartOfDay(),
+                null, LocalTime.of(10, 0));
+        eligible(reminderOf(endsEarlier, LocalTime.of(18, 0), null));
+
+        assertThat(service.generateFor(WEDNESDAY)).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void generatesDoseAtOrBeforeEndTimeOnLastDay() {
+        Treatment endsEarlier = withTimes(WEDNESDAY.minusDays(5).atStartOfDay(), WEDNESDAY.atStartOfDay(),
+                null, LocalTime.of(10, 0));
+        eligible(reminderOf(endsEarlier, LocalTime.of(8, 0), null), reminderOf(endsEarlier, LocalTime.of(10, 0), null));
+
+        assertThat(service.generateFor(WEDNESDAY)).isEqualTo(2);
+    }
+
+    @Test
+    void timeLimitsDoNotApplyOnIntermediateDays() {
+        Treatment middle = withTimes(WEDNESDAY.minusDays(2).atStartOfDay(), WEDNESDAY.plusDays(2).atStartOfDay(),
+                LocalTime.of(15, 0), LocalTime.of(10, 0));
+        eligible(reminderOf(middle, LocalTime.of(8, 0), null), reminderOf(middle, LocalTime.of(18, 0), null));
+
+        assertThat(service.generateFor(WEDNESDAY)).isEqualTo(2);
+    }
+
+    @Test
+    void treatmentWithoutTimesBehavesAsBefore() {
+        Treatment noTimes = withTimes(WEDNESDAY.atStartOfDay(), WEDNESDAY.atStartOfDay(), null, null);
+        eligible(reminderOf(noTimes, LocalTime.of(0, 0), null), reminderOf(noTimes, LocalTime.of(23, 59), null));
+
+        assertThat(service.generateFor(WEDNESDAY)).isEqualTo(2);
+    }
+
+    @Test
+    void generateTodayForReminderRespectsStartTime() {
+        Treatment startsLater = withTimes(WEDNESDAY.atStartOfDay(), null, LocalTime.of(15, 0), null);
+        Reminder r = reminderOf(startsLater, LocalTime.of(8, 0), null);
+        when(reminderRepository.findById(r.getId())).thenReturn(java.util.Optional.of(r));
+
+        assertThat(service.generateTodayForReminder(r.getId())).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
     @Test
     void generateTodayForReminderCreatesTodaysDose() {
         Reminder r = reminder(LocalTime.of(8, 0), new String[]{"WED"});

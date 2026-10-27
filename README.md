@@ -231,6 +231,8 @@ Relación entre un usuario y un medicamento. Acá viven los datos que varían se
 | frequency | VARCHAR | Diaria, semanal, cada X horas, etc. |
 | start_date | TIMESTAMP | Inicio del tratamiento |
 | end_date | TIMESTAMP (nullable) | Fin del tratamiento (si aplica) |
+| start_time | TIME (nullable) | Hora de inicio el primer día: no se generan tomas anteriores a esta hora. NULL = sin restricción |
+| end_time | TIME (nullable) | Hora de fin el último día: no se generan tomas posteriores a esta hora. NULL = sin restricción |
 | completed | BOOLEAN | Indica si el tratamiento fue completado |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
@@ -384,6 +386,13 @@ Recién sin resultados, normalizar las existentes:
 
 ```sql
 UPDATE "user" SET email = lower(trim(email)) WHERE email <> lower(trim(email));
+```
+
+**5. Hora de inicio/fin del tratamiento.** `treatment` suma dos columnas `TIME`, `start_time` y `end_time`, ambas **nullable y sin `DEFAULT`**, por lo que los tratamientos existentes siguen funcionando exactamente igual (sin restricción de hora) hasta que se les cargue un valor. Si están cargadas, el primer día del tratamiento (`start_date`) no se generan tomas anteriores a `start_time` y el último día (`end_date`) no se generan tomas posteriores a `end_time`; la hora de los propios campos `start_date`/`end_date` se ignora. Si el tratamiento empieza y termina el mismo día, la API rechaza con 400 un `end_time` anterior a `start_time`. El script está también en `database/migration-treatment-start-end-time.sql`:
+
+```sql
+ALTER TABLE treatment ADD COLUMN start_time TIME;
+ALTER TABLE treatment ADD COLUMN end_time TIME;
 ```
 
 ---

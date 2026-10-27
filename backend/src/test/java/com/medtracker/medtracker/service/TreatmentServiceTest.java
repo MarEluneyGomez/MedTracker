@@ -15,6 +15,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
@@ -97,6 +98,51 @@ class TreatmentServiceTest {
         assertThatThrownBy(() -> service.update(id, changes(NOW, NOW.minusDays(1))))
                 .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
         verify(treatmentRepository, never()).save(any());
+    }
+
+    @Test
+    void registerRejectsEndTimeBeforeStartTimeOnSameDay() {
+        Treatment incoming = changes(NOW.toLocalDate().atStartOfDay(), NOW.toLocalDate().atTime(23, 0));
+        incoming.setStartTime(LocalTime.of(15, 0));
+        incoming.setEndTime(LocalTime.of(10, 0));
+        when(userService.getWithRole(any(), any())).thenReturn(new com.medtracker.medtracker.model.User());
+
+        assertThatThrownBy(() -> service.register(incoming))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        verify(treatmentRepository, never()).save(any());
+    }
+
+    @Test
+    void updateRejectsEndTimeBeforeStartTimeOnSameDay() {
+        UUID id = UUID.randomUUID();
+        when(treatmentRepository.findById(id)).thenReturn(Optional.of(existing(id)));
+        Treatment edit = changes(NOW.toLocalDate().atStartOfDay(), NOW.toLocalDate().atTime(23, 0));
+        edit.setStartTime(LocalTime.of(15, 0));
+        edit.setEndTime(LocalTime.of(10, 0));
+
+        assertThatThrownBy(() -> service.update(id, edit))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        verify(treatmentRepository, never()).save(any());
+    }
+
+    @Test
+    void updateAcceptsAndStoresTimesWhenValid() {
+        UUID id = UUID.randomUUID();
+        when(treatmentRepository.findById(id)).thenReturn(Optional.of(existing(id)));
+        when(treatmentRepository.save(any(Treatment.class))).thenAnswer(inv -> inv.getArgument(0));
+        // Mismo día pero con una sola hora: no se valida nada
+        Treatment sameDay = changes(NOW.toLocalDate().atStartOfDay(), NOW.toLocalDate().atTime(23, 0));
+        sameDay.setStartTime(LocalTime.of(15, 0));
+        // Días distintos: endTime menor que startTime es válido
+        Treatment otherDays = changes(NOW, NOW.plusDays(2));
+        otherDays.setStartTime(LocalTime.of(15, 0));
+        otherDays.setEndTime(LocalTime.of(10, 0));
+
+        assertThat(service.update(id, sameDay).getStartTime()).isEqualTo(LocalTime.of(15, 0));
+        Treatment result = service.update(id, otherDays);
+
+        assertThat(result.getStartTime()).isEqualTo(LocalTime.of(15, 0));
+        assertThat(result.getEndTime()).isEqualTo(LocalTime.of(10, 0));
     }
 
     @Test

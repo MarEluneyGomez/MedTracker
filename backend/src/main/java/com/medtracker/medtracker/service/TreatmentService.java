@@ -13,6 +13,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -31,6 +32,8 @@ public class TreatmentService {
     public Treatment register(Treatment treatment) {
         treatment.setUser(userService.getWithRole(treatment.getUser(), User.Role.PATIENT));
         validateDates(treatment.getStartDate(), treatment.getEndDate());
+        validateTimes(treatment.getStartDate(), treatment.getEndDate(),
+                treatment.getStartTime(), treatment.getEndTime());
         // El body llega como entidad: sin esto un id existente haría merge y
         // pisaría otro registro, y un deletedAt resucitaría uno eliminado
         treatment.setId(null);
@@ -42,6 +45,18 @@ public class TreatmentService {
         if (endDate != null && startDate != null && endDate.isBefore(startDate)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "La fecha de fin no puede ser anterior a la de inicio");
+        }
+    }
+
+    // Si el tratamiento empieza y termina el mismo día, la hora de fin no puede
+    // ser anterior a la de inicio. Las horas son opcionales.
+    private void validateTimes(LocalDateTime startDate, LocalDateTime endDate,
+                               LocalTime startTime, LocalTime endTime) {
+        if (startDate != null && endDate != null && startTime != null && endTime != null
+                && startDate.toLocalDate().equals(endDate.toLocalDate())
+                && endTime.isBefore(startTime)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "La hora de fin no puede ser anterior a la de inicio");
         }
     }
 
@@ -71,10 +86,14 @@ public class TreatmentService {
                     "La dosis, la frecuencia y la fecha de inicio son obligatorias");
         }
         validateDates(changes.getStartDate(), changes.getEndDate());
+        validateTimes(changes.getStartDate(), changes.getEndDate(),
+                changes.getStartTime(), changes.getEndTime());
         treatment.setDosage(changes.getDosage());
         treatment.setFrequency(changes.getFrequency());
         treatment.setStartDate(changes.getStartDate());
         treatment.setEndDate(changes.getEndDate());
+        treatment.setStartTime(changes.getStartTime());
+        treatment.setEndTime(changes.getEndTime());
         return treatmentRepository.save(treatment);
     }
 
