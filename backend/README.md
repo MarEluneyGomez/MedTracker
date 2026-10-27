@@ -4,24 +4,71 @@ API REST del sistema de seguimiento de medicación, construida con **Spring Boot
 
 ## Estado actual
 
-Para esta entrega, esta carpeta contiene únicamente la estructura de paquetes propuesta (`controller`, `service`, `repository`, `model`, `dto`), sin implementación, según lo pedido por la consigna de esta entrega. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para el detalle de la arquitectura en capas y la justificación del stack.
+Cada módulo del modelo de datos tiene su capa completa (entidad, repositorio, servicio, controller REST y DTO). El listado de módulos y endpoints está en la sección [Módulos del backend](../README.md#módulos-del-backend) del README principal. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para el detalle de la arquitectura en capas y la justificación del stack.
 
 ## Estructura
 
 ```
 backend/
+├── .mvn/wrapper/                # Configuración del Maven Wrapper
 ├── src/
 │   ├── main/
 │   │   ├── java/com/medtracker/medtracker/
+│   │   │   ├── MedtrackerApplication.java
 │   │   │   ├── controller/   # Endpoints REST
 │   │   │   ├── service/      # Lógica de negocio
 │   │   │   ├── repository/   # Acceso a datos (JPA)
 │   │   │   ├── model/        # Entidades
-│   │   │   └── dto/          # Objetos de transferencia de datos
+│   │   │   ├── dto/          # Objetos de transferencia de datos
+│   │   │   └── config/       # Configuración (seguridad, hash de contraseñas)
 │   │   └── resources/
+│   │       └── application.properties
 │   └── test/
+├── mvnw / mvnw.cmd           # Maven Wrapper
 └── pom.xml
 ```
+
+## Ejecución
+
+Requiere Java 21. La conexión a la base se toma de las variables de entorno `DATABASE_URL` (en formato `jdbc:postgresql://...`), `DATABASE_USER` y `DATABASE_PASSWORD`:
+
+```bash
+./mvnw spring-boot:run
+```
+
+Hibernate corre con `ddl-auto=validate`: no crea ni modifica tablas, solo verifica que las entidades coincidan con el esquema ya aplicado.
+
+El test `MedtrackerApplicationTests` levanta el contexto completo contra la base, así que solo corre si `DATABASE_URL` está definida.
+
+## Autenticación (JWT)
+
+`POST /auth/login` devuelve un token de sesión junto con los datos del usuario:
+
+```json
+{
+  "accessToken": "<jwt>",
+  "tokenType": "Bearer",
+  "expiresIn": 86400,
+  "user": { "id": "...", "name": "...", "email": "...", "role": "PATIENT", "...": "..." }
+}
+```
+
+Todos los endpoints, salvo `POST /auth/login` y `POST /users/register`, exigen el header `Authorization: Bearer <accessToken>`. Si el token falta, es inválido o expiró, la API responde `401 Unauthorized` con el mismo formato JSON del resto de los errores (`timestamp`, `status`, `error`, `message`, `path`).
+
+Variables de entorno:
+
+| Variable | Obligatoria | Descripción |
+|---|---|---|
+| `JWT_SECRET` | Sí | Clave con la que se firman los tokens (HS256). Mínimo 32 caracteres. Si falta o es más corta, la app no arranca. No se commitea. |
+| `JWT_EXPIRATION_MINUTES` | No | Duración del token en minutos. Por defecto `1440` (24 horas). Debe ser mayor que 0. |
+
+Para generar un valor seguro para `JWT_SECRET`:
+
+```bash
+openssl rand -base64 48
+```
+
+Los tests que no levantan el contexto completo (MockMvc) no necesitan la variable.
 
 ## Base de datos
 
