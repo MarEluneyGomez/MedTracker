@@ -1,6 +1,7 @@
 package com.medtracker.medtracker.controller;
 
 import com.medtracker.medtracker.model.User;
+import com.medtracker.medtracker.security.JwtService;
 import com.medtracker.medtracker.service.DoseGenerationService;
 import com.medtracker.medtracker.service.DoseService;
 import com.medtracker.medtracker.service.UserService;
@@ -15,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -47,7 +49,8 @@ class ReadAndAuthControllersTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.standaloneSetup(
-                new AuthController(userService),
+                new AuthController(userService, new JwtService(
+                        "secreto-de-prueba-con-al-menos-32-caracteres", 60, Clock.systemUTC())),
                 new UserController(userService),
                 new DoseController(doseService, doseGenerationService)).build();
     }
@@ -58,14 +61,17 @@ class ReadAndAuthControllersTest {
     }
 
     @Test
-    void loginReturnsUserWithoutPasswordHash() throws Exception {
+    void loginReturnsTokenAndUserWithoutPasswordHash() throws Exception {
         when(userService.login(eq("ana@mail.com"), eq("secreto"), any())).thenReturn(user());
 
         mockMvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"ana@mail.com\",\"password\":\"secreto\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.email").value("ana@mail.com"))
-                .andExpect(jsonPath("$.passwordHash").doesNotExist());
+                .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.tokenType").value("Bearer"))
+                .andExpect(jsonPath("$.expiresIn").value(3600))
+                .andExpect(jsonPath("$.user.email").value("ana@mail.com"))
+                .andExpect(jsonPath("$.user.passwordHash").doesNotExist());
     }
 
     @Test
