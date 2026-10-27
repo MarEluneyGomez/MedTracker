@@ -107,8 +107,8 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 | Método y ruta | Descripción |
 |---|---|
 | `POST /auth/login` | Body `{email, password}`. 200 con el JWT (`accessToken`) y el usuario, 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
-| `GET /users?role=DOCTOR` | Lista los médicos vigentes con `id` y `name` solamente, para elegir uno al agendar una cita. Cualquier otro `role`, o sin `role`, devuelve solo al propio usuario y a sus vinculados (`id`, `name` y `role`; sin `email` ni `fcmToken`). |
-| `GET /users/{id}` | El propio perfil completo; un vinculado o la contraparte de una cita compartida, en versión reducida (`id`, `name` y `role`; sin `email` ni `fcmToken`). Cualquier otro usuario: 404. |
+| `GET /users?role=DOCTOR` | Lista los médicos vigentes con `id` y `name` solamente, para elegir uno al agendar una cita. Cualquier otro `role`, o sin `role`, devuelve solo al propio usuario y a sus vinculados (`id`, `name`, `email` y `role`; sin `fcmToken`). |
+| `GET /users/{id}` | El propio perfil completo; un vinculado o la contraparte de una cita compartida, en versión reducida (`id`, `name`, `email` y `role`; sin `fcmToken`). Cualquier otro usuario: 404. Solo el listado de médicos (`GET /users?role=DOCTOR`) va sin `email`. |
 | `POST /users/register` | Solo roles `PATIENT` o `CAREGIVER`; sin `role` queda `PATIENT`. `DOCTOR` responde 400 (ver [Alta de médicos](#alta-de-médicos)). |
 | `GET /treatments/user/{userId}` | Tratamientos vigentes (sin eliminados) del usuario. 403 si `userId` no es el propio ni el de un paciente que el usuario cuida. |
 | `PUT /treatments/{id}` | Edita `dosage`, `frequency`, `startDate` y `endDate` (CU-08). 400 si `endDate` < `startDate`; 404 si no existe o está eliminado. |
@@ -131,8 +131,19 @@ La identidad sale siempre del token. Un recurso ajeno, inexistente o eliminado l
 |---|---|
 | Tratamientos, recordatorios y dosis (`/treatments`, `/reminders`, `/doses`) | El propio paciente y los cuidadores con vínculo activo con él (`caregiver_link.deleted_at` nulo). La pertenencia de un recordatorio y de una dosis se resuelve a través de su tratamiento. Los listados (`GET /treatments`, `/reminders`, `/doses`) devuelven solo lo propio y lo de los pacientes que cuida. |
 | Citas médicas (`/medical-appointments`) | Solo el paciente y el médico (`doctor_id`) de la cita; el cuidador no tiene acceso. Para agendar, el usuario del token debe ser el paciente o el médico de la cita (si no 403). Los listados por paciente o por médico responden 403 si el id nombrado no es el propio ni el de la contraparte de una cita. |
+| Historial médico (`/medical-histories`) | El propio paciente y un médico con una cita vigente (`deleted_at` nulo) y **no cancelada** (`status` distinto de `CANCELLED`) con ese paciente; ambos leen y crean. El cuidador no tiene acceso, aunque tenga vínculo activo. `GET /medical-histories/{id}` de un historial ajeno, inexistente o eliminado responde 404; `GET /medical-histories/patient/{id}` y `POST /medical-histories/register` que nombran a un paciente sin acceso responden 403. `GET /medical-histories` devuelve solo los historiales visibles, del más reciente al más antiguo (`record_date` descendente). `diagnosis` y `record_date` son obligatorios y `diagnosis` admite hasta 255 caracteres (si no, 400). |
+| Notificaciones (`/notifications`) | Solo su destinatario (`user_id`), incluso con vínculo de cuidador: el cuidador y el médico ven únicamente las propias. Una notificación ajena, inexistente o eliminada responde 404; `GET /notifications/user/{id}` con otro usuario responde 403; `GET /notifications` devuelve solo las propias. `PUT /notifications/{id}/read` solo sobre las propias. |
 
-`POST /doses/generate-daily`, `/notifications/*` y `/medical-histories/*` todavía no aplican autorización por dueño: cualquier usuario autenticado accede a ellos. Quedan pendientes para la próxima tanda. `generate-daily` es idempotente (no duplica dosis: consulta `existsByReminderIdAndScheduledAt` antes de crear), pero sigue abierto a cualquier usuario autenticado.
+**Notificaciones creadas solo por el sistema.** `POST /notifications/register` se quitó: una notificación es un evento del sistema (CU-05), no algo que el cliente deba poder fabricar a nombre de otro usuario. Hoy ningún proceso del backend las crea (el envío con FCM del CU-05 aún no está implementado); cuando exista, las generará internamente. **Cambio de contrato para el frontend:** ya no puede crear notificaciones; solo listarlas, leerlas y marcarlas como leídas.
+
+**Limitaciones conocidas del historial médico.**
+
+- *No se guarda el autor de cada entrada.* `medical_history` no tiene un campo de autor (agregarlo exigiría migrar la base), así que no se distingue si una entrada la escribió el paciente o un médico.
+- *Cita unilateral.* RN-09 permite que el médico agende una cita con cualquier paciente (conociendo su `id`) y cambie su estado sin intervención del paciente. Como el acceso al historial se apoya en tener una cita vigente y no cancelada, un médico puede darse acceso al historial de un paciente agendando una cita por su cuenta. Se acepta como riesgo conocido de esta etapa; la mitigación pendiente es exigir que el paciente confirme la cita antes de habilitar el acceso.
+**Pendientes.**
+
+- `GET /users/{id}` da acceso al perfil reducido también con un turno `CANCELLED` (`shareAppointment` no filtra el estado), a diferencia del historial médico.
+- `POST /doses/generate-daily` todavía no aplica autorización: cualquier usuario autenticado puede dispararlo. Es idempotente (no duplica dosis: consulta `existsByReminderIdAndScheduledAt` antes de crear) y queda pendiente para otra tanda.
 
 #### Alta de médicos
 

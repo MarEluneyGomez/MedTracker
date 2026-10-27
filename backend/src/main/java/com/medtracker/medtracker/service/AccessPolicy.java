@@ -4,11 +4,15 @@ import com.medtracker.medtracker.model.CaregiverLink;
 import com.medtracker.medtracker.model.CaregiverLinkId;
 import com.medtracker.medtracker.model.Dose;
 import com.medtracker.medtracker.model.MedicalAppointment;
+import com.medtracker.medtracker.model.MedicalHistory;
+import com.medtracker.medtracker.model.Notification;
 import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.model.Treatment;
 import com.medtracker.medtracker.repository.CaregiverLinkRepository;
 import com.medtracker.medtracker.repository.DoseRepository;
 import com.medtracker.medtracker.repository.MedicalAppointmentRepository;
+import com.medtracker.medtracker.repository.MedicalHistoryRepository;
+import com.medtracker.medtracker.repository.NotificationRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
@@ -35,6 +39,8 @@ public class AccessPolicy {
     private final DoseRepository doseRepository;
     private final MedicalAppointmentRepository medicalAppointmentRepository;
     private final CaregiverLinkRepository caregiverLinkRepository;
+    private final MedicalHistoryRepository medicalHistoryRepository;
+    private final NotificationRepository notificationRepository;
 
     // El propio usuario, o un cuidador con vínculo activo con ese paciente
     public boolean canManagePatient(AuthenticatedUser principal, UUID patientId) {
@@ -91,6 +97,52 @@ public class AccessPolicy {
     // Igual, pero para citas: el propio usuario o la contraparte de una cita vigente
     public void requireSelfOrSharedAppointment(AuthenticatedUser principal, UUID userId) {
         if (!principal.id().equals(userId) && !shareAppointment(principal.id(), userId)) {
+            throw forbiddenUser();
+        }
+    }
+
+    // ¿Tiene el médico una cita vigente y no cancelada con ese paciente?
+    // (a propósito distinto de shareAppointment, que cuenta también las canceladas)
+    public boolean hasActiveAppointmentAsDoctor(UUID doctorId, UUID patientId) {
+        return medicalAppointmentRepository.existsActiveByDoctorAndPatient(doctorId, patientId);
+    }
+
+    // Historial médico: el propio paciente, o un médico con una cita vigente y no
+    // cancelada con él. El cuidador no entra (dato de salud sensible).
+    public boolean canAccessHistoryOf(AuthenticatedUser principal, UUID patientId) {
+        return principal.id().equals(patientId) || hasActiveAppointmentAsDoctor(principal.id(), patientId);
+    }
+
+    public void requireCanAccessHistoryOf(AuthenticatedUser principal, UUID patientId) {
+        if (!canAccessHistoryOf(principal, patientId)) {
+            throw forbiddenUser();
+        }
+    }
+
+    // Pacientes cuyo historial puede ver: él mismo y los pacientes de sus citas vigentes
+    public Set<UUID> historyPatientIds(AuthenticatedUser principal) {
+        Set<UUID> ids = new HashSet<>();
+        ids.add(principal.id());
+        ids.addAll(medicalAppointmentRepository.findActivePatientIdsByDoctor(principal.id()));
+        return ids;
+    }
+
+    public MedicalHistory requireMedicalHistory(AuthenticatedUser principal, UUID id) {
+        return medicalHistoryRepository.findByIdAndDeletedAtIsNull(id)
+                .filter(history -> canAccessHistoryOf(principal, history.getPatient().getId()))
+                .orElseThrow(() -> notFound("Historial médico no encontrado: " + id));
+    }
+
+    // Una notificación solo la ve su destinatario
+    public Notification requireNotification(AuthenticatedUser principal, UUID id) {
+        return notificationRepository.findByIdAndDeletedAtIsNull(id)
+                .filter(notification -> principal.id().equals(notification.getUser().getId()))
+                .orElseThrow(() -> notFound("Notificación no encontrada: " + id));
+    }
+
+    // Un listado que nombra a otro usuario por id: solo el propio usuario
+    public void requireSelf(AuthenticatedUser principal, UUID userId) {
+        if (!principal.id().equals(userId)) {
             throw forbiddenUser();
         }
     }

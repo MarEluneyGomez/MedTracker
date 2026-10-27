@@ -5,6 +5,8 @@ import com.medtracker.medtracker.controller.AuthController;
 import com.medtracker.medtracker.controller.CaregiverLinkController;
 import com.medtracker.medtracker.controller.DoseController;
 import com.medtracker.medtracker.controller.MedicalAppointmentController;
+import com.medtracker.medtracker.controller.MedicalHistoryController;
+import com.medtracker.medtracker.controller.NotificationController;
 import com.medtracker.medtracker.controller.ReminderController;
 import com.medtracker.medtracker.controller.TreatmentController;
 import com.medtracker.medtracker.controller.UserController;
@@ -12,13 +14,17 @@ import com.medtracker.medtracker.model.CaregiverLink;
 import com.medtracker.medtracker.model.CaregiverLinkId;
 import com.medtracker.medtracker.model.Dose;
 import com.medtracker.medtracker.model.MedicalAppointment;
+import com.medtracker.medtracker.model.MedicalHistory;
 import com.medtracker.medtracker.model.Medication;
+import com.medtracker.medtracker.model.Notification;
 import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.model.Treatment;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.CaregiverLinkRepository;
 import com.medtracker.medtracker.repository.DoseRepository;
 import com.medtracker.medtracker.repository.MedicalAppointmentRepository;
+import com.medtracker.medtracker.repository.MedicalHistoryRepository;
+import com.medtracker.medtracker.repository.NotificationRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
 import com.medtracker.medtracker.repository.UserRepository;
@@ -28,6 +34,8 @@ import com.medtracker.medtracker.service.DoseGenerationService;
 import com.medtracker.medtracker.service.DoseService;
 import com.medtracker.medtracker.service.LoginAttemptService;
 import com.medtracker.medtracker.service.MedicalAppointmentService;
+import com.medtracker.medtracker.service.MedicalHistoryService;
+import com.medtracker.medtracker.service.NotificationService;
 import com.medtracker.medtracker.service.ReminderService;
 import com.medtracker.medtracker.service.TreatmentService;
 import com.medtracker.medtracker.service.UserService;
@@ -82,8 +90,10 @@ class AuthorizationIntegrationTest {
     @Import({SecurityConfig.class, RestAuthenticationEntryPoint.class,
             AuthController.class, UserController.class, TreatmentController.class, ReminderController.class,
             DoseController.class, MedicalAppointmentController.class, CaregiverLinkController.class,
+            MedicalHistoryController.class, NotificationController.class,
             AccessPolicy.class, UserService.class, TreatmentService.class, ReminderService.class,
-            DoseService.class, MedicalAppointmentService.class, CaregiverLinkService.class})
+            DoseService.class, MedicalAppointmentService.class, CaregiverLinkService.class,
+            MedicalHistoryService.class, NotificationService.class})
     static class TestConfig {
         @Bean
         Clock clock() {
@@ -126,6 +136,16 @@ class AuthorizationIntegrationTest {
         }
 
         @Bean
+        MedicalHistoryRepository medicalHistoryRepository() {
+            return Mockito.mock(MedicalHistoryRepository.class);
+        }
+
+        @Bean
+        NotificationRepository notificationRepository() {
+            return Mockito.mock(NotificationRepository.class);
+        }
+
+        @Bean
         DoseGenerationService doseGenerationService() {
             return Mockito.mock(DoseGenerationService.class);
         }
@@ -152,6 +172,10 @@ class AuthorizationIntegrationTest {
     private MedicalAppointmentRepository appointmentRepository;
     @Autowired
     private CaregiverLinkRepository caregiverLinkRepository;
+    @Autowired
+    private MedicalHistoryRepository medicalHistoryRepository;
+    @Autowired
+    private NotificationRepository notificationRepository;
 
     private MockMvc mockMvc;
 
@@ -171,6 +195,17 @@ class AuthorizationIntegrationTest {
     private final MedicalAppointment appointment = MedicalAppointment.builder().id(UUID.randomUUID())
             .patient(a).doctor(doctor).dateTime(LocalDateTime.of(2026, 11, 1, 10, 0)).reason("control").build();
 
+    private final MedicalHistory historyA = MedicalHistory.builder().id(UUID.randomUUID()).patient(a)
+            .diagnosis("Hipertension").notes("control").recordDate(LocalDateTime.of(2026, 10, 1, 9, 0)).build();
+    private final MedicalHistory historyB = MedicalHistory.builder().id(UUID.randomUUID()).patient(b)
+            .diagnosis("Asma").recordDate(LocalDateTime.of(2026, 10, 2, 9, 0)).build();
+    private final UUID deletedHistoryId = UUID.randomUUID();
+    private final Notification notificationA = Notification.builder().id(UUID.randomUUID()).user(a)
+            .message("Tomar el medicamento").build();
+    private final Notification notificationB = Notification.builder().id(UUID.randomUUID()).user(b)
+            .message("Tomar el otro").build();
+    private final UUID deletedNotificationId = UUID.randomUUID();
+
     private static User user(String name, User.Role role) {
         return User.builder().id(UUID.randomUUID()).name(name).email(name.toLowerCase().replace(' ', '.') + "@mail.com")
                 .passwordHash("hash").role(role).fcmToken("token-de-" + name).build();
@@ -185,8 +220,8 @@ class AuthorizationIntegrationTest {
     @BeforeEach
     void setUp() {
         Mockito.reset(userRepository, treatmentRepository, reminderRepository, doseRepository,
-                appointmentRepository, caregiverLinkRepository);
-        mockMvc = MockMvcBuilders.webAppContextSetup(context)
+                appointmentRepository, caregiverLinkRepository, medicalHistoryRepository, notificationRepository);
+        mockMvc =MockMvcBuilders.webAppContextSetup(context)
                 .addFilters((Filter) context.getBean("springSecurityFilterChain"))
                 .build();
 
@@ -220,6 +255,31 @@ class AuthorizationIntegrationTest {
         when(appointmentRepository.save(any(MedicalAppointment.class))).thenAnswer(inv -> inv.getArgument(0));
         when(appointmentRepository.existsByPatientIdAndDoctorIdAndDeletedAtIsNull(a.getId(), doctor.getId()))
                 .thenReturn(true);
+        // El médico asignado tiene una cita vigente y no cancelada con A (acceso al historial)
+        when(appointmentRepository.existsActiveByDoctorAndPatient(doctor.getId(), a.getId())).thenReturn(true);
+        when(appointmentRepository.findActivePatientIdsByDoctor(doctor.getId())).thenReturn(List.of(a.getId()));
+        when(medicalHistoryRepository.findByIdAndDeletedAtIsNull(historyA.getId())).thenReturn(Optional.of(historyA));
+        when(medicalHistoryRepository.findByIdAndDeletedAtIsNull(historyB.getId())).thenReturn(Optional.of(historyB));
+        when(medicalHistoryRepository.findByPatientIdAndDeletedAtIsNullOrderByRecordDateDesc(a.getId()))
+                .thenReturn(List.of(historyA));
+        when(medicalHistoryRepository.findByPatientIdInAndDeletedAtIsNullOrderByRecordDateDesc(anyCollection()))
+                .thenAnswer(inv -> {
+                    java.util.Collection<UUID> ids = inv.getArgument(0);
+                    return java.util.stream.Stream.of(historyA, historyB)
+                            .filter(h -> ids.contains(h.getPatient().getId())).toList();
+                });
+        when(medicalHistoryRepository.save(any(MedicalHistory.class))).thenAnswer(inv -> {
+            MedicalHistory h = inv.getArgument(0);
+            h.setId(UUID.randomUUID());
+            return h;
+        });
+        when(notificationRepository.findByIdAndDeletedAtIsNull(notificationA.getId()))
+                .thenReturn(Optional.of(notificationA));
+        when(notificationRepository.findByIdAndDeletedAtIsNull(notificationB.getId()))
+                .thenReturn(Optional.of(notificationB));
+        when(notificationRepository.findByUserIdAndDeletedAtIsNull(a.getId())).thenReturn(List.of(notificationA));
+        when(notificationRepository.findByUserIdAndDeletedAtIsNull(b.getId())).thenReturn(List.of(notificationB));
+        when(notificationRepository.save(any(Notification.class))).thenAnswer(inv -> inv.getArgument(0));
         CaregiverLink link = CaregiverLink.builder().id(new CaregiverLinkId(caregiver.getId(), a.getId()))
                 .caregiver(caregiver).patient(a).build();
         when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), a.getId()))
@@ -589,5 +649,183 @@ class AuthorizationIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.email").value(caregiver.getEmail()))
                 .andExpect(jsonPath("$.fcmToken").doesNotExist());
+    }
+
+    // ---------------------------------------------------------------- historial médico
+
+    private String historyBody(User patient, String diagnosis) {
+        return "{\"patient\":{\"id\":\"" + patient.getId() + "\"},\"diagnosis\":" + diagnosis
+                + ",\"recordDate\":\"2026-10-05T10:00:00\"}";
+    }
+
+    @Test
+    void medicalHistoryAndNotificationEndpointsRequireAToken() throws Exception {
+        mockMvc.perform(get("/medical-histories")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/medical-histories/" + historyA.getId())).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/medical-histories/patient/" + a.getId())).andExpect(status().isUnauthorized());
+        mockMvc.perform(json(post("/medical-histories/register"), historyBody(a, "\"X\"")))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/notifications")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/notifications/" + notificationA.getId())).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/notifications/user/" + a.getId())).andExpect(status().isUnauthorized());
+        mockMvc.perform(put("/notifications/" + notificationA.getId() + "/read")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void thePatientReadsAndCreatesTheirOwnHistory() throws Exception {
+        mockMvc.perform(as(a, get("/medical-histories/" + historyA.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.patientId").value(a.getId().toString()))
+                .andExpect(jsonPath("$.patient").doesNotExist())
+                .andExpect(jsonPath("$.fcmToken").doesNotExist());
+        mockMvc.perform(as(a, get("/medical-histories/patient/" + a.getId())))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1));
+        mockMvc.perform(as(a, get("/medical-histories")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1));
+        mockMvc.perform(as(a, json(post("/medical-histories/register"), historyBody(a, "\"Migrana\""))))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void anotherPatientCannotReadOrCreateSomeoneElsesHistory() throws Exception {
+        mockMvc.perform(as(b, get("/medical-histories/" + historyA.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(b, get("/medical-histories/patient/" + a.getId()))).andExpect(status().isForbidden());
+        mockMvc.perform(as(b, json(post("/medical-histories/register"), historyBody(a, "\"Falso\""))))
+                .andExpect(status().isForbidden());
+        verify(medicalHistoryRepository, never()).save(any());
+        // el listado completo solo trae lo propio, nunca lo de A
+        mockMvc.perform(as(b, get("/medical-histories")))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].patientId").value(b.getId().toString()));
+    }
+
+    @Test
+    void aLinkedCaregiverHasNoAccessToTheHistory() throws Exception {
+        mockMvc.perform(as(caregiver, get("/medical-histories/" + historyA.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(caregiver, get("/medical-histories/patient/" + a.getId()))).andExpect(status().isForbidden());
+        mockMvc.perform(as(caregiver, json(post("/medical-histories/register"), historyBody(a, "\"Falso\""))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(as(caregiver, get("/medical-histories"))).andExpect(jsonPath("$.length()").value(0));
+        verify(medicalHistoryRepository, never()).save(any());
+    }
+
+    @Test
+    void aDoctorWithAnActiveAppointmentReadsAndCreatesTheHistory() throws Exception {
+        mockMvc.perform(as(doctor, get("/medical-histories/" + historyA.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(doctor, get("/medical-histories/patient/" + a.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(doctor, get("/medical-histories")))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].patientId").value(a.getId().toString()));
+        mockMvc.perform(as(doctor, json(post("/medical-histories/register"), historyBody(a, "\"Control\""))))
+                .andExpect(status().isCreated());
+        // pero no el de un paciente con el que no tiene cita
+        mockMvc.perform(as(doctor, get("/medical-histories/" + historyB.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(doctor, json(post("/medical-histories/register"), historyBody(b, "\"Falso\""))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void aDoctorWithoutAnyAppointmentHasNoAccessToTheHistory() throws Exception {
+        mockMvc.perform(as(otherDoctor, get("/medical-histories/" + historyA.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(otherDoctor, get("/medical-histories/patient/" + a.getId()))).andExpect(status().isForbidden());
+        mockMvc.perform(as(otherDoctor, json(post("/medical-histories/register"), historyBody(a, "\"Falso\""))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(as(otherDoctor, get("/medical-histories"))).andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void aDoctorWhoseOnlyAppointmentIsCancelledHasNoHistoryAccessButStillSeesTheReducedProfile() throws Exception {
+        // la cita existe y no está borrada (la regla de /users/{id} la cuenta), pero está CANCELLED
+        when(appointmentRepository.existsByPatientIdAndDoctorIdAndDeletedAtIsNull(a.getId(), otherDoctor.getId()))
+                .thenReturn(true);
+
+        mockMvc.perform(as(otherDoctor, get("/medical-histories/" + historyA.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(otherDoctor, get("/medical-histories/patient/" + a.getId()))).andExpect(status().isForbidden());
+        mockMvc.perform(as(otherDoctor, json(post("/medical-histories/register"), historyBody(a, "\"Falso\""))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value(a.getName()))
+                .andExpect(jsonPath("$.fcmToken").doesNotExist());
+        verify(medicalHistoryRepository, never()).save(any());
+    }
+
+    @Test
+    void aSoftDeletedOrMissingHistoryIs404EvenForTheOwner() throws Exception {
+        mockMvc.perform(as(a, get("/medical-histories/" + deletedHistoryId))).andExpect(status().isNotFound());
+        mockMvc.perform(as(a, get("/medical-histories/" + UUID.randomUUID()))).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void creatingAHistoryNeedsDiagnosisRecordDateAndAShortDiagnosis() throws Exception {
+        mockMvc.perform(as(a, json(post("/medical-histories/register"), historyBody(a, "null"))))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(as(a, json(post("/medical-histories/register"), historyBody(a, "\"" + "x".repeat(256) + "\""))))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(as(a, json(post("/medical-histories/register"),
+                        "{\"patient\":{\"id\":\"" + a.getId() + "\"},\"diagnosis\":\"X\"}")))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(as(a, json(post("/medical-histories/register"), "{\"diagnosis\":\"X\"}")))
+                .andExpect(status().isBadRequest());
+        verify(medicalHistoryRepository, never()).save(any());
+    }
+
+    // ---------------------------------------------------------------- notificaciones
+
+    @Test
+    void theRecipientListsReadsAndMarksTheirNotificationsAsRead() throws Exception {
+        mockMvc.perform(as(a, get("/notifications")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1));
+        mockMvc.perform(as(a, get("/notifications/user/" + a.getId())))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1));
+        mockMvc.perform(as(a, get("/notifications/" + notificationA.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value(a.getId().toString()))
+                .andExpect(jsonPath("$.user").doesNotExist())
+                .andExpect(jsonPath("$.fcmToken").doesNotExist());
+        mockMvc.perform(as(a, put("/notifications/" + notificationA.getId() + "/read")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.read").value(true));
+    }
+
+    @Test
+    void aNotificationOfSomeoneElseIs404AndCannotBeMarkedAsRead() throws Exception {
+        mockMvc.perform(as(b, get("/notifications/" + notificationA.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(b, put("/notifications/" + notificationA.getId() + "/read"))).andExpect(status().isNotFound());
+        mockMvc.perform(as(a, put("/notifications/" + notificationB.getId() + "/read"))).andExpect(status().isNotFound());
+        verify(notificationRepository, never()).save(any());
+    }
+
+    @Test
+    void listingAnotherUsersNotificationsIs403AndTheFullListingIsOnlyTheCallers() throws Exception {
+        mockMvc.perform(as(b, get("/notifications/user/" + a.getId()))).andExpect(status().isForbidden());
+        mockMvc.perform(as(b, get("/notifications")))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].userId").value(b.getId().toString()));
+    }
+
+    @Test
+    void aCaregiverAndADoctorOnlySeeTheirOwnNotifications() throws Exception {
+        for (User who : List.of(caregiver, doctor)) {
+            mockMvc.perform(as(who, get("/notifications/" + notificationA.getId()))).andExpect(status().isNotFound());
+            mockMvc.perform(as(who, get("/notifications/user/" + a.getId()))).andExpect(status().isForbidden());
+            mockMvc.perform(as(who, get("/notifications"))).andExpect(jsonPath("$.length()").value(0));
+            mockMvc.perform(as(who, put("/notifications/" + notificationA.getId() + "/read")))
+                    .andExpect(status().isNotFound());
+        }
+        verify(notificationRepository, never()).save(any());
+    }
+
+    @Test
+    void aSoftDeletedNotificationIs404EvenForItsRecipient() throws Exception {
+        mockMvc.perform(as(a, get("/notifications/" + deletedNotificationId))).andExpect(status().isNotFound());
+        mockMvc.perform(as(a, put("/notifications/" + deletedNotificationId + "/read"))).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void clientsCanNoLongerCreateNotifications() throws Exception {
+        mockMvc.perform(as(a, json(post("/notifications/register"),
+                        "{\"user\":{\"id\":\"" + b.getId() + "\"},\"message\":\"spam\"}")))
+                .andExpect(status().is4xxClientError());
+        verify(notificationRepository, never()).save(any());
     }
 }

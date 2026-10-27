@@ -34,6 +34,22 @@ public interface MedicalAppointmentRepository extends JpaRepository<MedicalAppoi
     // ¿Hay una cita vigente entre ese paciente y ese médico?
     boolean existsByPatientIdAndDoctorIdAndDeletedAtIsNull(UUID patientId, UUID doctorId);
 
+    // ¿Hay una cita vigente y no cancelada entre ese médico y ese paciente? (acceso al historial médico)
+    @Query("""
+            select count(a) > 0 from MedicalAppointment a
+            where a.doctor.id = :doctorId and a.patient.id = :patientId
+              and a.deletedAt is null and a.status <> com.medtracker.medtracker.model.MedicalAppointment.AppointmentStatus.CANCELLED
+            """)
+    boolean existsActiveByDoctorAndPatient(@Param("doctorId") UUID doctorId, @Param("patientId") UUID patientId);
+
+    // Pacientes con los que el médico tiene una cita vigente y no cancelada
+    @Query("""
+            select distinct a.patient.id from MedicalAppointment a
+            where a.doctor.id = :doctorId
+              and a.deletedAt is null and a.status <> com.medtracker.medtracker.model.MedicalAppointment.AppointmentStatus.CANCELLED
+            """)
+    List<UUID> findActivePatientIdsByDoctor(@Param("doctorId") UUID doctorId);
+
     // Buscar citas por estado
     List<MedicalAppointment> findByStatus(MedicalAppointment.AppointmentStatus status);
 }

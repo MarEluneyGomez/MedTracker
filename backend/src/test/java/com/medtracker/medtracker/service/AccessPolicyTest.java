@@ -4,12 +4,16 @@ import com.medtracker.medtracker.model.CaregiverLink;
 import com.medtracker.medtracker.model.CaregiverLinkId;
 import com.medtracker.medtracker.model.Dose;
 import com.medtracker.medtracker.model.MedicalAppointment;
+import com.medtracker.medtracker.model.MedicalHistory;
+import com.medtracker.medtracker.model.Notification;
 import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.model.Treatment;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.CaregiverLinkRepository;
 import com.medtracker.medtracker.repository.DoseRepository;
 import com.medtracker.medtracker.repository.MedicalAppointmentRepository;
+import com.medtracker.medtracker.repository.MedicalHistoryRepository;
+import com.medtracker.medtracker.repository.NotificationRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
@@ -46,6 +50,10 @@ class AccessPolicyTest {
     private MedicalAppointmentRepository appointmentRepository;
     @Mock
     private CaregiverLinkRepository caregiverLinkRepository;
+    @Mock
+    private MedicalHistoryRepository medicalHistoryRepository;
+    @Mock
+    private NotificationRepository notificationRepository;
 
     private AccessPolicy policy;
 
@@ -68,7 +76,7 @@ class AccessPolicyTest {
     @BeforeEach
     void setUp() {
         policy = new AccessPolicy(treatmentRepository, reminderRepository, doseRepository,
-                appointmentRepository, caregiverLinkRepository);
+                appointmentRepository, caregiverLinkRepository, medicalHistoryRepository, notificationRepository);
     }
 
     private void caregiverIsLinkedToA() {
@@ -261,6 +269,97 @@ class AccessPolicyTest {
     void aMissingOrSoftDeletedAppointmentIs404() {
         assertThatThrownBy(() -> policy.requireAppointment(asA, UUID.randomUUID()))
                 .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+    }
+
+    // ---- historial médico
+
+    private MedicalHistory historyOfA() {
+        MedicalHistory history = MedicalHistory.builder().id(UUID.randomUUID()).patient(patientA).build();
+        when(medicalHistoryRepository.findByIdAndDeletedAtIsNull(history.getId())).thenReturn(Optional.of(history));
+        return history;
+    }
+
+    private void doctorHasActiveAppointmentWithA() {
+        when(appointmentRepository.existsActiveByDoctorAndPatient(doctor.getId(), patientA.getId())).thenReturn(true);
+        when(appointmentRepository.findActivePatientIdsByDoctor(doctor.getId())).thenReturn(List.of(patientA.getId()));
+    }
+
+    @Test
+    void theOwnerAndADoctorWithAnActiveAppointmentGetThePatientsHistory() {
+        MedicalHistory history = historyOfA();
+        doctorHasActiveAppointmentWithA();
+
+        assertThat(policy.requireMedicalHistory(asA, history.getId())).isSameAs(history);
+        assertThat(policy.requireMedicalHistory(asDoctor, history.getId())).isSameAs(history);
+    }
+
+    @Test
+    void othersGet404ForThePatientsHistory() {
+        MedicalHistory history = historyOfA();
+        doctorHasActiveAppointmentWithA();
+        caregiverIsLinkedToA();
+
+        assertThatThrownBy(() -> policy.requireMedicalHistory(asB, history.getId()))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        assertThatThrownBy(() -> policy.requireMedicalHistory(asOtherDoctor, history.getId()))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        assertThatThrownBy(() -> policy.requireMedicalHistory(asCaregiver, history.getId()))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void aMissingOrSoftDeletedHistoryIs404() {
+        assertThatThrownBy(() -> policy.requireMedicalHistory(asA, UUID.randomUUID()))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void historyAccessIgnoresTheLooserSharedAppointmentRule() {
+        // shareAppointment cuenta también las citas canceladas; el historial no
+        when(appointmentRepository.existsByPatientIdAndDoctorIdAndDeletedAtIsNull(patientA.getId(), doctor.getId()))
+                .thenReturn(true);
+
+        assertThat(policy.shareAppointment(doctor.getId(), patientA.getId())).isTrue();
+        assertThat(policy.canAccessHistoryOf(asDoctor, patientA.getId())).isFalse();
+        assertThatThrownBy(() -> policy.requireCanAccessHistoryOf(asDoctor, patientA.getId()))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+    }
+
+    @Test
+    void historyPatientIdsAreTheUserPlusThePatientsOfTheirActiveAppointments() {
+        doctorHasActiveAppointmentWithA();
+
+        assertThat(policy.historyPatientIds(asDoctor)).containsExactlyInAnyOrder(doctor.getId(), patientA.getId());
+        assertThat(policy.historyPatientIds(asB)).containsExactly(patientB.getId());
+    }
+
+    // ---- notificaciones
+
+    @Test
+    void onlyTheRecipientGetsTheNotification() {
+        Notification notification = Notification.builder().id(UUID.randomUUID()).user(patientA).build();
+        when(notificationRepository.findByIdAndDeletedAtIsNull(notification.getId()))
+                .thenReturn(Optional.of(notification));
+        caregiverIsLinkedToA();
+
+        assertThat(policy.requireNotification(asA, notification.getId())).isSameAs(notification);
+        assertThatThrownBy(() -> policy.requireNotification(asB, notification.getId()))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        assertThatThrownBy(() -> policy.requireNotification(asCaregiver, notification.getId()))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        assertThatThrownBy(() -> policy.requireNotification(asA, UUID.randomUUID()))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void requireSelfIs403ForAnyoneElseIncludingALinkedCaregiver() {
+        caregiverIsLinkedToA();
+
+        policy.requireSelf(asA, patientA.getId());
+        assertThatThrownBy(() -> policy.requireSelf(asCaregiver, patientA.getId()))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+        assertThatThrownBy(() -> policy.requireSelf(asB, patientA.getId()))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
     }
 
     // ---- vínculos y visibilidad entre usuarios
