@@ -1,17 +1,18 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.DoctorSummaryDTO;
 import com.medtracker.medtracker.dto.UserDTO;
 import com.medtracker.medtracker.dto.UserSummaryDTO;
 import com.medtracker.medtracker.model.User;
+import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.service.UserService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/users")
@@ -23,29 +24,33 @@ public class UserController {
         this.userService = userService;
     }
 
-    // Registrar usuario
+    // Registrar usuario (público). Solo PATIENT o CAREGIVER; sin rol, PATIENT.
     @PostMapping("/register")
     public ResponseEntity<UserDTO> register(@RequestBody User user) {
         User created = userService.register(user);
         return ResponseEntity.status(HttpStatus.CREATED).body(new UserDTO(created));
     }
 
-    // Buscar usuario por ID
+    // Buscar usuario por ID. El propio perfil es completo; el de un vinculado
+    // o contraparte de una cita va reducido, sin fcmToken. Otro usuario: 404.
     @GetMapping("/{id}")
-    public ResponseEntity<UserDTO> findById(@PathVariable UUID id) {
-        Optional<User> user = userService.findById(id);
-        return user.map(u -> ResponseEntity.ok(new UserDTO(u)))
-                    .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<?> findById(@AuthenticationPrincipal AuthenticatedUser principal, @PathVariable UUID id) {
+        User user = userService.findVisible(principal, id);
+        if (user.getId().equals(principal.id())) {
+            return ResponseEntity.ok(new UserDTO(user));
+        }
+        return ResponseEntity.ok(new UserSummaryDTO(user));
     }
 
-    // Listar usuarios; con ?role= se filtra por rol (ej. elegir un médico).
-    // Devuelve la versión reducida, sin datos del dispositivo (fcmToken).
+    // Con ?role=DOCTOR lista los médicos (id y nombre) para elegir uno al agendar
+    // una cita. Con cualquier otro filtro, o sin filtro, devuelve solo al propio
+    // usuario y a sus vinculados, en versión reducida (sin fcmToken).
     @GetMapping
-    public ResponseEntity<List<UserSummaryDTO>> findAll(@RequestParam(required = false) User.Role role) {
-        List<UserSummaryDTO> list = userService.findAll(role)
-                .stream()
-                .map(UserSummaryDTO::new)
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(list);
+    public ResponseEntity<List<?>> findAll(@AuthenticationPrincipal AuthenticatedUser principal,
+                                           @RequestParam(required = false) User.Role role) {
+        if (role == User.Role.DOCTOR) {
+            return ResponseEntity.ok(userService.findDoctors().stream().map(DoctorSummaryDTO::new).toList());
+        }
+        return ResponseEntity.ok(userService.findRelated(principal, role).stream().map(UserSummaryDTO::new).toList());
     }
 }

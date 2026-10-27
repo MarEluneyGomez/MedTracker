@@ -2,6 +2,7 @@ package com.medtracker.medtracker.service;
 
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.UserRepository;
+import com.medtracker.medtracker.security.AuthenticatedUser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -14,9 +15,12 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -31,6 +35,8 @@ class UserServiceTest {
     private PasswordEncoder passwordEncoder;
     @Mock
     private LoginAttemptService loginAttemptService;
+    @Mock
+    private AccessPolicy accessPolicy;
     @InjectMocks
     private UserService userService;
 
@@ -162,18 +168,106 @@ class UserServiceTest {
         assertThat(userService.findByEmail("Ana@Mail.com")).isPresent();
     }
 
-    @Test
-    void findAllWithoutRoleReturnsAllActiveUsers() {
-        when(userRepository.findByDeletedAtIsNull()).thenReturn(List.of(user()));
+    private User registering(User.Role role) {
+        User incoming = user();
+        incoming.setRole(role);
+        return incoming;
+    }
 
-        assertThat(userService.findAll(null)).hasSize(1);
+    private void givenRegistrationIsPossible() {
+        when(userRepository.existsByEmail("ana@mail.com")).thenReturn(false);
+        when(passwordEncoder.encode("hash")).thenReturn("encoded");
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     @Test
-    void findAllWithRoleFiltersByRole() {
-        when(userRepository.findByRoleAndDeletedAtIsNull(User.Role.DOCTOR)).thenReturn(List.of());
+    void registerAcceptsPatientAndCaregiver() {
+        givenRegistrationIsPossible();
 
-        assertThat(userService.findAll(User.Role.DOCTOR)).isEmpty();
+        assertThat(userService.register(registering(User.Role.PATIENT)).getRole()).isEqualTo(User.Role.PATIENT);
+        assertThat(userService.register(registering(User.Role.CAREGIVER)).getRole()).isEqualTo(User.Role.CAREGIVER);
+    }
+
+    @Test
+    void registerWithoutRoleDefaultsToPatient() {
+        givenRegistrationIsPossible();
+
+        assertThat(userService.register(registering(null)).getRole()).isEqualTo(User.Role.PATIENT);
+    }
+
+    @Test
+    void registerCannotSelfAssignDoctorAndNothingIsSaved() {
+        assertThatThrownBy(() -> userService.register(registering(User.Role.DOCTOR)))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST))
+                .hasMessageContaining("DOCTOR")
+                .hasMessageContaining("auto-registro");
+        verify(userRepository, never()).save(any());
+    }
+
+    private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), User.Role.PATIENT);
+
+    @Test
+    void findVisibleReturnsTheOwnProfileWithoutAnyLinkCheck() {
+        User me = user();
+        me.setId(principal.id());
+        when(userRepository.findById(principal.id())).thenReturn(Optional.of(me));
+
+        assertThat(userService.findVisible(principal, principal.id())).isSameAs(me);
+    }
+
+    @Test
+    void findVisibleOfAnUnrelatedUserIs404AndDoesNotEvenLoadIt() {
+        UUID other = UUID.randomUUID();
+
+        assertThatThrownBy(() -> userService.findVisible(principal, other))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        verify(userRepository, never()).findById(other);
+    }
+
+    @Test
+    void findVisibleAllowsLinkedUsersAndAppointmentCounterparts() {
+        User linked = user();
+        UUID linkedId = UUID.randomUUID();
+        UUID counterpartId = UUID.randomUUID();
+        when(accessPolicy.areLinked(principal.id(), linkedId)).thenReturn(true);
+        when(accessPolicy.shareAppointment(principal.id(), counterpartId)).thenReturn(true);
+        when(userRepository.findById(linkedId)).thenReturn(Optional.of(linked));
+        when(userRepository.findById(counterpartId)).thenReturn(Optional.of(user()));
+
+        assertThat(userService.findVisible(principal, linkedId)).isSameAs(linked);
+        assertThat(userService.findVisible(principal, counterpartId)).isNotNull();
+    }
+
+    @Test
+    void findVisibleOfASoftDeletedUserIs404() {
+        User deleted = user();
+        deleted.setDeletedAt(LocalDateTime.now());
+        UUID id = UUID.randomUUID();
+        when(accessPolicy.areLinked(principal.id(), id)).thenReturn(true);
+        when(userRepository.findById(id)).thenReturn(Optional.of(deleted));
+
+        assertThatThrownBy(() -> userService.findVisible(principal, id))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void findDoctorsListsActiveDoctors() {
+        when(userRepository.findByRoleAndDeletedAtIsNull(User.Role.DOCTOR)).thenReturn(List.of(user()));
+
+        assertThat(userService.findDoctors()).hasSize(1);
+    }
+
+    @Test
+    void findRelatedOnlyLoadsTheUserAndTheirLinkedUsersAndFiltersByRole() {
+        User patient = user();
+        User caregiver = user();
+        caregiver.setRole(User.Role.CAREGIVER);
+        Set<UUID> ids = Set.of(principal.id(), UUID.randomUUID());
+        when(accessPolicy.relatedUserIds(principal)).thenReturn(ids);
+        when(userRepository.findByIdInAndDeletedAtIsNull(ids)).thenReturn(List.of(patient, caregiver));
+
+        assertThat(userService.findRelated(principal, null)).hasSize(2);
+        assertThat(userService.findRelated(principal, User.Role.CAREGIVER)).containsExactly(caregiver);
         verify(userRepository, never()).findByDeletedAtIsNull();
     }
 }

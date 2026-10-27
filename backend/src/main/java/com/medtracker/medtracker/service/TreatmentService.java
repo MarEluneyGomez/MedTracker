@@ -5,6 +5,7 @@ import com.medtracker.medtracker.model.Treatment;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
+import com.medtracker.medtracker.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -15,7 +16,6 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -25,11 +25,16 @@ public class TreatmentService {
     private final TreatmentRepository treatmentRepository;
     private final ReminderRepository reminderRepository;
     private final UserService userService;
+    private final AccessPolicy accessPolicy;
     private final Clock clock;
 
     // Registrar un nuevo tratamiento: pertenece siempre a un paciente y la
-    // fecha de fin, si existe, no puede ser anterior a la de inicio
-    public Treatment register(Treatment treatment) {
+    // fecha de fin, si existe, no puede ser anterior a la de inicio. Solo el
+    // propio paciente o un cuidador vinculado puede crearlo (RN-01).
+    public Treatment register(AuthenticatedUser principal, Treatment treatment) {
+        if (treatment.getUser() != null && treatment.getUser().getId() != null) {
+            accessPolicy.requireCanManagePatient(principal, treatment.getUser().getId());
+        }
         treatment.setUser(userService.getWithRole(treatment.getUser(), User.Role.PATIENT));
         validateDates(treatment.getStartDate(), treatment.getEndDate());
         validateTimes(treatment.getStartDate(), treatment.getEndDate(),
@@ -60,25 +65,26 @@ public class TreatmentService {
         }
     }
 
-    // Buscar tratamiento por ID
-    public Optional<Treatment> findById(UUID id) {
-        return treatmentRepository.findById(id);
+    // Buscar tratamiento por ID (404 si es ajeno)
+    public Treatment findById(AuthenticatedUser principal, UUID id) {
+        return accessPolicy.requireTreatment(principal, id);
     }
 
-    // Listar todos los tratamientos
-    public List<Treatment> findAll() {
-        return treatmentRepository.findAll();
+    // Listar los tratamientos vigentes propios y de los pacientes que cuida
+    public List<Treatment> findAll(AuthenticatedUser principal) {
+        return treatmentRepository.findByUserIdInAndDeletedAtIsNull(accessPolicy.manageablePatientIds(principal));
     }
 
-    // Listar los tratamientos vigentes (no eliminados) de un usuario
-    public List<Treatment> findByUser(UUID userId) {
+    // Listar los tratamientos vigentes (no eliminados) de un usuario (403 si es ajeno)
+    public List<Treatment> findByUser(AuthenticatedUser principal, UUID userId) {
+        accessPolicy.requireCanManagePatient(principal, userId);
         return treatmentRepository.findByUserIdAndDeletedAtIsNull(userId);
     }
 
     // Editar un tratamiento (CU-08): solo dosis, frecuencia y fechas; el
     // paciente y el medicamento no se cambian
-    public Treatment update(UUID id, Treatment changes) {
-        Treatment treatment = getActive(id);
+    public Treatment update(AuthenticatedUser principal, UUID id, Treatment changes) {
+        Treatment treatment = accessPolicy.requireTreatment(principal, id);
         if (changes.getDosage() == null || changes.getDosage().isBlank()
                 || changes.getFrequency() == null || changes.getFrequency().isBlank()
                 || changes.getStartDate() == null) {
@@ -101,8 +107,8 @@ public class TreatmentService {
     // recordatorios para que no generen más dosis (RN-06). Las dosis ya
     // generadas no se tocan, para conservar el historial.
     @Transactional
-    public void delete(UUID id) {
-        Treatment treatment = getActive(id);
+    public void delete(AuthenticatedUser principal, UUID id) {
+        Treatment treatment = accessPolicy.requireTreatment(principal, id);
         treatment.setDeletedAt(LocalDateTime.now(clock));
         treatmentRepository.save(treatment);
         List<Reminder> reminders = reminderRepository.findByTreatmentId(id);
@@ -110,23 +116,10 @@ public class TreatmentService {
         reminderRepository.saveAll(reminders);
     }
 
-    // Un tratamiento eliminado se trata como inexistente
-    private Treatment getActive(UUID id) {
-        return treatmentRepository.findById(id)
-                .filter(treatment -> treatment.getDeletedAt() == null)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "Tratamiento no encontrado: " + id));
-    }
-
     // Marcar tratamiento como completado
-    public Optional<Treatment> markAsCompleted(UUID id) {
-        Optional<Treatment> treatmentOpt = treatmentRepository.findById(id);
-        if (treatmentOpt.isPresent()) {
-            Treatment treatment = treatmentOpt.get();
-            treatment.setCompleted(true);
-            treatmentRepository.save(treatment);
-            return Optional.of(treatment);
-        }
-        return Optional.empty();
+    public Treatment markAsCompleted(AuthenticatedUser principal, UUID id) {
+        Treatment treatment = accessPolicy.requireTreatment(principal, id);
+        treatment.setCompleted(true);
+        return treatmentRepository.save(treatment);
     }
 }

@@ -1,10 +1,12 @@
 package com.medtracker.medtracker.controller;
 
 import com.medtracker.medtracker.model.User;
+import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.security.JwtService;
 import com.medtracker.medtracker.service.DoseGenerationService;
 import com.medtracker.medtracker.service.DoseService;
 import com.medtracker.medtracker.service.UserService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,6 +14,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.server.ResponseStatusException;
@@ -45,14 +50,25 @@ class ReadAndAuthControllersTest {
     private DoseGenerationService doseGenerationService;
 
     private MockMvc mockMvc;
+    private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), User.Role.PATIENT);
 
     @BeforeEach
     void setUp() {
+        // Los endpoints protegidos reciben el usuario del token vía @AuthenticationPrincipal
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(principal, null, List.of()));
         mockMvc = MockMvcBuilders.standaloneSetup(
                 new AuthController(userService, new JwtService(
                         "secreto-de-prueba-con-al-menos-32-caracteres", 60, Clock.systemUTC())),
                 new UserController(userService),
-                new DoseController(doseService, doseGenerationService)).build();
+                new DoseController(doseService, doseGenerationService))
+                .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
+                .build();
+    }
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
     }
 
     private User user() {
@@ -93,37 +109,72 @@ class ReadAndAuthControllersTest {
     }
 
     @Test
-    void listUsersFiltersByRoleAndHidesSensitiveFields() throws Exception {
-        when(userService.findAll(User.Role.DOCTOR)).thenReturn(List.of(user()));
+    void listDoctorsReturnsOnlyIdAndName() throws Exception {
+        when(userService.findDoctors()).thenReturn(List.of(user()));
 
         mockMvc.perform(get("/users").param("role", "DOCTOR"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].role").value("DOCTOR"))
+                .andExpect(jsonPath("$[0].id").isNotEmpty())
+                .andExpect(jsonPath("$[0].name").value("Ana"))
+                .andExpect(jsonPath("$[0].email").doesNotExist())
+                .andExpect(jsonPath("$[0].role").doesNotExist())
                 .andExpect(jsonPath("$[0].fcmToken").doesNotExist())
                 .andExpect(jsonPath("$[0].passwordHash").doesNotExist());
     }
 
     @Test
-    void listUsersWithoutRoleReturnsAll() throws Exception {
-        when(userService.findAll(isNull())).thenReturn(List.of(user()));
+    void listUsersWithoutRoleReturnsOnlyRelatedUsersWithoutSensitiveFields() throws Exception {
+        when(userService.findRelated(principal, null)).thenReturn(List.of(user()));
 
-        mockMvc.perform(get("/users")).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1));
+        mockMvc.perform(get("/users"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].fcmToken").doesNotExist())
+                .andExpect(jsonPath("$[0].passwordHash").doesNotExist());
+        verify(userService, never()).findDoctors();
+    }
+
+    @Test
+    void listUsersWithAnotherRoleFiltersAmongRelatedUsersOnly() throws Exception {
+        when(userService.findRelated(principal, User.Role.CAREGIVER)).thenReturn(List.of());
+
+        mockMvc.perform(get("/users").param("role", "CAREGIVER"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void ownProfileIncludesFcmTokenButAnotherUsersDoesNot() throws Exception {
+        User me = user();
+        me.setId(principal.id());
+        User other = user();
+        when(userService.findVisible(principal, me.getId())).thenReturn(me);
+        when(userService.findVisible(principal, other.getId())).thenReturn(other);
+
+        mockMvc.perform(get("/users/" + me.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fcmToken").value("token-privado"));
+        mockMvc.perform(get("/users/" + other.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Ana"))
+                .andExpect(jsonPath("$.fcmToken").doesNotExist())
+                .andExpect(jsonPath("$.passwordHash").doesNotExist());
     }
 
     @Test
     void dosesByUserUsesDateParam() throws Exception {
         UUID userId = UUID.randomUUID();
-        when(doseService.findByUserAndDate(userId, LocalDate.of(2026, 10, 14))).thenReturn(List.of());
+        when(doseService.findByUserAndDate(principal, userId, LocalDate.of(2026, 10, 14))).thenReturn(List.of());
 
         mockMvc.perform(get("/doses/user/" + userId).param("date", "2026-10-14"))
                 .andExpect(status().isOk());
-        verify(doseService).findByUserAndDate(userId, LocalDate.of(2026, 10, 14));
+        verify(doseService).findByUserAndDate(principal, userId, LocalDate.of(2026, 10, 14));
     }
 
     @Test
     void dosesByUserWithoutDatePassesNullSoServiceUsesToday() throws Exception {
         UUID userId = UUID.randomUUID();
-        when(doseService.findByUserAndDate(userId, null)).thenReturn(List.of());
+        when(doseService.findByUserAndDate(principal, userId, null)).thenReturn(List.of());
 
         mockMvc.perform(get("/doses/user/" + userId)).andExpect(status().isOk());
     }

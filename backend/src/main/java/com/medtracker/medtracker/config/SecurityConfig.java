@@ -23,8 +23,8 @@ public class SecurityConfig {
 
     // API REST sin estado: no usa sesión ni cookies, así que CSRF no aplica.
     // Solo el login y el registro son públicos; el resto exige un JWT válido
-    // (Authorization: Bearer <token>). Todavía no hay autorización por rol ni
-    // por dueño del recurso.
+    // (Authorization: Bearer <token>). La pertenencia de cada recurso (RN-01,
+    // RN-09) se valida en los services con AccessPolicy, usando el usuario del token.
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService,
                                                    RestAuthenticationEntryPoint entryPoint) throws Exception {
@@ -53,8 +53,8 @@ public class SecurityConfig {
 
     // Sin usuarios en memoria: la autenticación básica y por formulario están
     // deshabilitadas, así Spring Boot no genera el usuario "user" con una
-    // contraseña aleatoria que se imprime en el log al arrancar. Se reemplaza
-    // cuando exista el login con JWT.
+    // contraseña aleatoria que se imprime en el log al arrancar. La identidad
+    // sale del JWT (JwtAuthenticationFilter), no de este servicio.
     @Bean
     public UserDetailsService userDetailsService() {
         return new InMemoryUserDetailsManager();

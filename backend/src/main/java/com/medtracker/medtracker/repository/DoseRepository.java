@@ -6,13 +6,31 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface DoseRepository extends JpaRepository<Dose, UUID> {
 
     // Buscar dosis por recordatorio
     List<Dose> findByReminderId(UUID reminderId);
+
+    // Dosis vigentes de un recordatorio
+    List<Dose> findByReminderIdAndDeletedAtIsNull(UUID reminderId);
+
+    // Dosis vigente por id (las eliminadas lógicamente no se encuentran)
+    Optional<Dose> findByIdAndDeletedAtIsNull(UUID id);
+
+    // Dosis vigentes de los usuarios indicados, sin las de recordatorios o
+    // tratamientos eliminados
+    @Query("""
+            select d from Dose d join d.reminder r join r.treatment t
+            where t.user.id in :ownerIds
+              and d.deletedAt is null and r.deletedAt is null and t.deletedAt is null
+            order by d.scheduledAt
+            """)
+    List<Dose> findByOwners(@Param("ownerIds") Collection<UUID> ownerIds);
 
     // Buscar dosis por estado
     List<Dose> findByStatus(Dose.DoseStatus status);

@@ -12,6 +12,13 @@ public interface CaregiverLinkRepository extends JpaRepository<CaregiverLink, Ca
     // Buscar enlaces por caregiver (navega la relación "caregiver" -> su id)
     List<CaregiverLink> findByCaregiver_Id(UUID caregiverId);
 
+    // Vínculos vigentes (sin baja lógica)
+    List<CaregiverLink> findByCaregiver_IdAndDeletedAtIsNull(UUID caregiverId);
+
+    List<CaregiverLink> findByPatient_IdAndDeletedAtIsNull(UUID patientId);
+
+    boolean existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(UUID caregiverId, UUID patientId);
+
     // Buscar enlaces por paciente
     List<CaregiverLink> findByPatient_Id(UUID patientId);
 }

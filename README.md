@@ -87,7 +87,7 @@ seguimiento-de-medicacion/
 
 Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA repository) → `service` → `controller` (REST) → `dto`. Los errores de negocio se responden con 400 (datos inválidos o rol incorrecto), 404 (recurso inexistente) o 409 (duplicados o estados que no admiten el cambio).
 
-> **Autenticación pendiente:** `POST /auth/login` ya valida las credenciales (CU-02), pero todavía no emite token de sesión: hasta implementar JWT, todos los endpoints quedan abiertos (`SecurityConfig`). Para frenar fuerza bruta, tras 5 intentos fallidos el login se bloquea 15 minutos (por email y por IP) y responde 429.
+> **Autenticación y autorización:** `POST /auth/login` valida las credenciales (CU-02) y emite un JWT (HS256, 24 h por defecto, configurable con `JWT_EXPIRATION_MINUTES`; el secreto sale de `JWT_SECRET`). Todos los endpoints exigen `Authorization: Bearer <token>`, salvo `POST /auth/login` y `POST /users/register`; sin token o con uno inválido responde 401. Además, cada recurso se autoriza por dueño con el usuario del token, nunca con un id que mande el cliente (ver [Autorización por dueño](#autorización-por-dueño-rn-01-rn-09)). Para frenar fuerza bruta, tras 5 intentos fallidos el login se bloquea 15 minutos (por email y por IP) y responde 429.
 
 | Módulo | Descripción | Endpoint REST |
 |---|---|---|
@@ -106,19 +106,58 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 
 | Método y ruta | Descripción |
 |---|---|
-| `POST /auth/login` | Body `{email, password}`. 200 con el usuario (sin token por ahora), 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
-| `GET /users?role=DOCTOR` | Lista usuarios vigentes en versión reducida (`id`, `name`, `email`, `role`; sin `fcmToken`). `role` es opcional. |
-| `GET /treatments/user/{userId}` | Tratamientos vigentes (sin eliminados) del usuario. |
+| `POST /auth/login` | Body `{email, password}`. 200 con el JWT (`accessToken`) y el usuario, 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
+| `GET /users?role=DOCTOR` | Lista los médicos vigentes con `id` y `name` solamente, para elegir uno al agendar una cita. Cualquier otro `role`, o sin `role`, devuelve solo al propio usuario y a sus vinculados (`id`, `name` y `role`; sin `email` ni `fcmToken`). |
+| `GET /users/{id}` | El propio perfil completo; un vinculado o la contraparte de una cita compartida, en versión reducida (`id`, `name` y `role`; sin `email` ni `fcmToken`). Cualquier otro usuario: 404. |
+| `POST /users/register` | Solo roles `PATIENT` o `CAREGIVER`; sin `role` queda `PATIENT`. `DOCTOR` responde 400 (ver [Alta de médicos](#alta-de-médicos)). |
+| `GET /treatments/user/{userId}` | Tratamientos vigentes (sin eliminados) del usuario. 403 si `userId` no es el propio ni el de un paciente que el usuario cuida. |
 | `PUT /treatments/{id}` | Edita `dosage`, `frequency`, `startDate` y `endDate` (CU-08). 400 si `endDate` < `startDate`; 404 si no existe o está eliminado. |
 | `DELETE /treatments/{id}` | Eliminación lógica + desactiva sus recordatorios (RN-06); conserva las dosis ya generadas. 204. |
 | `GET /reminders/treatment/{treatmentId}` | Recordatorios vigentes (sin eliminados) del tratamiento. |
 | `PUT /reminders/{id}` | Edita `time`, `daysOfWeek` y `message` (RF-11), con la misma normalización de días y validación de duplicados (RN-07), sin contar el propio recordatorio. |
 | `POST /reminders/register` | Además de guardar, si hoy coincide con `daysOfWeek` y el tratamiento está vigente hoy, genera ya la dosis de hoy (idempotente). `PUT /reminders/{id}` mueve al nuevo horario la dosis `PENDING` de hoy; las `CONFIRMED`/`SKIPPED` no se tocan. |
 | `PUT /doses/{id}/confirm`, `PUT /doses/{id}/skip` | 404 si la dosis no existe; 409 si ya no está `PENDING` (RN-03). |
-| `POST /caregiver-links/register` | 409 si el vínculo cuidador-paciente ya existe y está activo; si estaba dado de baja lógicamente, se reactiva. |
+| `POST /caregiver-links/register` | Solo lo crea el paciente sobre sí mismo (`patient.id` = usuario del token, si no 403); `caregiver.id` debe ser un usuario existente con rol `CAREGIVER` (si no 400). 409 si el vínculo ya existe y está activo; si estaba dado de baja lógicamente, se reactiva. |
+| `DELETE /caregiver-links/{caregiverId}/{patientId}` | Baja lógica del vínculo; la puede pedir el paciente o el cuidador involucrado, un tercero recibe 404. 204. Los `GET` solo devuelven vínculos del propio usuario; si la ruta nombra a otro usuario sin vínculo activo con él, 403. |
 | `DELETE /reminders/{id}` | Eliminación lógica (`deleted_at`) y `active=false`: deja de generar dosis. 204. |
-| `GET /doses/user/{userId}?date=YYYY-MM-DD` | Dosis del usuario para ese día (por defecto, hoy), ordenadas por hora. No incluye dosis de tratamientos o recordatorios eliminados. |
+| `GET /doses/user/{userId}?date=YYYY-MM-DD` | Dosis del usuario para ese día (por defecto, hoy), ordenadas por hora. No incluye dosis de tratamientos o recordatorios eliminados. 403 si `userId` no es el propio ni el de un paciente que el usuario cuida. |
 | `POST /doses/generate-daily` | **Herramienta de desarrollo/testing:** dispara a demanda la generación de dosis de hoy (la misma que corre sola cada día a medianoche, RF-06/CU-05). Es idempotente. Devuelve `{"generated": n}`. |
+
+#### Autorización por dueño (RN-01, RN-09)
+
+La identidad sale siempre del token. Un recurso ajeno, inexistente o eliminado lógicamente responde igual: **404**. Un id de usuario ajeno nombrado explícitamente (alta con otro dueño, listados por usuario) responde **403**.
+
+| Recursos | Quién puede verlos y gestionarlos |
+|---|---|
+| Tratamientos, recordatorios y dosis (`/treatments`, `/reminders`, `/doses`) | El propio paciente y los cuidadores con vínculo activo con él (`caregiver_link.deleted_at` nulo). La pertenencia de un recordatorio y de una dosis se resuelve a través de su tratamiento. Los listados (`GET /treatments`, `/reminders`, `/doses`) devuelven solo lo propio y lo de los pacientes que cuida. |
+| Citas médicas (`/medical-appointments`) | Solo el paciente y el médico (`doctor_id`) de la cita; el cuidador no tiene acceso. Para agendar, el usuario del token debe ser el paciente o el médico de la cita (si no 403). Los listados por paciente o por médico responden 403 si el id nombrado no es el propio ni el de la contraparte de una cita. |
+
+`POST /doses/generate-daily`, `/notifications/*` y `/medical-histories/*` todavía no aplican autorización por dueño: cualquier usuario autenticado accede a ellos. Quedan pendientes para la próxima tanda. `generate-daily` es idempotente (no duplica dosis: consulta `existsByReminderIdAndScheduledAt` antes de crear), pero sigue abierto a cualquier usuario autenticado.
+
+#### Alta de médicos
+
+El auto-registro (`POST /users/register`) no permite el rol `DOCTOR`: si no, cualquiera podría registrarse como médico y la RN-09 perdería sentido. Un médico se da de alta a mano en la base, con una de estas dos variantes (sin credenciales reales en el repositorio):
+
+1. **Registrar y promover.** El futuro médico se registra por la API como `PATIENT` y un operador cambia el rol. Debe volver a iniciar sesión después, porque el rol viaja dentro del JWT.
+
+```sql
+UPDATE "user" SET role = 'DOCTOR' WHERE email = 'medico@example.com' AND deleted_at IS NULL;
+```
+
+2. **Insertar directamente.** Generá un hash BCrypt de la contraseña (cualquiera de los dos comandos pide la contraseña sin dejarla en el historial) y usalo en el `INSERT`. Spring acepta los prefijos `$2a$`, `$2b$` e `$2y$`.
+
+```bash
+htpasswd -nBC 10 "" | tr -d ':\n'
+# o, con Python y el paquete bcrypt:
+python -c "import bcrypt, getpass; print(bcrypt.hashpw(getpass.getpass().encode(), bcrypt.gensalt(10)).decode())"
+```
+
+```sql
+INSERT INTO "user" (name, email, password_hash, role)
+VALUES ('Dra. Ejemplo', 'medico@example.com', '<hash BCrypt generado>', 'DOCTOR');
+```
+
+Para auditar los médicos existentes: `SELECT id, name, email, created_at FROM "user" WHERE role = 'DOCTOR' AND deleted_at IS NULL ORDER BY created_at;`
 
 La zona horaria que define "hoy" y la hora del job diario se configura con `medtracker.timezone` (variable `MEDTRACKER_TIMEZONE`, por defecto `America/Argentina/Buenos_Aires`). Para que la generación sea idempotente también a nivel base, `database/schema.sql` incluye el índice único `dose_reminder_scheduled_key`; en una base ya creada hay que aplicarlo a mano:
 

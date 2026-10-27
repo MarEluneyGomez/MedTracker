@@ -2,7 +2,7 @@ package com.medtracker.medtracker.service;
 
 import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.repository.ReminderRepository;
-import com.medtracker.medtracker.repository.TreatmentRepository;
+import com.medtracker.medtracker.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -16,7 +16,6 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
-import java.util.Optional;
 import java.util.UUID;
 
 @Slf4j
@@ -28,21 +27,19 @@ public class ReminderService {
     private static final List<String> WEEK_DAYS = List.of("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN");
 
     private final ReminderRepository reminderRepository;
-    private final TreatmentRepository treatmentRepository;
     private final DoseGenerationService doseGenerationService;
+    private final AccessPolicy accessPolicy;
     private final Clock clock;
 
     // Registrar un nuevo recordatorio (CU-04)
-    public Reminder register(Reminder reminder) {
+    public Reminder register(AuthenticatedUser principal, Reminder reminder) {
         if (reminder.getTreatment() == null || reminder.getTreatment().getId() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Falta el tratamiento del recordatorio");
         }
-        // El body trae solo el id del tratamiento: se carga el real (vigente) para
-        // que la dosis de hoy se evalúe contra sus fechas reales
-        reminder.setTreatment(treatmentRepository.findById(reminder.getTreatment().getId())
-                .filter(treatment -> treatment.getDeletedAt() == null)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "Tratamiento no encontrado: " + reminder.getTreatment().getId())));
+        // El body trae solo el id del tratamiento: se carga el real (vigente y
+        // del usuario o de un paciente que cuida) para que la dosis de hoy se
+        // evalúe contra sus fechas reales
+        reminder.setTreatment(accessPolicy.requireTreatment(principal, reminder.getTreatment().getId()));
         reminder.setDaysOfWeek(normalizeDays(reminder.getDaysOfWeek()));
         ensureNotDuplicated(reminder.getTreatment().getId(), reminder.getTime(), reminder.getDaysOfWeek(), null);
         // El body llega como entidad: sin esto un id existente haría merge y
@@ -98,25 +95,26 @@ public class ReminderService {
                 .toArray(String[]::new);
     }
 
-    // Buscar recordatorio por ID
-    public Optional<Reminder> findById(UUID id) {
-        return reminderRepository.findById(id);
+    // Buscar recordatorio por ID (404 si es ajeno)
+    public Reminder findById(AuthenticatedUser principal, UUID id) {
+        return accessPolicy.requireReminder(principal, id);
     }
 
-    // Listar todos los recordatorios
-    public List<Reminder> findAll() {
-        return reminderRepository.findAll();
+    // Listar los recordatorios vigentes propios y de los pacientes que cuida
+    public List<Reminder> findAll(AuthenticatedUser principal) {
+        return reminderRepository.findByOwners(accessPolicy.manageablePatientIds(principal));
     }
 
-    // Listar los recordatorios vigentes (no eliminados) de un tratamiento
-    public List<Reminder> findByTreatment(UUID treatmentId) {
+    // Listar los recordatorios vigentes (no eliminados) de un tratamiento (404 si es ajeno)
+    public List<Reminder> findByTreatment(AuthenticatedUser principal, UUID treatmentId) {
+        accessPolicy.requireTreatment(principal, treatmentId);
         return reminderRepository.findByTreatmentIdAndDeletedAtIsNull(treatmentId);
     }
 
     // Editar un recordatorio (RF-11): hora, días y mensaje. Reaplica la
     // normalización de días y la validación de duplicados (RN-07).
-    public Reminder update(UUID id, Reminder changes) {
-        Reminder reminder = getActive(id);
+    public Reminder update(AuthenticatedUser principal, UUID id, Reminder changes) {
+        Reminder reminder = accessPolicy.requireReminder(principal, id);
         if (changes.getTime() == null || changes.getMessage() == null || changes.getMessage().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "La hora y el mensaje del recordatorio son obligatorios");
@@ -139,30 +137,17 @@ public class ReminderService {
 
     // Eliminar un recordatorio (RF-11): borrado lógico y se desactiva para que
     // deje de generar dosis; las ya generadas se conservan como historial
-    public void delete(UUID id) {
-        Reminder reminder = getActive(id);
+    public void delete(AuthenticatedUser principal, UUID id) {
+        Reminder reminder = accessPolicy.requireReminder(principal, id);
         reminder.setDeletedAt(LocalDateTime.now(clock));
         reminder.setActive(false);
         reminderRepository.save(reminder);
     }
 
-    // Un recordatorio eliminado se trata como inexistente
-    private Reminder getActive(UUID id) {
-        return reminderRepository.findById(id)
-                .filter(reminder -> reminder.getDeletedAt() == null)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "Recordatorio no encontrado: " + id));
-    }
-
     // Desactivar un recordatorio (deja de generar dosis nuevas, pero conserva el historial)
-    public Optional<Reminder> deactivate(UUID id) {
-        Optional<Reminder> reminderOpt = reminderRepository.findById(id);
-        if (reminderOpt.isPresent()) {
-            Reminder reminder = reminderOpt.get();
-            reminder.setActive(false);
-            reminderRepository.save(reminder);
-            return Optional.of(reminder);
-        }
-        return Optional.empty();
+    public Reminder deactivate(AuthenticatedUser principal, UUID id) {
+        Reminder reminder = accessPolicy.requireReminder(principal, id);
+        reminder.setActive(false);
+        return reminderRepository.save(reminder);
     }
 }

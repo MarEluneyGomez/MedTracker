@@ -6,7 +6,9 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface ReminderRepository extends JpaRepository<Reminder, UUID> {
@@ -16,6 +18,16 @@ public interface ReminderRepository extends JpaRepository<Reminder, UUID> {
 
     // Recordatorios vigentes del tratamiento (sin borrado lógico)
     List<Reminder> findByTreatmentIdAndDeletedAtIsNull(UUID treatmentId);
+
+    // Recordatorio vigente por id (los eliminados lógicamente no se encuentran)
+    Optional<Reminder> findByIdAndDeletedAtIsNull(UUID id);
+
+    // Recordatorios vigentes, de tratamientos vigentes, de los usuarios indicados
+    @Query("""
+            select r from Reminder r join r.treatment t
+            where t.user.id in :ownerIds and r.deletedAt is null and t.deletedAt is null
+            """)
+    List<Reminder> findByOwners(@Param("ownerIds") Collection<UUID> ownerIds);
 
     // Buscar recordatorios activos (los que siguen generando dosis)
     List<Reminder> findByActive(boolean active);
