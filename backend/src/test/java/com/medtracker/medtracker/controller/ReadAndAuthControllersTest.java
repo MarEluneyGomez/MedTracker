@@ -50,6 +50,7 @@ class ReadAndAuthControllersTest {
     private DoseGenerationService doseGenerationService;
 
     private MockMvc mockMvc;
+    private MockMvc mockMvcWithDevTools;
     private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), User.Role.PATIENT);
 
     @BeforeEach
@@ -61,7 +62,11 @@ class ReadAndAuthControllersTest {
                 new AuthController(userService, new JwtService(
                         "secreto-de-prueba-con-al-menos-32-caracteres", 60, Clock.systemUTC())),
                 new UserController(userService),
-                new DoseController(doseService, doseGenerationService))
+                new DoseController(doseService, doseGenerationService, false))
+                .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
+                .build();
+        mockMvcWithDevTools = MockMvcBuilders.standaloneSetup(
+                new DoseController(doseService, doseGenerationService, true))
                 .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
                 .build();
     }
@@ -186,11 +191,18 @@ class ReadAndAuthControllersTest {
     }
 
     @Test
-    void generateDailyReturnsCreatedCount() throws Exception {
+    void generateDailyWithDevToolsEnabledReturnsCreatedCount() throws Exception {
         when(doseGenerationService.generateForToday()).thenReturn(3);
 
-        mockMvc.perform(post("/doses/generate-daily"))
+        mockMvcWithDevTools.perform(post("/doses/generate-daily"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.generated").value(3));
+    }
+
+    @Test
+    void generateDailyWithDevToolsDisabledIs404AndDoesNotGenerate() throws Exception {
+        mockMvc.perform(post("/doses/generate-daily"))
+                .andExpect(status().isNotFound());
+        verify(doseGenerationService, never()).generateForToday();
     }
 }
