@@ -1,27 +1,117 @@
 # Frontend - MedTracker
 
-App móvil del sistema de seguimiento de medicación, construida con **React Native**.
+App móvil del sistema de seguimiento de medicación, construida con **React Native** sobre **Expo** y **TypeScript**.
 
 ## Estado actual
 
-Para esta entrega, esta carpeta contiene únicamente la estructura de carpetas propuesta (`screens`, `components`, `navigation`, `services`, `utils`), sin implementación, según lo pedido por la consigna de esta entrega. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
+Base de la app armada (Expo SDK 58): cliente de API, sesión de usuario, navegación según el rol, las pantallas de inicio de sesión y registro, y la gestión de tratamientos del paciente. El resto de las pantallas de cada sección son provisorias y se completan en las etapas siguientes. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
+
+Al abrir la app sin sesión se ve la pantalla de bienvenida, con las opciones de iniciar sesión (CU-02) o crear una cuenta (CU-01). Al iniciar sesión se ven las pestañas que corresponden al rol:
+
+- **Paciente:** Hoy, Tratamientos, Citas y Perfil.
+- **Tutor:** Pacientes y Perfil.
+- **Médico:** Citas y Perfil.
+
+## Registro e inicio de sesión
+
+Las dos pantallas usan el backend real, así que necesitan el backend corriendo (ver [Conexión con el backend](#conexión-con-el-backend)).
+
+- **Registro** (`POST /users/register`): pide nombre, email, contraseña (con su repetición) y rol, y valida los datos antes de enviarlos. La contraseña sigue la misma regla que el backend: entre 8 y 72 caracteres, con al menos una letra y un número. El registro no devuelve token, así que después la app inicia sesión sola con los mismos datos.
+- **Inicio de sesión** (`POST /auth/login`): el backend devuelve un token JWT junto con el usuario. Después de 5 intentos fallidos con el mismo email, lo bloquea por 15 minutos.
+
+El token se manda en cada pedido como `Authorization: Bearer <token>` (lo agrega `src/services/api.ts`); sin él, todos los endpoints salvo el login y el registro responden 401. El token vence a las 24 horas: cuando el backend lo rechaza, la app cierra la sesión, avisa "Tu sesión expiró" y vuelve a la bienvenida.
+
+Los mensajes de error que se muestran son los que devuelve el backend (por ejemplo "Credenciales incorrectas"), que nunca incluyen detalles internos; si no manda ninguno, se usa un mensaje genérico según el código de respuesta. Si el servidor no responde en 15 segundos, se avisa que no se pudo conectar.
+
+**Usuarios de prueba:** en la base de desarrollo hay un usuario por rol, todos con la contraseña `demo1234`:
+
+- `paciente@demo.com`
+- `tutor@demo.com`
+- `medico@demo.com`
+
+Mientras la app corre en modo desarrollo, la pantalla de inicio de sesión muestra un botón de acceso rápido para cada uno. En la app compilada para publicar esos botones no aparecen (`__DEV__`).
+
+La sesión (usuario y token) se guarda cifrada en el dispositivo (`expo-secure-store`), así que se mantiene al cerrar y volver a abrir la app mientras el token no haya vencido.
+
+## Tratamientos
+
+La pestaña Tratamientos del paciente cubre CU-03 (agregar tratamiento) y CU-08 (editar o eliminar tratamiento):
+
+- **Lista** (`GET /treatments/user/{userId}`): cada tratamiento muestra el medicamento, la dosis y la frecuencia. Al tocarlo se despliega el detalle (forma de administración, fechas y estado) con las acciones. Se actualiza al volver a la pantalla y deslizando hacia abajo.
+- **Nuevo tratamiento** (`POST /treatments/register`): el medicamento se busca en el catálogo sin distinguir mayúsculas ni tildes; si no existe, se puede agregar indicando cómo se toma (`POST /medications/register`).
+- **Editar** (`PUT /treatments/{id}`): usa el mismo formulario con los datos cargados. El medicamento no se puede cambiar: para otro medicamento se crea otro tratamiento.
+- **Marcar como completado** (`PUT /treatments/{id}/complete`) y **Eliminar** (`DELETE /treatments/{id}`, con confirmación, porque también desactiva sus recordatorios).
+
+La dosis y la frecuencia se eligen con opciones (cantidad y unidad; "Cada 8 horas", "Cada 1 día" u otra a medida) y se guardan como texto con un formato fijo, por ejemplo "2 comprimidos" y "Cada 8 horas". Así se pueden volver a leer al editar y más adelante sugerir los horarios de los recordatorios. Las fechas se eligen con un calendario propio (`react-native-calendars`) que sigue la estética de la app; la fecha de fin es opcional y se guarda al final del día, para que el último día también cuente.
 
 ## Estructura
 
 ```
 frontend/
+├── assets/                 # Íconos y splash de la app
 ├── src/
-│   ├── screens/       # Pantallas
-│   ├── components/    # Componentes reutilizables
-│   ├── navigation/     # Configuración de navegación
-│   ├── services/       # Llamadas a la API del backend
-│   └── utils/          # Funciones auxiliares
+│   ├── screens/            # Pantallas (bienvenida, login, registro, tratamientos y su formulario, pestañas de cada rol, perfil)
+│   ├── components/         # Componentes reutilizables
+│   │   ├── AppButton, Screen, TextField, Logo
+│   │   ├── RoleSelector, ChipSelector # Selección entre opciones
+│   │   ├── DateField # Campo de fecha con calendario
+│   │   └── MedicationPicker, DosagePicker, FrequencyPicker # Partes del formulario de tratamiento
+│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, headerOptions y lista de pantallas (types.ts)
+│   ├── context/            # AuthContext: sesión compartida por toda la app
+│   ├── hooks/
+│   │   └── useFlashScrollIndicators.ts # Muestra la barra de scroll al abrir una lista en iOS
+│   ├── services/
+│   │   ├── api.ts          # Cliente HTTP: token en cada pedido, sesión vencida y errores (ApiError)
+│   │   ├── auth.ts         # Login, registro y guardado de la sesión con su token
+│   │   ├── medications.ts  # Catálogo de medicamentos
+│   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
+│   ├── types/              # Tipos de los DTOs del backend
+│   ├── theme/
+│   │   ├── colors.ts       # Paleta de colores
+│   │   └── typography.ts   # Estilos de texto compartidos (etiquetas y errores de campos)
+│   └── utils/
+│       ├── dates.ts        # Conversión de fechas entre la app y el backend
+│       ├── dosage.ts       # Formato y lectura de la dosis
+│       ├── frequency.ts    # Formato y lectura de la frecuencia
+│       ├── text.ts         # Mayúscula inicial y búsqueda sin tildes
+│       └── calendarLocale.ts # Calendario en español
+├── App.tsx                 # Componente raíz
+├── index.ts                # Punto de entrada
+├── app.json                # Configuración de Expo
+├── .prettierrc             # Reglas de formato del código
+├── tsconfig.json
 └── package.json
 ```
 
+## Ejecución
+
+Requiere Node.js. Desde esta carpeta:
+
+```bash
+npm install
+npx expo start
+```
+
+La terminal muestra un código QR: escanearlo con la app **Expo Go** (Android o iOS) abre la app en el celular, que tiene que estar en la misma red que la PC. También se puede abrir en un emulador de Android con la tecla `a`.
+
+Para agregar dependencias usar `npx expo install <paquete>` en vez de `npm install`, así se instala la versión compatible con el SDK de Expo.
+
+Antes de dar por terminado un cambio:
+
+```bash
+npx tsc --noEmit   # chequeo de tipos
+npx expo-doctor    # chequeo de dependencias y configuración
+```
+
+El formato del código lo aplica **Prettier** al guardar en VS Code (extensión "Prettier - Code formatter", configurada en `/.vscode/settings.json`).
+
 ## Conexión con el backend
 
-La app va a consumir la API REST expuesta por `/backend` (ver [`/backend/README.md`](../backend/README.md)) sobre HTTPS (RNF-03), y recibirá recordatorios vía Firebase Cloud Messaging (RF-06).
+La app consume la API REST expuesta por `/backend` (ver [`/backend/README.md`](../backend/README.md)) a través de `src/services/api.ts`. La dirección se toma de la variable de entorno `EXPO_PUBLIC_API_URL`; si no está definida, se usa `http://10.0.2.2:8080`, que desde el emulador de Android apunta a la PC donde corre el backend. Desde un celular real hay que definirla con la IP de la PC en la red local, en un archivo `.env.local` (no versionado):
+
+```
+EXPO_PUBLIC_API_URL=http://192.168.0.10:8080
+```
 
 ## Referencias
 

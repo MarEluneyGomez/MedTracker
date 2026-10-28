@@ -47,13 +47,23 @@ El sistema permite a un usuario (paciente) registrar los medicamentos que debe t
 
 ```
 seguimiento-de-medicacion/
-├── frontend/                  # App React Native
+├── frontend/                  # App React Native (Expo + TypeScript)
+│   ├── assets/                 # Íconos y splash de la app
 │   ├── src/
 │   │   ├── screens/            # Pantallas
 │   │   ├── components/         # Componentes reutilizables
-│   │   ├── navigation/         # Configuración de navegación
+│   │   ├── navigation/         # Navegación según la sesión y el rol
+│   │   ├── context/            # Estado compartido (sesión del usuario)
+│   │   ├── hooks/              # Hooks reutilizables
 │   │   ├── services/           # Llamadas a la API
-│   │   └── utils/               # Funciones auxiliares
+│   │   ├── types/              # Tipos de los datos que devuelve el backend
+│   │   ├── theme/              # Paleta de colores y estilos de texto compartidos
+│   │   └── utils/              # Fechas, dosis, frecuencia, texto y calendario en español
+│   ├── App.tsx                 # Componente raíz
+│   ├── index.ts                # Punto de entrada
+│   ├── app.json                # Configuración de Expo
+│   ├── .prettierrc             # Reglas de formato del código
+│   ├── tsconfig.json
 │   └── package.json
 │
 ├── backend/                   # API Spring Boot
@@ -80,6 +90,9 @@ seguimiento-de-medicacion/
 ├── docs/
 │   ├── modulos.md               # Listado de módulos funcionales y prioridad
 │   └── arquitectura.md          # Arquitectura, stack y justificación técnica
+│
+├── .vscode/
+│   └── settings.json           # Formateo automático al guardar (Prettier)
 │
 └── README.md
 ```
