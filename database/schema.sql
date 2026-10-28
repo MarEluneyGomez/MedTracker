@@ -33,6 +33,8 @@ CREATE TABLE treatment (
     frequency VARCHAR(100) NOT NULL,
     start_date TIMESTAMP NOT NULL,
     end_date TIMESTAMP,
+    start_time TIME,
+    end_time TIME,
     completed BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),

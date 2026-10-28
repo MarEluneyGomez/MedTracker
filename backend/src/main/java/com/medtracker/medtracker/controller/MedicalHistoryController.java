@@ -1,14 +1,17 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.MedicalHistoryCreateRequestDTO;
 import com.medtracker.medtracker.dto.MedicalHistoryDTO;
 import com.medtracker.medtracker.model.MedicalHistory;
+import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.service.MedicalHistoryService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -24,23 +27,23 @@ public class MedicalHistoryController {
 
     // Registrar historial médico
     @PostMapping("/register")
-    public ResponseEntity<MedicalHistoryDTO> register(@RequestBody MedicalHistory history) {
-        MedicalHistory created = medicalHistoryService.register(history);
+    public ResponseEntity<MedicalHistoryDTO> register(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                      @Valid @RequestBody MedicalHistoryCreateRequestDTO request) {
+        MedicalHistory created = medicalHistoryService.register(principal, request.toEntity());
         return ResponseEntity.status(HttpStatus.CREATED).body(new MedicalHistoryDTO(created));
     }
 
     // Buscar historial por ID
     @GetMapping("/{id}")
-    public ResponseEntity<MedicalHistoryDTO> findById(@PathVariable UUID id) {
-        Optional<MedicalHistory> history = medicalHistoryService.findById(id);
-        return history.map(h -> ResponseEntity.ok(new MedicalHistoryDTO(h)))
-                        .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<MedicalHistoryDTO> findById(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                      @PathVariable UUID id) {
+        return ResponseEntity.ok(new MedicalHistoryDTO(medicalHistoryService.findById(principal, id)));
     }
 
-    // Listar todos los historiales médicos
+    // Listar los historiales médicos visibles para el usuario
     @GetMapping
-    public ResponseEntity<List<MedicalHistoryDTO>> findAll() {
-        List<MedicalHistoryDTO> list = medicalHistoryService.findAll()
+    public ResponseEntity<List<MedicalHistoryDTO>> findAll(@AuthenticationPrincipal AuthenticatedUser principal) {
+        List<MedicalHistoryDTO> list = medicalHistoryService.findAll(principal)
                 .stream()
                 .map(MedicalHistoryDTO::new)
                 .collect(Collectors.toList());
@@ -49,8 +52,9 @@ public class MedicalHistoryController {
 
     // Listar historiales por paciente
     @GetMapping("/patient/{patientId}")
-    public ResponseEntity<List<MedicalHistoryDTO>> findByPatient(@PathVariable UUID patientId) {
-        List<MedicalHistoryDTO> list = medicalHistoryService.findByPatient(patientId)
+    public ResponseEntity<List<MedicalHistoryDTO>> findByPatient(
+            @AuthenticationPrincipal AuthenticatedUser principal, @PathVariable UUID patientId) {
+        List<MedicalHistoryDTO> list = medicalHistoryService.findByPatient(principal, patientId)
                 .stream()
                 .map(MedicalHistoryDTO::new)
                 .collect(Collectors.toList());

@@ -10,6 +10,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.UUID;
 
 @Entity
@@ -50,6 +51,14 @@ public class Treatment {
     // Fecha de fin del tratamiento
     @Column(name = "end_date")
     private LocalDateTime endDate;
+
+    // Hora de inicio del primer día (opcional): antes de esta hora no se generan tomas
+    @Column(name = "start_time")
+    private LocalTime startTime;
+
+    // Hora de fin del último día (opcional): después de esta hora no se generan tomas
+    @Column(name = "end_time")
+    private LocalTime endTime;
 
     // Estado de completado
     @Column(nullable = false)

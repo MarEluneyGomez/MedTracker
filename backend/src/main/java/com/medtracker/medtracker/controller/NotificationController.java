@@ -1,14 +1,13 @@
 package com.medtracker.medtracker.controller;
 
 import com.medtracker.medtracker.dto.NotificationDTO;
-import com.medtracker.medtracker.model.Notification;
+import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.service.NotificationService;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -22,25 +21,17 @@ public class NotificationController {
         this.notificationService = notificationService;
     }
 
-    // Registrar notificación
-    @PostMapping("/register")
-    public ResponseEntity<NotificationDTO> register(@RequestBody Notification notification) {
-        Notification created = notificationService.register(notification);
-        return ResponseEntity.status(HttpStatus.CREATED).body(new NotificationDTO(created));
-    }
-
     // Buscar notificación por ID
     @GetMapping("/{id}")
-    public ResponseEntity<NotificationDTO> findById(@PathVariable UUID id) {
-        Optional<Notification> notification = notificationService.findById(id);
-        return notification.map(n -> ResponseEntity.ok(new NotificationDTO(n)))
-                           .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<NotificationDTO> findById(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                    @PathVariable UUID id) {
+        return ResponseEntity.ok(new NotificationDTO(notificationService.findById(principal, id)));
     }
 
-    // Listar todas las notificaciones
+    // Listar las notificaciones del usuario
     @GetMapping
-    public ResponseEntity<List<NotificationDTO>> findAll() {
-        List<NotificationDTO> list = notificationService.findAll()
+    public ResponseEntity<List<NotificationDTO>> findAll(@AuthenticationPrincipal AuthenticatedUser principal) {
+        List<NotificationDTO> list = notificationService.findAll(principal)
                 .stream()
                 .map(NotificationDTO::new)
                 .collect(Collectors.toList());
@@ -49,8 +40,9 @@ public class NotificationController {
 
     // Listar notificaciones por usuario
     @GetMapping("/user/{userId}")
-    public ResponseEntity<List<NotificationDTO>> findByUser(@PathVariable UUID userId) {
-        List<NotificationDTO> list = notificationService.findByUser(userId)
+    public ResponseEntity<List<NotificationDTO>> findByUser(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                            @PathVariable UUID userId) {
+        List<NotificationDTO> list = notificationService.findByUser(principal, userId)
                 .stream()
                 .map(NotificationDTO::new)
                 .collect(Collectors.toList());
@@ -59,9 +51,8 @@ public class NotificationController {
 
     // Marcar notificación como leída
     @PutMapping("/{id}/read")
-    public ResponseEntity<NotificationDTO> markAsRead(@PathVariable UUID id) {
-        Optional<Notification> updated = notificationService.markAsRead(id);
-        return updated.map(n -> ResponseEntity.ok(new NotificationDTO(n)))
-                           .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<NotificationDTO> markAsRead(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                      @PathVariable UUID id) {
+        return ResponseEntity.ok(new NotificationDTO(notificationService.markAsRead(principal, id)));
     }
 }

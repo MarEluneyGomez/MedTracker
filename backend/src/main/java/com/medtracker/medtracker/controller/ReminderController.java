@@ -1,14 +1,18 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.ReminderCreateRequestDTO;
 import com.medtracker.medtracker.dto.ReminderDTO;
+import com.medtracker.medtracker.dto.ReminderUpdateRequestDTO;
 import com.medtracker.medtracker.model.Reminder;
+import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.service.ReminderService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -24,23 +28,23 @@ public class ReminderController {
 
     // Registrar recordatorio
     @PostMapping("/register")
-    public ResponseEntity<ReminderDTO> register(@RequestBody Reminder reminder) {
-        Reminder created = reminderService.register(reminder);
+    public ResponseEntity<ReminderDTO> register(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                @Valid @RequestBody ReminderCreateRequestDTO request) {
+        Reminder created = reminderService.register(principal, request.toEntity());
         return ResponseEntity.status(HttpStatus.CREATED).body(new ReminderDTO(created));
     }
 
     // Buscar recordatorio por ID
     @GetMapping("/{id}")
-    public ResponseEntity<ReminderDTO> findById(@PathVariable UUID id) {
-        Optional<Reminder> reminder = reminderService.findById(id);
-        return reminder.map(r -> ResponseEntity.ok(new ReminderDTO(r)))
-                           .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<ReminderDTO> findById(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                @PathVariable UUID id) {
+        return ResponseEntity.ok(new ReminderDTO(reminderService.findById(principal, id)));
     }
 
-    // Listar todos los recordatorios
+    // Listar los recordatorios propios y los de los pacientes que cuida
     @GetMapping
-    public ResponseEntity<List<ReminderDTO>> findAll() {
-        List<ReminderDTO> list = reminderService.findAll()
+    public ResponseEntity<List<ReminderDTO>> findAll(@AuthenticationPrincipal AuthenticatedUser principal) {
+        List<ReminderDTO> list = reminderService.findAll(principal)
                 .stream()
                 .map(ReminderDTO::new)
                 .collect(Collectors.toList());
@@ -49,8 +53,9 @@ public class ReminderController {
 
     // Listar los recordatorios vigentes de un tratamiento
     @GetMapping("/treatment/{treatmentId}")
-    public ResponseEntity<List<ReminderDTO>> findByTreatment(@PathVariable UUID treatmentId) {
-        List<ReminderDTO> list = reminderService.findByTreatment(treatmentId)
+    public ResponseEntity<List<ReminderDTO>> findByTreatment(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                             @PathVariable UUID treatmentId) {
+        List<ReminderDTO> list = reminderService.findByTreatment(principal, treatmentId)
                 .stream()
                 .map(ReminderDTO::new)
                 .collect(Collectors.toList());
@@ -59,22 +64,24 @@ public class ReminderController {
 
     // Editar recordatorio (RF-11): hora, días y mensaje
     @PutMapping("/{id}")
-    public ResponseEntity<ReminderDTO> update(@PathVariable UUID id, @RequestBody Reminder reminder) {
-        return ResponseEntity.ok(new ReminderDTO(reminderService.update(id, reminder)));
+    public ResponseEntity<ReminderDTO> update(@AuthenticationPrincipal AuthenticatedUser principal,
+                                              @PathVariable UUID id,
+                                              @Valid @RequestBody ReminderUpdateRequestDTO request) {
+        return ResponseEntity.ok(new ReminderDTO(reminderService.update(principal, id, request.toEntity())));
     }
 
     // Eliminar recordatorio (RF-11): borrado lógico, deja de generar dosis
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable UUID id) {
-        reminderService.delete(id);
+    public ResponseEntity<Void> delete(@AuthenticationPrincipal AuthenticatedUser principal,
+                                       @PathVariable UUID id) {
+        reminderService.delete(principal, id);
         return ResponseEntity.noContent().build();
     }
 
     // Desactivar recordatorio (deja de generar dosis nuevas)
     @PutMapping("/{id}/deactivate")
-    public ResponseEntity<ReminderDTO> deactivate(@PathVariable UUID id) {
-        Optional<Reminder> updated = reminderService.deactivate(id);
-        return updated.map(r -> ResponseEntity.ok(new ReminderDTO(r)))
-                           .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<ReminderDTO> deactivate(@AuthenticationPrincipal AuthenticatedUser principal,
+                                                  @PathVariable UUID id) {
+        return ResponseEntity.ok(new ReminderDTO(reminderService.deactivate(principal, id)));
     }
 }

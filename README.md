@@ -84,7 +84,8 @@ seguimiento-de-medicacion/
 ├── database/
 │   ├── schema.sql              # DDL de tipos y tablas
 │   ├── queries.sql             # DML de ejemplo
-│   └── er-diagram.md           # Diagrama de entidad-relación (Mermaid)
+│   ├── er-diagram.svg          # Diagrama de entidad-relación (exportado)
+│   └── er-diagram.md           # Diagrama de entidad-relación (embebe el SVG)
 │
 ├── docs/
 │   ├── modulos.md               # Listado de módulos funcionales y prioridad
@@ -100,7 +101,7 @@ seguimiento-de-medicacion/
 
 Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA repository) → `service` → `controller` (REST) → `dto`. Los errores de negocio se responden con 400 (datos inválidos o rol incorrecto), 404 (recurso inexistente) o 409 (duplicados o estados que no admiten el cambio).
 
-> **Autenticación pendiente:** `POST /auth/login` ya valida las credenciales (CU-02), pero todavía no emite token de sesión: hasta implementar JWT, todos los endpoints quedan abiertos (`SecurityConfig`). Para frenar fuerza bruta, tras 5 intentos fallidos el login se bloquea 15 minutos (por email y por IP) y responde 429.
+> **Autenticación y autorización:** `POST /auth/login` valida las credenciales (CU-02) y emite un JWT (HS256, 24 h por defecto, configurable con `JWT_EXPIRATION_MINUTES`; el secreto sale de `JWT_SECRET`). Todos los endpoints exigen `Authorization: Bearer <token>`, salvo `POST /auth/login` y `POST /users/register`; sin token o con uno inválido responde 401. Además, cada recurso se autoriza por dueño con el usuario del token, nunca con un id que mande el cliente (ver [Autorización por dueño](#autorización-por-dueño-rn-01-rn-09)). Para frenar fuerza bruta, tras 5 intentos fallidos el login se bloquea 15 minutos (por email y por IP) y responde 429.
 
 | Módulo | Descripción | Endpoint REST |
 |---|---|---|
@@ -119,16 +120,118 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 
 | Método y ruta | Descripción |
 |---|---|
-| `POST /auth/login` | Body `{email, password}`. 200 con el usuario (sin token por ahora), 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
-| `GET /users?role=DOCTOR` | Lista usuarios vigentes en versión reducida (`id`, `name`, `email`, `role`; sin `fcmToken`). `role` es opcional. |
-| `GET /treatments/user/{userId}` | Tratamientos vigentes (sin eliminados) del usuario. |
+| `POST /auth/login` | Body `{email, password}`. 200 con el JWT (`accessToken`) y el usuario, 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
+| `GET /users?role=DOCTOR` | Lista los médicos vigentes con `id` y `name` solamente, para elegir uno al agendar una cita. Cualquier otro `role`, o sin `role`, devuelve solo al propio usuario y a sus vinculados (`id`, `name`, `email` y `role`; sin `fcmToken`). |
+| `GET /users/{id}` | El propio perfil completo; un vinculado o la contraparte de una cita compartida, en versión reducida (`id`, `name`, `email` y `role`; sin `fcmToken`). Cualquier otro usuario: 404. Solo el listado de médicos (`GET /users?role=DOCTOR`) va sin `email`. |
+| `POST /users/register` | Solo roles `PATIENT` o `CAREGIVER`; sin `role` queda `PATIENT`. `DOCTOR` responde 400 (ver [Alta de médicos](#alta-de-médicos)). La contraseña se manda en `passwordHash` (también se acepta `password`) y tiene una política mínima: ver [Validación de entradas](#validación-de-entradas). |
+| `GET /treatments/user/{userId}` | Tratamientos vigentes (sin eliminados) del usuario. 403 si `userId` no es el propio ni el de un paciente que el usuario cuida. |
 | `PUT /treatments/{id}` | Edita `dosage`, `frequency`, `startDate` y `endDate` (CU-08). 400 si `endDate` < `startDate`; 404 si no existe o está eliminado. |
 | `DELETE /treatments/{id}` | Eliminación lógica + desactiva sus recordatorios (RN-06); conserva las dosis ya generadas. 204. |
 | `GET /reminders/treatment/{treatmentId}` | Recordatorios vigentes (sin eliminados) del tratamiento. |
 | `PUT /reminders/{id}` | Edita `time`, `daysOfWeek` y `message` (RF-11), con la misma normalización de días y validación de duplicados (RN-07), sin contar el propio recordatorio. |
+| `POST /reminders/register` | Además de guardar, si hoy coincide con `daysOfWeek` y el tratamiento está vigente hoy, genera ya la dosis de hoy (idempotente). `PUT /reminders/{id}` mueve al nuevo horario la dosis `PENDING` de hoy; las `CONFIRMED`/`SKIPPED` no se tocan. |
+| `PUT /doses/{id}/confirm`, `PUT /doses/{id}/skip` | 404 si la dosis no existe; 409 si ya no está `PENDING` (RN-03). |
+| `POST /caregiver-links/register` | Solo lo crea el paciente sobre sí mismo (`patient.id` = usuario del token, si no 403); `caregiver.id` debe ser un usuario existente con rol `CAREGIVER` (si no 400). 409 si el vínculo ya existe y está activo; si estaba dado de baja lógicamente, se reactiva. |
+| `DELETE /caregiver-links/{caregiverId}/{patientId}` | Baja lógica del vínculo; la puede pedir el paciente o el cuidador involucrado, un tercero recibe 404. 204. Los `GET` solo devuelven vínculos del propio usuario; si la ruta nombra a otro usuario sin vínculo activo con él, 403. |
 | `DELETE /reminders/{id}` | Eliminación lógica (`deleted_at`) y `active=false`: deja de generar dosis. 204. |
-| `GET /doses/user/{userId}?date=YYYY-MM-DD` | Dosis del usuario para ese día (por defecto, hoy), ordenadas por hora. No incluye dosis de tratamientos o recordatorios eliminados. |
-| `POST /doses/generate-daily` | **Herramienta de desarrollo/testing:** dispara a demanda la generación de dosis de hoy (la misma que corre sola cada día a medianoche, RF-06/CU-05). Es idempotente. Devuelve `{"generated": n}`. |
+| `GET /doses/user/{userId}?date=YYYY-MM-DD` | Dosis del usuario para ese día (por defecto, hoy), ordenadas por hora. No incluye dosis de tratamientos o recordatorios eliminados. 403 si `userId` no es el propio ni el de un paciente que el usuario cuida. |
+| `POST /doses/generate-daily` | **Herramienta de desarrollo/testing**, apagada por defecto: con `medtracker.dev-tools.enabled=false` (variable de entorno `MEDTRACKER_DEV_TOOLS_ENABLED`) responde 404 "Recurso no encontrado", igual que una ruta inexistente. Encendida, dispara a demanda la generación de dosis de hoy (la misma que corre sola cada día a medianoche y al arrancar, RF-06/CU-05, que no dependen de la propiedad). Es idempotente. Devuelve `{"generated": n}`. No encenderla en un entorno con recordatorios reales. |
+| `POST /medications/register` | Solo `PATIENT` o `CAREGIVER` (RN-08); un `DOCTOR` recibe 403 "Solo un paciente o un cuidador puede dar de alta medicamentos". `GET /medications` y `GET /medications/{id}` siguen abiertos a todos los roles autenticados y no incluyen medicamentos dados de baja (por id, 404). Un tratamiento existente que referencia un medicamento dado de baja se sigue leyendo con su `medicationId`. |
+
+#### Validación de entradas
+
+Los endpoints de las tandas A y B reciben un DTO de entrada con Bean Validation (`@Valid`) y no la entidad JPA, así que el cliente solo puede mandar los campos que le corresponden. La forma del JSON no cambió: las referencias siguen siendo objetos con `id`. Los campos que no figuran en la tabla se **ignoran** sin error (por ejemplo `id`, `deletedAt`, `createdAt` o un objeto referenciado completo en lugar de `{id}`); esto evita romper al frontend si manda de más, pero el cliente no se entera de que se descartaron.
+
+| Endpoint | Campos aceptados | Obligatorios | Límites |
+|---|---|---|---|
+| `POST /users/register` | `name`, `email`, `passwordHash` (alias `password`), `role`, `fcmToken` | `name`, `email`, contraseña | `name` ≤ 150; `email` con formato válido y ≤ 254; `fcmToken` ≤ 255; `role` solo `PATIENT` o `CAREGIVER` |
+| `POST /treatments/register` | `user{id}`, `medication{id}`, `dosage`, `frequency`, `startDate`, `endDate`, `startTime`, `endTime` | `user.id`, `medication.id`, `dosage`, `frequency`, `startDate` | `dosage` y `frequency` ≤ 100. Nace con `completed=false` |
+| `PUT /treatments/{id}` | `dosage`, `frequency`, `startDate`, `endDate`, `startTime`, `endTime` | `dosage`, `frequency`, `startDate` | `dosage` y `frequency` ≤ 100 |
+| `POST /reminders/register` | `treatment{id}`, `time`, `daysOfWeek`, `message` | `treatment.id`, `time`, `message` | `message` ≤ 255; `daysOfWeek` hasta 7 elementos. Nace con `active=true` |
+| `PUT /reminders/{id}` | `time`, `daysOfWeek`, `message` | `time`, `message` | igual que el alta |
+| `POST /doses/register` | `reminder{id}`, `scheduledAt` | `reminder.id`, `scheduledAt` | Nace `PENDING`; el estado y `confirmedAt` no se aceptan |
+| `POST /medical-appointments/register` | `patient{id}`, `doctor{id}`, `dateTime`, `reason` | los cuatro | `reason` no vacío y ≤ 255. Nace `PENDING`; el estado no se acepta |
+| `POST /medical-histories/register` | `patient{id}`, `diagnosis`, `notes`, `recordDate` | `patient.id`, `diagnosis`, `recordDate` | `diagnosis` no vacío y ≤ 255; `notes` ≤ 5000 caracteres (límite de la aplicación: la columna es `TEXT`) |
+| `POST /caregiver-links/register` | `caregiver{id}`, `patient{id}` | los dos | Las reglas de negocio (409, rol `CAREGIVER`, 403) siguen en el service |
+| `POST /medications/register` | `name`, `administrationForm` | los dos | `name` no vacío y ≤ 150; `administrationForm` no vacío y ≤ 50 |
+
+- **Contraseña de registro.** Entre 8 y 72 caracteres, con al menos una letra y un dígito, y como máximo **72 bytes en UTF-8** (límite de BCrypt: una `ñ` ocupa 2 bytes, así que una contraseña con acentos puede ser rechazada antes de los 72 caracteres). El login no aplica esta política, para no dejar afuera a quienes ya tienen una contraseña anterior; una contraseña de más de 72 bytes en el login responde 401 "Credenciales incorrectas" como cualquier contraseña incorrecta.
+- **Mensaje de error.** Una falla de validación responde 400 con `Campos inválidos: a, b`: solo los **nombres** de los campos (ordenados, sin repetir; los anidados como `medication.id`), nunca el valor rechazado. La contraseña se nombra `password`, venga como `passwordHash` o como `password`.
+- **Orden.** La validación corre antes que la autorización por dueño: con un body inválido se responde 400 antes que 403 o 404.
+- **Medicamento.** En `POST /treatments/register`, un medicamento inexistente o dado de baja responde 400 "El medicamento indicado no existe". Se chequea después de autorizar sobre el paciente.
+- **Usuarios referenciados.** Un usuario inexistente, eliminado o con un rol que no corresponde (por ejemplo un `doctor` que no es `DOCTOR`) responde siempre el mismo 400 "El usuario indicado no existe o no tiene el rol requerido (ROL)", para que no se pueda averiguar qué ids existen ni qué rol tienen.
+- **Mensajes de los services.** Las reglas de negocio conservan su mensaje (409 de vínculo duplicado, 400 de cuidador sin rol `CAREGIVER`, 400 unificado de usuario inexistente o de otro rol, 403/404 de la autorización). Con un campo faltante o fuera de límite responde antes el 400 "Campos inválidos: …".
+
+#### Autorización por dueño (RN-01, RN-09)
+
+La identidad sale siempre del token. Un recurso ajeno, inexistente o eliminado lógicamente responde igual: **404**. Un id de usuario ajeno nombrado explícitamente (alta con otro dueño, listados por usuario) responde **403**.
+
+| Recursos | Quién puede verlos y gestionarlos |
+|---|---|
+| Tratamientos, recordatorios y dosis (`/treatments`, `/reminders`, `/doses`) | El propio paciente y los cuidadores con vínculo activo con él (`caregiver_link.deleted_at` nulo). La pertenencia de un recordatorio y de una dosis se resuelve a través de su tratamiento. Los listados (`GET /treatments`, `/reminders`, `/doses`) devuelven solo lo propio y lo de los pacientes que cuida. |
+| Citas médicas (`/medical-appointments`) | Solo el paciente y el médico (`doctor_id`) de la cita; el cuidador no tiene acceso. Para agendar, el usuario del token debe ser el paciente o el médico de la cita (si no 403). Los listados por paciente o por médico responden 403 si el id nombrado no es el propio ni el de la contraparte de una cita. |
+| Historial médico (`/medical-histories`) | El propio paciente y un médico con una cita vigente (`deleted_at` nulo) y **no cancelada** (`status` distinto de `CANCELLED`) con ese paciente; ambos leen y crean. El cuidador no tiene acceso, aunque tenga vínculo activo. `GET /medical-histories/{id}` de un historial ajeno, inexistente o eliminado responde 404; `GET /medical-histories/patient/{id}` y `POST /medical-histories/register` que nombran a un paciente sin acceso responden 403. `GET /medical-histories` devuelve solo los historiales visibles, del más reciente al más antiguo (`record_date` descendente). `diagnosis` y `record_date` son obligatorios y `diagnosis` admite hasta 255 caracteres (si no, 400). |
+| Notificaciones (`/notifications`) | Solo su destinatario (`user_id`), incluso con vínculo de cuidador: el cuidador y el médico ven únicamente las propias. Una notificación ajena, inexistente o eliminada responde 404; `GET /notifications/user/{id}` con otro usuario responde 403; `GET /notifications` devuelve solo las propias. `PUT /notifications/{id}/read` solo sobre las propias. |
+
+**Notificaciones creadas solo por el sistema.** `POST /notifications/register` se quitó: una notificación es un evento del sistema (CU-05), no algo que el cliente deba poder fabricar a nombre de otro usuario. Hoy ningún proceso del backend las crea (el envío con FCM del CU-05 aún no está implementado); cuando exista, las generará internamente. **Cambio de contrato para el frontend:** ya no puede crear notificaciones; solo listarlas, leerlas y marcarlas como leídas.
+
+**Limitaciones conocidas del historial médico.**
+
+- *No se guarda el autor de cada entrada.* `medical_history` no tiene un campo de autor (agregarlo exigiría migrar la base), así que no se distingue si una entrada la escribió el paciente o un médico.
+- *Cita unilateral.* RN-09 permite que el médico agende una cita con cualquier paciente (conociendo su `id`) y cambie su estado sin intervención del paciente. Como el acceso al historial se apoya en tener una cita vigente y no cancelada, un médico puede darse acceso al historial de un paciente agendando una cita por su cuenta. Se acepta como riesgo conocido de esta etapa; la mitigación pendiente es exigir que el paciente confirme la cita antes de habilitar el acceso.
+**Pendientes.**
+
+- `GET /users/{id}` da acceso al perfil reducido también con un turno `CANCELLED` (`shareAppointment` no filtra el estado), a diferencia del historial médico.
+- `POST /doses/register` no valida que `scheduledAt` caiga dentro de las fechas del tratamiento.
+- No existe un endpoint para dar de baja ni editar medicamentos: la baja lógica (`deleted_at`) solo se aplica por base de datos.
+
+#### Formato de errores
+
+Toda respuesta de error (incluidos el 401 y el 403 de la cadena de seguridad) tiene el mismo JSON: `timestamp`, `status`, `error`, `message`, `path`. Lo arma `GlobalExceptionHandler`; los mensajes que escriben los services (`ResponseStatusException`) se devuelven tal cual y el resto sale con un texto genérico en español, sin SQL, nombres de constraints, tablas, columnas ni clases Java. El detalle completo queda solo en el log del servidor.
+
+| Situación | Status | `message` |
+|---|---|---|
+| `ResponseStatusException` de un service | el suyo | el mensaje del service |
+| JSON ilegible, o enum inválido en el body | 400 | El cuerpo de la solicitud no es válido |
+| Tipo inválido en path o query (UUID, enum, fecha) | 400 | El valor del parámetro 'X' no es válido |
+| Parámetro obligatorio faltante | 400 | Falta el parámetro obligatorio 'X' |
+| Falla de `@Valid` | 400 | Campos inválidos: a, b (solo los nombres de los campos, nunca los valores) |
+| Método no soportado / tipo de contenido no soportado / ruta inexistente | 405 / 415 / 404 | mensaje genérico |
+| Unique (SQLState 23505) | 409 | Ya existe un registro con esos datos |
+| FK inexistente (23503) o referencia sin `id` (ej. `"medication": {}`) | 400 | Una de las referencias indicadas no existe |
+| NOT NULL (23502) | 400 | Faltan datos obligatorios |
+| Valor demasiado largo (22001) | 400 | Alguno de los valores supera el largo permitido |
+| CHECK (23514) u otro error de dato (22xxx) | 400 | Alguno de los valores no es válido |
+| Cualquier otra excepción | 500 | Ocurrió un error interno |
+
+El SQL por consola (`spring.jpa.show-sql`) está apagado; se activa con la variable `JPA_SHOW_SQL=true`.
+
+`DoseService.changeStatus` recibe el estado como `Dose.DoseStatus` (solo `CONFIRMED` o `SKIPPED`; `PENDING` responde 400) y ya no atrapa excepciones: un fallo real del `save` sale como 500 genérico en vez de disfrazarse de 404.
+
+#### Alta de médicos
+
+El auto-registro (`POST /users/register`) no permite el rol `DOCTOR`: si no, cualquiera podría registrarse como médico y la RN-09 perdería sentido. Un médico se da de alta a mano en la base, con una de estas dos variantes (sin credenciales reales en el repositorio):
+
+1. **Registrar y promover.** El futuro médico se registra por la API como `PATIENT` y un operador cambia el rol. Debe volver a iniciar sesión después, porque el rol viaja dentro del JWT.
+
+```sql
+UPDATE "user" SET role = 'DOCTOR' WHERE email = 'medico@example.com' AND deleted_at IS NULL;
+```
+
+2. **Insertar directamente.** Generá un hash BCrypt de la contraseña (cualquiera de los dos comandos pide la contraseña sin dejarla en el historial) y usalo en el `INSERT`. Spring acepta los prefijos `$2a$`, `$2b$` e `$2y$`.
+
+```bash
+htpasswd -nBC 10 "" | tr -d ':\n'
+# o, con Python y el paquete bcrypt:
+python -c "import bcrypt, getpass; print(bcrypt.hashpw(getpass.getpass().encode(), bcrypt.gensalt(10)).decode())"
+```
+
+```sql
+INSERT INTO "user" (name, email, password_hash, role)
+VALUES ('Dra. Ejemplo', 'medico@example.com', '<hash BCrypt generado>', 'DOCTOR');
+```
+
+Para auditar los médicos existentes: `SELECT id, name, email, created_at FROM "user" WHERE role = 'DOCTOR' AND deleted_at IS NULL ORDER BY created_at;`
 
 La zona horaria que define "hoy" y la hora del job diario se configura con `medtracker.timezone` (variable `MEDTRACKER_TIMEZONE`, por defecto `America/Argentina/Buenos_Aires`). Para que la generación sea idempotente también a nivel base, `database/schema.sql` incluye el índice único `dose_reminder_scheduled_key`; en una base ya creada hay que aplicarlo a mano:
 
@@ -241,6 +344,8 @@ Relación entre un usuario y un medicamento. Acá viven los datos que varían se
 | frequency | VARCHAR | Diaria, semanal, cada X horas, etc. |
 | start_date | TIMESTAMP | Inicio del tratamiento |
 | end_date | TIMESTAMP (nullable) | Fin del tratamiento (si aplica) |
+| start_time | TIME (nullable) | Hora de inicio el primer día: no se generan tomas anteriores a esta hora. NULL = sin restricción |
+| end_time | TIME (nullable) | Hora de fin el último día: no se generan tomas posteriores a esta hora. NULL = sin restricción |
 | completed | BOOLEAN | Indica si el tratamiento fue completado |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
@@ -351,6 +456,57 @@ El motor de base de datos es PostgreSQL, hosteado en [Neon](#tecnologías). El e
   psql "$DATABASE_URL" -f database/schema.sql
   ```
   El valor de `DATABASE_URL` debe declararse entre comillas, ya que el parámetro `channel_binding` de la cadena de conexión de Neon incluye un `&` que, sin comillas, bash interpreta como operador de segundo plano.
+
+### Cambios de esquema sobre una base ya creada
+
+`database/schema.sql` crea todo desde cero. Si la base se creó con una versión anterior del esquema, hay que aplicar a mano estos cambios (en el SQL Editor de Neon o con `psql`). Cada uno ya está reflejado en `schema.sql`.
+
+**1. Valores de enum en mayúsculas.** Los enums Java (`User.Role`, `Dose.DoseStatus`) usan nombres en mayúsculas, así que los valores de `user_role` y `dose_status` en Postgres deben coincidir exactamente. Las versiones anteriores del esquema los definían en minúsculas. `RENAME VALUE` actualiza también las filas y los defaults existentes:
+
+```sql
+ALTER TYPE user_role RENAME VALUE 'patient' TO 'PATIENT';
+ALTER TYPE user_role RENAME VALUE 'caregiver' TO 'CAREGIVER';
+ALTER TYPE user_role RENAME VALUE 'doctor' TO 'DOCTOR';
+ALTER TYPE dose_status RENAME VALUE 'pending' TO 'PENDING';
+ALTER TYPE dose_status RENAME VALUE 'confirmed' TO 'CONFIRMED';
+ALTER TYPE dose_status RENAME VALUE 'skipped' TO 'SKIPPED';
+```
+
+**2. Índice único parcial de recordatorios (RN-07).** Requiere PostgreSQL 15 o superior (`NULLS NOT DISTINCT`). Impide dos recordatorios vigentes del mismo tratamiento con la misma hora y los mismos días; los eliminados lógicamente no cuentan.
+
+```sql
+-- Antes: si devuelve filas, hay recordatorios duplicados que depurar o el índice falla
+SELECT treatment_id, time, days_of_week, count(*) FROM reminder
+WHERE deleted_at IS NULL GROUP BY 1, 2, 3 HAVING count(*) > 1;
+
+CREATE UNIQUE INDEX reminder_treatment_time_days_key
+    ON reminder (treatment_id, time, days_of_week) NULLS NOT DISTINCT
+    WHERE deleted_at IS NULL;
+```
+
+**3. Índice único de dosis.** `dose_reminder_scheduled_key` sobre `dose (reminder_id, scheduled_at)` hace idempotente la generación de dosis (job de medianoche, arranque de la aplicación y alta de recordatorios). Su SQL y el chequeo previo están en la sección de la API, junto al endpoint `POST /doses/generate-daily`.
+
+**4. Emails en minúsculas.** El backend normaliza el email (`trim` + minúsculas) al registrar y al iniciar sesión, por lo que las cuentas guardadas con mayúsculas dejarían de poder entrar. Primero, detectar cuentas que ya difieren solo en mayúsculas (si devuelve filas, resolverlas a mano antes del `UPDATE`, porque el `UNIQUE` de `email` haría fallar la normalización):
+
+```sql
+SELECT lower(trim(email)) AS email_normalizado, count(*) AS cuentas, array_agg(id) AS ids
+FROM "user"
+GROUP BY lower(trim(email))
+HAVING count(*) > 1;
+```
+
+Recién sin resultados, normalizar las existentes:
+
+```sql
+UPDATE "user" SET email = lower(trim(email)) WHERE email <> lower(trim(email));
+```
+
+**5. Hora de inicio/fin del tratamiento.** `treatment` suma dos columnas `TIME`, `start_time` y `end_time`, ambas **nullable y sin `DEFAULT`**, por lo que los tratamientos existentes siguen funcionando exactamente igual (sin restricción de hora) hasta que se les cargue un valor. Si están cargadas, el primer día del tratamiento (`start_date`) no se generan tomas anteriores a `start_time` y el último día (`end_date`) no se generan tomas posteriores a `end_time`; la hora de los propios campos `start_date`/`end_date` se ignora. Si el tratamiento empieza y termina el mismo día, la API rechaza con 400 un `end_time` anterior a `start_time`. El script está también en `database/migration-treatment-start-end-time.sql`:
+
+```sql
+ALTER TABLE treatment ADD COLUMN start_time TIME;
+ALTER TABLE treatment ADD COLUMN end_time TIME;
+```
 
 ---
 

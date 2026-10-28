@@ -8,9 +8,8 @@ import lombok.Setter;
 
 import java.util.UUID;
 
-// Versión reducida del usuario para listados: sin fcmToken ni fechas, porque
-// listar usuarios (ej. elegir médico por rol) no necesita datos de contacto
-// del dispositivo.
+// Versión reducida de un usuario para quien puede verlo (uno mismo, un vinculado
+// o la contraparte de una cita): sin fcmToken ni fechas.
 @Getter
 @Setter
 @NoArgsConstructor

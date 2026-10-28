@@ -40,6 +40,36 @@ Hibernate corre con `ddl-auto=validate`: no crea ni modifica tablas, solo verifi
 
 El test `MedtrackerApplicationTests` levanta el contexto completo contra la base, así que solo corre si `DATABASE_URL` está definida.
 
+## Autenticación (JWT)
+
+`POST /auth/login` devuelve un token de sesión junto con los datos del usuario:
+
+```json
+{
+  "accessToken": "<jwt>",
+  "tokenType": "Bearer",
+  "expiresIn": 86400,
+  "user": { "id": "...", "name": "...", "email": "...", "role": "PATIENT", "...": "..." }
+}
+```
+
+Todos los endpoints, salvo `POST /auth/login` y `POST /users/register`, exigen el header `Authorization: Bearer <accessToken>`. Si el token falta, es inválido o expiró, la API responde `401 Unauthorized` con el mismo formato JSON del resto de los errores (`timestamp`, `status`, `error`, `message`, `path`).
+
+Variables de entorno:
+
+| Variable | Obligatoria | Descripción |
+|---|---|---|
+| `JWT_SECRET` | Sí | Clave con la que se firman los tokens (HS256). Mínimo 32 caracteres. Si falta o es más corta, la app no arranca. No se commitea. |
+| `JWT_EXPIRATION_MINUTES` | No | Duración del token en minutos. Por defecto `1440` (24 horas). Debe ser mayor que 0. |
+
+Para generar un valor seguro para `JWT_SECRET`:
+
+```bash
+openssl rand -base64 48
+```
+
+Los tests que no levantan el contexto completo (MockMvc) no necesitan la variable.
+
 ## Base de datos
 
 El esquema se define en [`/database/schema.sql`](../database/schema.sql) y se aplica sobre PostgreSQL (Neon). Ver la sección [Base de datos](../README.md#base-de-datos) del README principal para el detalle de cómo aplicarlo.
