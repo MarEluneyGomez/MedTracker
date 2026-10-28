@@ -4,7 +4,7 @@ App móvil del sistema de seguimiento de medicación, construida con **React Nat
 
 ## Estado actual
 
-Base de la app armada (Expo SDK 57): cliente de API, sesión de usuario, navegación según el rol, las pantallas de inicio de sesión y registro, y la gestión de tratamientos del paciente. El resto de las pantallas de cada sección son provisorias y se completan en las etapas siguientes. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
+Base de la app armada (Expo SDK 58): cliente de API, sesión de usuario, navegación según el rol, las pantallas de inicio de sesión y registro, y la gestión de tratamientos del paciente. El resto de las pantallas de cada sección son provisorias y se completan en las etapas siguientes. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
 
 Al abrir la app sin sesión se ve la pantalla de bienvenida, con las opciones de iniciar sesión (CU-02) o crear una cuenta (CU-01). Al iniciar sesión se ven las pestañas que corresponden al rol:
 
@@ -16,10 +16,12 @@ Al abrir la app sin sesión se ve la pantalla de bienvenida, con las opciones de
 
 Las dos pantallas usan el backend real, así que necesitan el backend corriendo (ver [Conexión con el backend](#conexión-con-el-backend)).
 
-- **Registro** (`POST /users/register`): pide nombre, email, contraseña (con su repetición) y rol, y valida los datos antes de enviarlos. Al registrarse, el usuario queda con la sesión iniciada.
-- **Inicio de sesión** (`POST /auth/login`): después de 5 intentos fallidos con el mismo email, el backend lo bloquea por 15 minutos.
+- **Registro** (`POST /users/register`): pide nombre, email, contraseña (con su repetición) y rol, y valida los datos antes de enviarlos. La contraseña sigue la misma regla que el backend: entre 8 y 72 caracteres, con al menos una letra y un número. El registro no devuelve token, así que después la app inicia sesión sola con los mismos datos.
+- **Inicio de sesión** (`POST /auth/login`): el backend devuelve un token JWT junto con el usuario. Después de 5 intentos fallidos con el mismo email, lo bloquea por 15 minutos.
 
-Los mensajes de error que se muestran son los que devuelve el backend (por ejemplo "Credenciales incorrectas"); si no manda ninguno, o si es un mensaje técnico de Spring, se usa un mensaje genérico según el código de respuesta. Si el servidor no responde en 15 segundos, se avisa que no se pudo conectar.
+El token se manda en cada pedido como `Authorization: Bearer <token>` (lo agrega `src/services/api.ts`); sin él, todos los endpoints salvo el login y el registro responden 401. El token vence a las 24 horas: cuando el backend lo rechaza, la app cierra la sesión, avisa "Tu sesión expiró" y vuelve a la bienvenida.
+
+Los mensajes de error que se muestran son los que devuelve el backend (por ejemplo "Credenciales incorrectas"), que nunca incluyen detalles internos; si no manda ninguno, se usa un mensaje genérico según el código de respuesta. Si el servidor no responde en 15 segundos, se avisa que no se pudo conectar.
 
 **Usuarios de prueba:** en la base de desarrollo hay un usuario por rol, todos con la contraseña `demo1234`:
 
@@ -29,7 +31,7 @@ Los mensajes de error que se muestran son los que devuelve el backend (por ejemp
 
 Mientras la app corre en modo desarrollo, la pantalla de inicio de sesión muestra un botón de acceso rápido para cada uno. En la app compilada para publicar esos botones no aparecen (`__DEV__`).
 
-La sesión se guarda cifrada en el dispositivo (`expo-secure-store`), así que se mantiene al cerrar y volver a abrir la app.
+La sesión (usuario y token) se guarda cifrada en el dispositivo (`expo-secure-store`), así que se mantiene al cerrar y volver a abrir la app mientras el token no haya vencido.
 
 ## Tratamientos
 
@@ -59,8 +61,8 @@ frontend/
 │   ├── hooks/
 │   │   └── useFlashScrollIndicators.ts # Muestra la barra de scroll al abrir una lista en iOS
 │   ├── services/
-│   │   ├── api.ts          # Cliente HTTP y manejo de errores (ApiError)
-│   │   ├── auth.ts         # Login, registro y guardado de la sesión
+│   │   ├── api.ts          # Cliente HTTP: token en cada pedido, sesión vencida y errores (ApiError)
+│   │   ├── auth.ts         # Login, registro y guardado de la sesión con su token
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
 │   ├── types/              # Tipos de los DTOs del backend

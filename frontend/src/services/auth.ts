@@ -4,16 +4,20 @@ import * as SecureStore from 'expo-secure-store';
 
 export type Session = {
   user: User;
-  // null mientras el backend no emita JWT
-  token: string | null;
+  token: string;
+};
+
+type LoginResponse = {
+  accessToken: string;
+  user: User;
 };
 
 export async function login(email: string, password: string): Promise<Session> {
-  const user = await apiRequest<User>('POST', '/auth/login', {
+  const response = await apiRequest<LoginResponse>('POST', '/auth/login', {
     email: email.trim().toLowerCase(),
     password,
   });
-  return { user, token: null };
+  return { user: response.user, token: response.accessToken };
 }
 
 export type RegisterData = {
@@ -23,14 +27,14 @@ export type RegisterData = {
   role: UserRole;
 };
 
-export async function register(data: RegisterData): Promise<Session> {
-  const user = await apiRequest<User>('POST', '/users/register', {
+// El registro no devuelve token: la sesión se obtiene con login() después
+export function register(data: RegisterData): Promise<User> {
+  return apiRequest<User>('POST', '/users/register', {
     name: data.name.trim(),
     email: data.email.trim().toLowerCase(),
     passwordHash: data.password,
     role: data.role,
   });
-  return { user, token: null };
 }
 
 const SESSION_KEY = 'medtracker.session';

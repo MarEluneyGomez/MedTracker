@@ -26,6 +26,8 @@ export type Treatment = {
   frequency: string;
   startDate: string;
   endDate: string | null;
+  startTime: string | null;
+  endTime: string | null;
   completed: boolean;
 };
 

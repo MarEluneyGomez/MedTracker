@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text } from 'react-native';
+import { ScrollView, StyleSheet, Text, type ScrollViewInstance } from 'react-native';
 import AppButton from '../components/AppButton';
 import Logo from '../components/Logo';
 import RoleSelector from '../components/RoleSelector';
@@ -31,7 +31,12 @@ export default function RegisterScreen() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const scrollRef = useFlashScrollIndicators<ScrollView>();
+  const scrollRef = useFlashScrollIndicators<ScrollViewInstance>();
+
+  const PASSWORD_MIN_LENGTH = 8;
+  const PASSWORD_MAX_LENGTH = 72;
+  const HAS_LETTER = /\p{L}/u;
+  const HAS_DIGIT = /\d/;
 
   function validate(): FieldErrors {
     const errors: FieldErrors = {};
@@ -44,8 +49,14 @@ export default function RegisterScreen() {
     if (confirmEmail.trim().toLowerCase() !== email.trim().toLowerCase()) {
       errors.confirmEmail = 'Los emails no coinciden.';
     }
-    if (password.length < 6) {
-      errors.password = 'La contraseña tiene que tener al menos 6 caracteres.';
+    if (
+      password.length < PASSWORD_MIN_LENGTH ||
+      password.length > PASSWORD_MAX_LENGTH ||
+      !HAS_LETTER.test(password) ||
+      !HAS_DIGIT.test(password)
+    ) {
+      errors.password =
+        'La contraseña tiene que tener entre 8 y 72 caracteres, con letras y números.';
     }
     if (confirmPassword !== password) {
       errors.confirmPassword = 'Las contraseñas no coinciden.';
@@ -103,6 +114,7 @@ export default function RegisterScreen() {
           value={password}
           onChangeText={setPassword}
           secureTextEntry
+          placeholder="Al menos 8 caracteres, con letras y números"
           autoCapitalize="none"
           error={fieldErrors.password}
         />

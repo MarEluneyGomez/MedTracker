@@ -26,14 +26,31 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:8080';
 
 const REQUEST_TIMEOUT_MS = 15000;
 const NO_CONTENT = 204;
+const UNAUTHORIZED = 401;
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
+let authToken: string | null = null;
+let onSessionExpired: (() => void) | null = null;
+
+export function setAuthToken(token: string | null) {
+  authToken = token;
+}
+
+export function setSessionExpiredHandler(handler: (() => void) | null) {
+  onSessionExpired = handler;
+}
+
 export async function apiRequest<T>(method: HttpMethod, path: string, body?: unknown): Promise<T> {
-  const options: RequestInit = { method };
+  const token = authToken;
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const options: RequestInit = { method, headers };
 
   if (body !== undefined) {
-    options.headers = { 'Content-Type': 'application/json' };
+    headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(body);
   }
 
@@ -49,6 +66,15 @@ export async function apiRequest<T>(method: HttpMethod, path: string, body?: unk
     clearTimeout(timeout);
   }
 
+  // Con token, un 401 significa que la sesión venció (sin token es un login
+  // con credenciales incorrectas). Solo se avisa si el token sigue siendo el
+  // actual, para no avisar una vez por cada pedido que estaba en curso.
+  if (response.status === UNAUTHORIZED && token) {
+    if (token === authToken) {
+      onSessionExpired?.();
+    }
+    throw new ApiError(UNAUTHORIZED, ERROR_MESSAGES[UNAUTHORIZED]);
+  }
   if (!response.ok) {
     throw new ApiError(response.status, await readErrorMessage(response));
   }
@@ -58,24 +84,16 @@ export async function apiRequest<T>(method: HttpMethod, path: string, body?: unk
   return (await response.json()) as T;
 }
 
-// Usa el mensaje que manda el backend, salvo que esté vacío o sea un
-// mensaje técnico; en ese caso usa el de la tabla según el código.
+// El backend solo manda mensajes pensados para el usuario; si no manda
+// ninguno, se usa el de la tabla según el código
 async function readErrorMessage(response: Response): Promise<string> {
   const fallback =
-    ERROR_MESSAGES[response.status] ?? 'Ocurrió un error inesperado, intenta de nuevo.';
+    ERROR_MESSAGES[response.status] ?? 'Ocurrió un error inesperado. Intentá de nuevo.';
   try {
     const data = await response.json();
     const message = typeof data.message === 'string' ? data.message.trim() : '';
-    const isTechnical =
-      message === 'No message available' ||
-      message.startsWith('Validation failed') ||
-      message.startsWith('JSON parse error') ||
-      message.startsWith('No static resource');
-    if (message && !isTechnical) {
-      return message;
-    }
+    return message || fallback;
   } catch {
-    return fallback; // El cuerpo no es JSON: se usa el mensaje de la tabla
+    return fallback;
   }
-  return fallback;
 }

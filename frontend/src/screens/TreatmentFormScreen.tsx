@@ -1,7 +1,14 @@
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type ScrollViewInstance,
+} from 'react-native';
 import AppButton from '../components/AppButton';
 import ChipSelector from '../components/ChipSelector';
 import DateField from '../components/DateField';
@@ -61,7 +68,7 @@ export default function TreatmentFormScreen() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(isEditing);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const scrollRef = useFlashScrollIndicators<ScrollView>(!loading);
+  const scrollRef = useFlashScrollIndicators<ScrollViewInstance>(!loading);
 
   useEffect(() => {
     getMedications()
