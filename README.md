@@ -128,8 +128,8 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 | `PUT /treatments/{id}` | Edita `dosage`, `frequency`, `startDate` y `endDate` (CU-08). 400 si `endDate` < `startDate`; 404 si no existe o está eliminado. |
 | `DELETE /treatments/{id}` | Eliminación lógica + desactiva sus recordatorios (RN-06); conserva las dosis ya generadas. 204. |
 | `GET /reminders/treatment/{treatmentId}` | Recordatorios vigentes (sin eliminados) del tratamiento. |
-| `PUT /reminders/{id}` | Edita `time`, `daysOfWeek` y `message` (RF-11), con la misma normalización de días y validación de duplicados (RN-07), sin contar el propio recordatorio. |
-| `POST /reminders/register` | Además de guardar, si hoy coincide con `daysOfWeek` y el tratamiento está vigente hoy, genera ya la dosis de hoy (idempotente). `PUT /reminders/{id}` mueve al nuevo horario la dosis `PENDING` de hoy; las `CONFIRMED`/`SKIPPED` no se tocan. |
+| `PUT /reminders/{id}` | Edita `time`, `daysOfWeek` o `intervalDays` + `startDate`, y `message` (RF-11), con la misma normalización de días y validación de duplicados (RN-07), sin contar el propio recordatorio. Como el PUT reemplaza todo, omitir `intervalDays` vuelve el recordatorio a su forma sin intervalo. |
+| `POST /reminders/register` | `intervalDays` (1 a 365) repite el recordatorio cada N días desde `startDate` (`yyyy-MM-dd`, ese día incluido): se genera dosis el día D si `D ≥ startDate` y `(D − startDate)` es múltiplo de `intervalDays`, siempre dentro de las fechas del tratamiento. Es excluyente con `daysOfWeek`, y `startDate` es obligatorio con `intervalDays` y no se admite sin él (400). Además de guardar, si hoy coincide con `daysOfWeek` o con el intervalo y el tratamiento está vigente hoy, genera ya la dosis de hoy (idempotente). `PUT /reminders/{id}` mueve al nuevo horario la dosis `PENDING` de hoy; las `CONFIRMED`/`SKIPPED` no se tocan. |
 | `PUT /doses/{id}/confirm`, `PUT /doses/{id}/skip` | 404 si la dosis no existe; 409 si ya no está `PENDING` (RN-03). |
 | `POST /caregiver-links/register` | Solo lo crea el paciente sobre sí mismo (`patient.id` = usuario del token, si no 403); `caregiver.id` debe ser un usuario existente con rol `CAREGIVER` (si no 400). 409 si el vínculo ya existe y está activo; si estaba dado de baja lógicamente, se reactiva. |
 | `DELETE /caregiver-links/{caregiverId}/{patientId}` | Baja lógica del vínculo; la puede pedir el paciente o el cuidador involucrado, un tercero recibe 404. 204. Los `GET` solo devuelven vínculos del propio usuario; si la ruta nombra a otro usuario sin vínculo activo con él, 403. |
@@ -147,8 +147,8 @@ Los endpoints de las tandas A y B reciben un DTO de entrada con Bean Validation 
 | `POST /users/register` | `name`, `email`, `passwordHash` (alias `password`), `role`, `fcmToken` | `name`, `email`, contraseña | `name` ≤ 150; `email` con formato válido y ≤ 254; `fcmToken` ≤ 255; `role` solo `PATIENT` o `CAREGIVER` |
 | `POST /treatments/register` | `user{id}`, `medication{id}`, `dosage`, `frequency`, `startDate`, `endDate`, `startTime`, `endTime` | `user.id`, `medication.id`, `dosage`, `frequency`, `startDate` | `dosage` y `frequency` ≤ 100. Nace con `completed=false` |
 | `PUT /treatments/{id}` | `dosage`, `frequency`, `startDate`, `endDate`, `startTime`, `endTime` | `dosage`, `frequency`, `startDate` | `dosage` y `frequency` ≤ 100 |
-| `POST /reminders/register` | `treatment{id}`, `time`, `daysOfWeek`, `message` | `treatment.id`, `time`, `message` | `message` ≤ 255; `daysOfWeek` hasta 7 elementos. Nace con `active=true` |
-| `PUT /reminders/{id}` | `time`, `daysOfWeek`, `message` | `time`, `message` | igual que el alta |
+| `POST /reminders/register` | `treatment{id}`, `time`, `daysOfWeek`, `intervalDays`, `startDate`, `message` | `treatment.id`, `time`, `message` | `message` ≤ 255; `daysOfWeek` hasta 7 elementos; `intervalDays` entre 1 y 365; `intervalDays` y `daysOfWeek` no pueden ir juntos; `startDate` va si y solo si va `intervalDays`. Nace con `active=true` |
+| `PUT /reminders/{id}` | `time`, `daysOfWeek`, `intervalDays`, `startDate`, `message` | `time`, `message` | igual que el alta |
 | `POST /doses/register` | `reminder{id}`, `scheduledAt` | `reminder.id`, `scheduledAt` | Nace `PENDING`; el estado y `confirmedAt` no se aceptan |
 | `POST /medical-appointments/register` | `patient{id}`, `doctor{id}`, `dateTime`, `reason` | los cuatro | `reason` no vacío y ≤ 255. Nace `PENDING`; el estado no se acepta |
 | `POST /medical-histories/register` | `patient{id}`, `diagnosis`, `notes`, `recordDate` | `patient.id`, `diagnosis`, `recordDate` | `diagnosis` no vacío y ≤ 255; `notes` ≤ 5000 caracteres (límite de la aplicación: la columna es `TEXT`) |
@@ -184,6 +184,7 @@ La identidad sale siempre del token. Un recurso ajeno, inexistente o eliminado l
 - `GET /users/{id}` da acceso al perfil reducido también con un turno `CANCELLED` (`shareAppointment` no filtra el estado), a diferencia del historial médico.
 - `POST /doses/register` no valida que `scheduledAt` caiga dentro de las fechas del tratamiento.
 - No existe un endpoint para dar de baja ni editar medicamentos: la baja lógica (`deleted_at`) solo se aplica por base de datos.
+- Al editar un recordatorio de forma que hoy ya no corresponda tomar, la dosis pendiente de hoy no se elimina (`rescheduleTodayPending`).
 
 #### Formato de errores
 
@@ -282,7 +283,7 @@ CREATE UNIQUE INDEX dose_reminder_scheduled_key ON dose (reminder_id, scheduled_
 - **RN-04:** Si una toma no se confirma ni se marca como omitida dentro de una ventana de tiempo determinada (ej. 2 horas después del horario), se marca automáticamente como **omitida**.
 - **RN-05:** El porcentaje de adherencia de un tratamiento se calcula como `(dosis en estado confirmed / dosis totales generadas en el período) × 100`, sobre el período que el usuario seleccione en el historial.
 - **RN-06:** Un tratamiento eliminado lógicamente (`deleted_at` distinto de NULL) no genera nuevas notificaciones, pero conserva su historial.
-- **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, mismo `time` y mismos `days_of_week`). Dos recordatorios "todos los días" (`days_of_week` NULL) a la misma hora también cuentan como duplicados, y los recordatorios eliminados lógicamente no se consideran. *(implementado en `ReminderService` y reforzado en la base con un índice único parcial)*
+- **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, mismo `time` y mismo patrón: los mismos `days_of_week`, o el mismo `interval_days` con la misma `start_date`). Dos recordatorios "todos los días" (`days_of_week` e `interval_days` NULL) a la misma hora también cuentan como duplicados, y los recordatorios eliminados lógicamente no se consideran. *(implementado en `ReminderService` y reforzado en la base con un índice único parcial)*
 - **RN-08:** El alta de medicamentos y tratamientos la realiza el propio paciente o su tutor/responsable (`role = PATIENT` o `CAREGIVER`); el sistema no contempla intervención directa del médico, salvo para agendar/gestionar sus propias citas (RN-09).
 - **RN-09:** Una cita médica (`medical_appointment`) solo puede ser creada o modificada por el paciente involucrado o por el médico (`doctor_id`) asignado a esa cita.
 
@@ -360,7 +361,9 @@ Relación entre un usuario y un medicamento. Acá viven los datos que varían se
 | id | UUID | Identificador único |
 | treatment_id | FK → treatment.id | Tratamiento asociado |
 | time | TIME | Hora del día en que corresponde la toma |
-| days_of_week | VARCHAR[] (nullable) | Días en que aplica; `NULL` = todos los días |
+| days_of_week | VARCHAR[] (nullable) | Días en que aplica; `NULL` = todos los días. Excluyente con `interval_days` |
+| interval_days | INTEGER (nullable) | Se repite cada N días (≥ 1; la API admite hasta 365) contando desde `start_date`. `NULL` = sin intervalo |
+| start_date | DATE (nullable) | Día desde el que se cuenta `interval_days` (ese día incluido). Existe si y solo si hay `interval_days` |
 | message | VARCHAR | Texto del recordatorio |
 | active | BOOLEAN | Si el recordatorio sigue generando tomas |
 | created_at | TIMESTAMP | Fecha de alta del registro |
@@ -507,6 +510,8 @@ UPDATE "user" SET email = lower(trim(email)) WHERE email <> lower(trim(email));
 ALTER TABLE treatment ADD COLUMN start_time TIME;
 ALTER TABLE treatment ADD COLUMN end_time TIME;
 ```
+
+**6. Recordatorios cada N días.** `reminder` suma `interval_days INTEGER` y `start_date DATE`, ambas **nullable y sin `DEFAULT`**: los recordatorios existentes quedan con las dos en `NULL` y se comportan igual que antes. Se agregan tres `CHECK` (`interval_days >= 1`; `interval_days` y `days_of_week` excluyentes; `start_date` existe si y solo si hay `interval_days`) y se reemplaza el índice único de RN-07 para que incluya `interval_days` y `start_date`. Todo va en una transacción, en `database/migration-reminder-interval-days.sql`; la reversión está en `database/rollback-reminder-interval-days.sql` y aborta si ya hay recordatorios con intervalo, porque revertir los perdería. La versión anterior de la aplicación sigue funcionando sobre la base migrada (Hibernate en `validate` ignora las columnas de más), así que se migra primero y se despliega después.
 
 ---
 

@@ -10,12 +10,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.UUID;
 
 @Slf4j
@@ -25,6 +27,9 @@ public class ReminderService {
 
     // Orden canónico de los días: se usa para validar y para normalizar
     private static final List<String> WEEK_DAYS = List.of("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN");
+
+    // Tope de intervalDays (el DTO usa el mismo valor); la base solo exige >= 1
+    private static final int MAX_INTERVAL_DAYS = 365;
 
     private final ReminderRepository reminderRepository;
     private final DoseGenerationService doseGenerationService;
@@ -41,7 +46,9 @@ public class ReminderService {
         // evalúe contra sus fechas reales
         reminder.setTreatment(accessPolicy.requireTreatment(principal, reminder.getTreatment().getId()));
         reminder.setDaysOfWeek(normalizeDays(reminder.getDaysOfWeek()));
-        ensureNotDuplicated(reminder.getTreatment().getId(), reminder.getTime(), reminder.getDaysOfWeek(), null);
+        validateInterval(reminder.getDaysOfWeek(), reminder.getIntervalDays(), reminder.getStartDate());
+        ensureNotDuplicated(reminder.getTreatment().getId(), reminder.getTime(), reminder.getDaysOfWeek(),
+                reminder.getIntervalDays(), reminder.getStartDate(), null);
         // El body llega como entidad: sin esto un id existente haría merge y
         // pisaría otro recordatorio, y un deletedAt resucitaría uno eliminado
         reminder.setId(null);
@@ -57,16 +64,43 @@ public class ReminderService {
         return saved;
     }
 
+    // Cada N días y días de la semana son excluyentes, y el intervalo necesita
+    // su fecha de inicio (el ancla desde la que se cuenta). Los días ya vienen
+    // normalizados: una lista vacía es null.
+    private void validateInterval(String[] days, Integer intervalDays, LocalDate startDate) {
+        // El rango también lo valida el DTO; acá se repite por si otro código arma el Reminder
+        if (intervalDays != null && (intervalDays < 1 || intervalDays > MAX_INTERVAL_DAYS)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "intervalDays debe estar entre 1 y " + MAX_INTERVAL_DAYS);
+        }
+        if (intervalDays != null && days != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "intervalDays y daysOfWeek no se pueden usar juntos");
+        }
+        if (intervalDays != null && startDate == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "startDate es obligatorio cuando se indica intervalDays");
+        }
+        if (intervalDays == null && startDate != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "startDate solo se admite junto con intervalDays");
+        }
+    }
+
     // RN-07: no puede haber dos recordatorios del mismo tratamiento con la
-    // misma hora y los mismos días (la base lo refuerza con un índice único).
+    // misma hora y el mismo patrón: días de la semana, o intervalo con su fecha
+    // de inicio (la base lo refuerza con un índice único).
     // Al editar, el propio recordatorio (excludedId) no cuenta como duplicado.
-    private void ensureNotDuplicated(UUID treatmentId, LocalTime time, String[] days, UUID excludedId) {
+    private void ensureNotDuplicated(UUID treatmentId, LocalTime time, String[] days,
+                                     Integer intervalDays, LocalDate startDate, UUID excludedId) {
         boolean duplicated = reminderRepository.findByTreatmentId(treatmentId)
                 .stream()
                 .filter(existing -> existing.getDeletedAt() == null)
                 .filter(existing -> !existing.getId().equals(excludedId))
                 .anyMatch(existing -> existing.getTime().equals(time)
-                        && Arrays.equals(existing.getDaysOfWeek(), days));
+                        && Arrays.equals(existing.getDaysOfWeek(), days)
+                        && Objects.equals(existing.getIntervalDays(), intervalDays)
+                        && Objects.equals(existing.getStartDate(), startDate));
         if (duplicated) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Ya existe un recordatorio para ese tratamiento en ese horario y esos días");
@@ -111,8 +145,9 @@ public class ReminderService {
         return reminderRepository.findByTreatmentIdAndDeletedAtIsNull(treatmentId);
     }
 
-    // Editar un recordatorio (RF-11): hora, días y mensaje. Reaplica la
-    // normalización de días y la validación de duplicados (RN-07).
+    // Editar un recordatorio (RF-11): hora, repetición (días o intervalo) y
+    // mensaje. Reaplica la normalización de días y la validación de duplicados
+    // (RN-07).
     public Reminder update(AuthenticatedUser principal, UUID id, Reminder changes) {
         Reminder reminder = accessPolicy.requireReminder(principal, id);
         if (changes.getTime() == null || changes.getMessage() == null || changes.getMessage().isBlank()) {
@@ -120,9 +155,13 @@ public class ReminderService {
                     "La hora y el mensaje del recordatorio son obligatorios");
         }
         String[] days = normalizeDays(changes.getDaysOfWeek());
-        ensureNotDuplicated(reminder.getTreatment().getId(), changes.getTime(), days, id);
+        validateInterval(days, changes.getIntervalDays(), changes.getStartDate());
+        ensureNotDuplicated(reminder.getTreatment().getId(), changes.getTime(), days,
+                changes.getIntervalDays(), changes.getStartDate(), id);
         reminder.setTime(changes.getTime());
         reminder.setDaysOfWeek(days);
+        reminder.setIntervalDays(changes.getIntervalDays());
+        reminder.setStartDate(changes.getStartDate());
         reminder.setMessage(changes.getMessage());
         Reminder saved = reminderRepository.save(reminder);
         // La dosis PENDING de hoy sigue el nuevo horario; las ya resueltas no se tocan

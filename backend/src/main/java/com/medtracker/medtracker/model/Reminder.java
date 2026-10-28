@@ -11,6 +11,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
@@ -47,6 +48,15 @@ public class Reminder {
     @JdbcTypeCode(SqlTypes.ARRAY)
     @Column(name = "days_of_week", columnDefinition = "varchar[]")
     private String[] daysOfWeek;
+
+    // Alternativa a daysOfWeek: se repite cada N días contando desde startDate
+    // (ese día incluido). Es excluyente con daysOfWeek; ambos null = todos los días
+    @Column(name = "interval_days")
+    private Integer intervalDays;
+
+    // Ancla desde la que se cuenta intervalDays; solo existe junto con intervalDays
+    @Column(name = "start_date")
+    private LocalDate startDate;
 
     // Texto del recordatorio
     @Column(nullable = false)

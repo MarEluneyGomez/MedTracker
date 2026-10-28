@@ -220,6 +220,82 @@ class DoseGenerationServiceTest {
                 .thenReturn(List.of(reminders));
     }
 
+    private Reminder everyNDays(Treatment treatment, int intervalDays, LocalDate startDate) {
+        Reminder r = reminderOf(treatment, LocalTime.of(8, 0), null);
+        r.setIntervalDays(intervalDays);
+        r.setStartDate(startDate);
+        return r;
+    }
+
+    private Treatment ongoing() {
+        return Treatment.builder().startDate(WEDNESDAY.minusDays(30).atStartOfDay()).build();
+    }
+
+    @Test
+    void intervalGeneratesOnTheAnchorDayAndEveryNDaysAfter() {
+        eligible(everyNDays(ongoing(), 2, WEDNESDAY));
+        assertThat(service.generateFor(WEDNESDAY)).isEqualTo(1);
+
+        eligible(everyNDays(ongoing(), 3, WEDNESDAY.minusDays(6)));
+        assertThat(service.generateFor(WEDNESDAY)).isEqualTo(1);
+    }
+
+    @Test
+    void intervalSkipsDaysBetweenOccurrences() {
+        eligible(everyNDays(ongoing(), 2, WEDNESDAY.minusDays(1)));
+        assertThat(service.generateFor(WEDNESDAY)).isZero();
+
+        eligible(everyNDays(ongoing(), 3, WEDNESDAY.minusDays(7)));
+        assertThat(service.generateFor(WEDNESDAY)).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void intervalGeneratesNothingBeforeTheAnchorDate() {
+        // 2 días antes del ancla: el resto de la división da 0 con valores negativos, pero no corresponde
+        eligible(everyNDays(ongoing(), 2, WEDNESDAY.plusDays(2)));
+        assertThat(service.generateFor(WEDNESDAY)).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void intervalWithoutAnchorNeverFallsBackToEveryDay() {
+        eligible(everyNDays(ongoing(), 2, null));
+        assertThat(service.generateFor(WEDNESDAY)).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void intervalOfOneGeneratesEveryDayFromTheAnchor() {
+        eligible(everyNDays(ongoing(), 1, WEDNESDAY.minusDays(3)));
+        assertThat(service.generateFor(WEDNESDAY)).isEqualTo(1);
+    }
+
+    @Test
+    void intervalStillRespectsTheTreatmentDates() {
+        Treatment ended = Treatment.builder().startDate(WEDNESDAY.minusDays(30).atStartOfDay())
+                .endDate(WEDNESDAY.minusDays(1).atStartOfDay()).build();
+        eligible(everyNDays(ended, 2, WEDNESDAY));
+        assertThat(service.generateFor(WEDNESDAY)).isZero();
+
+        Treatment notStarted = Treatment.builder().startDate(WEDNESDAY.plusDays(1).atStartOfDay()).build();
+        eligible(everyNDays(notStarted, 2, WEDNESDAY));
+        assertThat(service.generateFor(WEDNESDAY)).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void generateTodayForReminderFollowsTheInterval() {
+        Reminder due = everyNDays(ongoing(), 2, WEDNESDAY.minusDays(2));
+        Reminder notDue = everyNDays(ongoing(), 2, WEDNESDAY.minusDays(1));
+        when(reminderRepository.findById(due.getId())).thenReturn(java.util.Optional.of(due));
+        when(reminderRepository.findById(notDue.getId())).thenReturn(java.util.Optional.of(notDue));
+
+        assertThat(service.generateTodayForReminder(due.getId())).isEqualTo(1);
+        assertThat(service.generateTodayForReminder(notDue.getId())).isZero();
+        verify(doseRepository, times(1)).save(any(Dose.class));
+    }
+
     @Test
     void generatesPendingDoseForEveryDayReminder() {
         Reminder r = reminder(LocalTime.of(8, 0), null);
