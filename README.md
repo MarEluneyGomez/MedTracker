@@ -122,7 +122,8 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 | `DELETE /caregiver-links/{caregiverId}/{patientId}` | Baja lógica del vínculo; la puede pedir el paciente o el cuidador involucrado, un tercero recibe 404. 204. Los `GET` solo devuelven vínculos del propio usuario; si la ruta nombra a otro usuario sin vínculo activo con él, 403. |
 | `DELETE /reminders/{id}` | Eliminación lógica (`deleted_at`) y `active=false`: deja de generar dosis. 204. |
 | `GET /doses/user/{userId}?date=YYYY-MM-DD` | Dosis del usuario para ese día (por defecto, hoy), ordenadas por hora. No incluye dosis de tratamientos o recordatorios eliminados. 403 si `userId` no es el propio ni el de un paciente que el usuario cuida. |
-| `POST /doses/generate-daily` | **Herramienta de desarrollo/testing:** dispara a demanda la generación de dosis de hoy (la misma que corre sola cada día a medianoche, RF-06/CU-05). Es idempotente. Devuelve `{"generated": n}`. |
+| `POST /doses/generate-daily` | **Herramienta de desarrollo/testing**, apagada por defecto: con `medtracker.dev-tools.enabled=false` (variable de entorno `MEDTRACKER_DEV_TOOLS_ENABLED`) responde 404 "Recurso no encontrado", igual que una ruta inexistente. Encendida, dispara a demanda la generación de dosis de hoy (la misma que corre sola cada día a medianoche y al arrancar, RF-06/CU-05, que no dependen de la propiedad). Es idempotente. Devuelve `{"generated": n}`. No encenderla en un entorno con recordatorios reales. |
+| `POST /medications/register` | Solo `PATIENT` o `CAREGIVER` (RN-08); un `DOCTOR` recibe 403 "Solo un paciente o un cuidador puede dar de alta medicamentos". `GET /medications` y `GET /medications/{id}` siguen abiertos a todos los roles autenticados y no incluyen medicamentos dados de baja (por id, 404). Un tratamiento existente que referencia un medicamento dado de baja se sigue leyendo con su `medicationId`. |
 
 #### Validación de entradas
 
@@ -168,10 +169,8 @@ La identidad sale siempre del token. Un recurso ajeno, inexistente o eliminado l
 **Pendientes.**
 
 - `GET /users/{id}` da acceso al perfil reducido también con un turno `CANCELLED` (`shareAppointment` no filtra el estado), a diferencia del historial médico.
-- `POST /doses/generate-daily` todavía no aplica autorización: cualquier usuario autenticado puede dispararlo. Es idempotente (no duplica dosis: consulta `existsByReminderIdAndScheduledAt` antes de crear) y queda pendiente para otra tanda.
-- Cualquier usuario autenticado, incluso un `DOCTOR`, puede dar de alta medicamentos en el catálogo (RN-08 dice solo `PATIENT` o `CAREGIVER`).
 - `POST /doses/register` no valida que `scheduledAt` caiga dentro de las fechas del tratamiento.
-- `MedicationService.findAll` devuelve también los medicamentos dados de baja.
+- No existe un endpoint para dar de baja ni editar medicamentos: la baja lógica (`deleted_at`) solo se aplica por base de datos.
 
 #### Formato de errores
 

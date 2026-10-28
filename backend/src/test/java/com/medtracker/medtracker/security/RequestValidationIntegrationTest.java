@@ -74,6 +74,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -189,6 +190,8 @@ class RequestValidationIntegrationTest {
     private MedicalHistoryRepository medicalHistoryRepository;
     @Autowired
     private CaregiverLinkRepository caregiverLinkRepository;
+    @Autowired
+    private DoseGenerationService doseGenerationService;
 
     private MockMvc mockMvc;
 
@@ -754,6 +757,80 @@ class RequestValidationIntegrationTest {
         mockMvc.perform(as(a, json(post("/medications/register"),
                         medicationBody("n".repeat(150), "f".repeat(50)))))
                 .andExpect(status().isCreated());
+    }
+
+    @Test
+    void medicationRegisterIsOpenToPatientAndCaregiverButForbiddenToDoctor() throws Exception {
+        String body = medicationBody("Ibuprofeno", "Oral");
+        mockMvc.perform(as(caregiver, json(post("/medications/register"), body)))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(as(doctor, json(post("/medications/register"), body)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.length()").value(5))
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.error").value("Forbidden"))
+                .andExpect(jsonPath("$.message").value("Solo un paciente o un cuidador puede dar de alta medicamentos"))
+                .andExpect(jsonPath("$.path").value("/medications/register"));
+        // El alta del caregiver es la única que llegó a guardarse
+        verify(medicationRepository, Mockito.times(1)).save(any(Medication.class));
+    }
+
+    @Test
+    void medicationCatalogIsReadableByDoctorAndHidesSoftDeleted() throws Exception {
+        Medication active = medication();
+        active.setName("Activo");
+        when(medicationRepository.findAllByDeletedAtIsNull()).thenReturn(List.of(active));
+        when(medicationRepository.findByIdAndDeletedAtIsNull(1)).thenReturn(Optional.of(active));
+
+        mockMvc.perform(as(doctor, get("/medications")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1));
+        mockMvc.perform(as(doctor, get("/medications/1")))
+                .andExpect(status().isOk());
+        mockMvc.perform(as(doctor, get("/medications/2")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.length()").value(5))
+                .andExpect(jsonPath("$.message").value("Medicamento no encontrado: 2"));
+    }
+
+    @Test
+    void anExistingTreatmentWithASoftDeletedMedicationStillReadsFine() throws Exception {
+        Medication deleted = medication();
+        deleted.setDeletedAt(LocalDateTime.of(2026, 1, 1, 0, 0));
+        treatmentA.setMedication(deleted);
+        when(treatmentRepository.findByIdAndDeletedAtIsNull(treatmentA.getId())).thenReturn(Optional.of(treatmentA));
+
+        mockMvc.perform(as(a, get("/treatments/" + treatmentA.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.medicationId").value(1));
+        mockMvc.perform(as(a, get("/medications/1")))
+                .andExpect(status().isNotFound());
+    }
+
+    // ------------------------------------------------------- herramientas de desarrollo
+
+    @Test
+    void generateDailyIsAnUnknownRouteWhenDevToolsAreOff() throws Exception {
+        String disabled = mockMvc.perform(as(a, post("/doses/generate-daily")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.length()").value(5))
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.message").value("Recurso no encontrado"))
+                .andExpect(jsonPath("$.path").value("/doses/generate-daily"))
+                .andReturn().getResponse().getContentAsString();
+
+        // Misma forma que una ruta realmente inexistente
+        String unknown = mockMvc.perform(as(a, post("/doses/zzz/zzz")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.length()").value(5))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(messageOf(disabled)).isEqualTo(messageOf(unknown));
+
+        mockMvc.perform(post("/doses/generate-daily")).andExpect(status().isUnauthorized());
+        verify(doseGenerationService, never()).generateForToday();
     }
 
     private static String messageOf(String json) {

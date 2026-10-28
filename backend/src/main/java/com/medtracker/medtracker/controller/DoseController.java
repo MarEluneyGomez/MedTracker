@@ -7,11 +7,13 @@ import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.service.DoseGenerationService;
 import com.medtracker.medtracker.service.DoseService;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -25,10 +27,13 @@ public class DoseController {
 
     private final DoseService doseService;
     private final DoseGenerationService doseGenerationService;
+    private final boolean devToolsEnabled;
 
-    public DoseController(DoseService doseService, DoseGenerationService doseGenerationService) {
+    public DoseController(DoseService doseService, DoseGenerationService doseGenerationService,
+                          @Value("${medtracker.dev-tools.enabled:false}") boolean devToolsEnabled) {
         this.doseService = doseService;
         this.doseGenerationService = doseGenerationService;
+        this.devToolsEnabled = devToolsEnabled;
     }
 
     // Registrar una nueva dosis (normalmente la crea el backend al generar la notificación, RF-06)
@@ -41,9 +46,14 @@ public class DoseController {
 
     // HERRAMIENTA DE DESARROLLO/TESTING: dispara a demanda el mismo proceso que
     // corre solo a medianoche, para probar la pantalla "Hoy" sin esperar. Es
-    // idempotente: llamarlo varias veces no duplica dosis.
+    // idempotente: llamarlo varias veces no duplica dosis. Solo existe con
+    // medtracker.dev-tools.enabled=true; apagado (por defecto) responde el mismo
+    // 404 que una ruta inexistente. El scheduler automático no depende de esto.
     @PostMapping("/generate-daily")
     public ResponseEntity<Map<String, Integer>> generateDaily() {
+        if (!devToolsEnabled) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Recurso no encontrado");
+        }
         return ResponseEntity.ok(Map.of("generated", doseGenerationService.generateForToday()));
     }
 
