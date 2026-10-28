@@ -13,6 +13,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -83,7 +84,7 @@ public class DoseGenerationService {
         // Los días se guardan como MON..SUN, igual que las 3 primeras letras del enum
         String dayCode = day.getDayOfWeek().name().substring(0, 3);
         if (!treatmentActiveOn(reminder.getTreatment(), day, reminder.getTime())
-                || !appliesOn(reminder, dayCode)) {
+                || !appliesOn(reminder, day, dayCode)) {
             return false;
         }
         LocalDateTime scheduledAt = day.atTime(reminder.getTime());
@@ -122,8 +123,18 @@ public class DoseGenerationService {
         return !(endDay.equals(day) && treatment.getEndTime() != null && time.isAfter(treatment.getEndTime()));
     }
 
-    // days_of_week vacío o null = todos los días
-    private boolean appliesOn(Reminder reminder, String dayCode) {
+    // Con intervalo: cada N días contados desde startDate (ese día incluido), sin
+    // dosis antes del ancla. Sin intervalo: days_of_week vacío o null = todos
+    // los días.
+    private boolean appliesOn(Reminder reminder, LocalDate day, String dayCode) {
+        if (reminder.getIntervalDays() != null) {
+            // Sin ancla no hay forma de contar: mejor no generar que tomar todos los días
+            if (reminder.getStartDate() == null) {
+                return false;
+            }
+            long elapsed = ChronoUnit.DAYS.between(reminder.getStartDate(), day);
+            return elapsed >= 0 && elapsed % reminder.getIntervalDays() == 0;
+        }
         String[] days = reminder.getDaysOfWeek();
         return days == null || days.length == 0 || Arrays.asList(days).contains(dayCode);
     }

@@ -498,6 +498,51 @@ class RequestValidationIntegrationTest {
     }
 
     @Test
+    void reminderRegisterAcceptsAnIntervalAndExposesItInTheResponse() throws Exception {
+        mockMvc.perform(as(a, json(post("/reminders/register"),
+                        "{\"treatment\":{\"id\":\"" + treatmentA.getId() + "\"},\"time\":\"09:00:00\","
+                                + "\"intervalDays\":2,\"startDate\":\"2026-10-27\",\"message\":\"Tomar\"}")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.intervalDays").value(2))
+                .andExpect(jsonPath("$.startDate").value("2026-10-27"))
+                .andExpect(jsonPath("$.daysOfWeek").doesNotExist());
+    }
+
+    @Test
+    void reminderRegisterRejectsAnIntervalOutOfRangeByName() throws Exception {
+        String base = "{\"treatment\":{\"id\":\"" + treatmentA.getId() + "\"},\"time\":\"09:00:00\","
+                + "\"startDate\":\"2026-10-27\",\"message\":\"x\",";
+        assertInvalid(mockMvc.perform(as(a, json(post("/reminders/register"), base + "\"intervalDays\":0}"))),
+                "/reminders/register", "Campos inválidos: intervalDays");
+        assertInvalid(mockMvc.perform(as(a, json(post("/reminders/register"), base + "\"intervalDays\":366}"))),
+                "/reminders/register", "Campos inválidos: intervalDays");
+        assertInvalid(mockMvc.perform(as(a, json(put("/reminders/" + reminderA.getId()),
+                        "{\"time\":\"10:00:00\",\"message\":\"x\",\"intervalDays\":0,\"startDate\":\"2026-10-27\"}"))),
+                "/reminders/" + reminderA.getId(), "Campos inválidos: intervalDays");
+    }
+
+    @Test
+    void reminderRegisterRejectsStartDateWithoutIntervalAndIntervalWithoutStartDate() throws Exception {
+        String base = "{\"treatment\":{\"id\":\"" + treatmentA.getId() + "\"},\"time\":\"09:00:00\",\"message\":\"x\",";
+        mockMvc.perform(as(a, json(post("/reminders/register"), base + "\"startDate\":\"2026-10-27\"}")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("startDate solo se admite junto con intervalDays"));
+        mockMvc.perform(as(a, json(post("/reminders/register"), base + "\"intervalDays\":2}")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("startDate es obligatorio cuando se indica intervalDays"));
+    }
+
+    @Test
+    void reminderRegisterRejectsIntervalWithDaysOfWeekWithAClearMessage() throws Exception {
+        mockMvc.perform(as(a, json(post("/reminders/register"),
+                        "{\"treatment\":{\"id\":\"" + treatmentA.getId() + "\"},\"time\":\"09:00:00\","
+                                + "\"daysOfWeek\":[\"MON\"],\"intervalDays\":2,\"startDate\":\"2026-10-27\","
+                                + "\"message\":\"x\"}")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("intervalDays y daysOfWeek no se pueden usar juntos"));
+    }
+
+    @Test
     void reminderUpdateIgnoresActiveAndTreatmentAndNamesMissingFields() throws Exception {
         mockMvc.perform(as(a, json(put("/reminders/" + reminderA.getId()),
                         "{\"time\":\"10:00:00\",\"message\":\"Nuevo\",\"active\":false}")))
