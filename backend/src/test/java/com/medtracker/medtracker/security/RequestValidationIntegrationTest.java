@@ -3,12 +3,19 @@ package com.medtracker.medtracker.security;
 import com.medtracker.medtracker.config.GlobalExceptionHandler;
 import com.medtracker.medtracker.config.SecurityConfig;
 import com.medtracker.medtracker.controller.AuthController;
+import com.medtracker.medtracker.controller.CaregiverLinkController;
 import com.medtracker.medtracker.controller.DoseController;
 import com.medtracker.medtracker.controller.MedicalAppointmentController;
+import com.medtracker.medtracker.controller.MedicalHistoryController;
+import com.medtracker.medtracker.controller.MedicationController;
 import com.medtracker.medtracker.controller.ReminderController;
 import com.medtracker.medtracker.controller.TreatmentController;
 import com.medtracker.medtracker.controller.UserController;
+import com.medtracker.medtracker.model.CaregiverLink;
+import com.medtracker.medtracker.model.CaregiverLinkId;
 import com.medtracker.medtracker.model.Dose;
+import com.medtracker.medtracker.model.MedicalAppointment;
+import com.medtracker.medtracker.model.MedicalHistory;
 import com.medtracker.medtracker.model.Medication;
 import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.model.Treatment;
@@ -23,10 +30,13 @@ import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
 import com.medtracker.medtracker.repository.UserRepository;
 import com.medtracker.medtracker.service.AccessPolicy;
+import com.medtracker.medtracker.service.CaregiverLinkService;
 import com.medtracker.medtracker.service.DoseGenerationService;
 import com.medtracker.medtracker.service.DoseService;
 import com.medtracker.medtracker.service.LoginAttemptService;
 import com.medtracker.medtracker.service.MedicalAppointmentService;
+import com.medtracker.medtracker.service.MedicalHistoryService;
+import com.medtracker.medtracker.service.MedicationService;
 import com.medtracker.medtracker.service.ReminderService;
 import com.medtracker.medtracker.service.TreatmentService;
 import com.medtracker.medtracker.service.UserService;
@@ -87,7 +97,9 @@ class RequestValidationIntegrationTest {
             GlobalExceptionHandler.class, AuthController.class, UserController.class, TreatmentController.class,
             ReminderController.class, DoseController.class, MedicalAppointmentController.class,
             AccessPolicy.class, UserService.class, TreatmentService.class, ReminderService.class,
-            DoseService.class, MedicalAppointmentService.class})
+            DoseService.class, MedicalAppointmentService.class, MedicalHistoryController.class,
+            MedicalHistoryService.class, CaregiverLinkController.class, CaregiverLinkService.class,
+            MedicationController.class, MedicationService.class})
     static class TestConfig {
         @Bean
         Clock clock() {
@@ -173,11 +185,17 @@ class RequestValidationIntegrationTest {
     private DoseRepository doseRepository;
     @Autowired
     private MedicalAppointmentRepository appointmentRepository;
+    @Autowired
+    private MedicalHistoryRepository medicalHistoryRepository;
+    @Autowired
+    private CaregiverLinkRepository caregiverLinkRepository;
 
     private MockMvc mockMvc;
 
     private final User a = user("Paciente A", User.Role.PATIENT);
     private final User b = user("Paciente B", User.Role.PATIENT);
+    private final User doctor = user("Doctor", User.Role.DOCTOR);
+    private final User caregiver = user("Cuidador", User.Role.CAREGIVER);
     private final Treatment treatmentA = Treatment.builder().id(UUID.randomUUID()).user(a)
             .medication(medication()).dosage("1 comp").frequency("cada 8 hs")
             .startDate(LocalDateTime.of(2026, 10, 1, 8, 0)).build();
@@ -198,12 +216,12 @@ class RequestValidationIntegrationTest {
     @BeforeEach
     void setUp() {
         Mockito.reset(userRepository, treatmentRepository, medicationRepository, reminderRepository,
-                doseRepository, appointmentRepository);
+                doseRepository, appointmentRepository, medicalHistoryRepository, caregiverLinkRepository);
         mockMvc = MockMvcBuilders.webAppContextSetup(context)
                 .addFilters((Filter) context.getBean("springSecurityFilterChain"))
                 .build();
 
-        for (User u : List.of(a, b)) {
+        for (User u : List.of(a, b, doctor, caregiver)) {
             when(userRepository.findById(u.getId())).thenReturn(Optional.of(u));
         }
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -226,6 +244,13 @@ class RequestValidationIntegrationTest {
             return d;
         });
         when(appointmentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(medicalHistoryRepository.save(any(MedicalHistory.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(caregiverLinkRepository.save(any(CaregiverLink.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(medicationRepository.save(any(Medication.class))).thenAnswer(inv -> {
+            Medication m = inv.getArgument(0);
+            m.setId(7);
+            return m;
+        });
     }
 
     private MockHttpServletRequestBuilder as(User who, MockHttpServletRequestBuilder request) {
@@ -544,6 +569,191 @@ class RequestValidationIntegrationTest {
         assertThat(messageOf(first)).isEqualTo(messageOf(second))
                 .isEqualTo("El usuario indicado no existe o no tiene el rol requerido (DOCTOR)");
         assertThat(first).doesNotContain(b.getId().toString());
+    }
+
+    // ------------------------------------------------------------------- turnos
+
+    private String appointmentBody(String extra) {
+        return "{\"patient\":{\"id\":\"" + a.getId() + "\"},\"doctor\":{\"id\":\"" + doctor.getId() + "\"},"
+                + "\"dateTime\":\"2026-11-02T10:30:00\",\"reason\":\"Control\"" + extra + "}";
+    }
+
+    @Test
+    void appointmentRegisterKeepsTheShapeAndIgnoresStatusIdAndDeletedAt() throws Exception {
+        mockMvc.perform(as(a, json(post("/medical-appointments/register"),
+                        appointmentBody(",\"status\":\"CONFIRMED\",\"id\":\"" + UUID.randomUUID() + "\","
+                                + "\"deletedAt\":\"2020-01-01T00:00:00\",\"campoDesconocido\":1"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("PENDING"));
+
+        ArgumentCaptor<MedicalAppointment> saved = ArgumentCaptor.forClass(MedicalAppointment.class);
+        verify(appointmentRepository).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
+        assertThat(saved.getValue().getId()).isNull();
+        assertThat(saved.getValue().getDeletedAt()).isNull();
+    }
+
+    @Test
+    void appointmentRegisterNamesEveryInvalidField() throws Exception {
+        assertInvalid(mockMvc.perform(as(a, json(post("/medical-appointments/register"), "{}"))),
+                "/medical-appointments/register", "Campos inválidos: dateTime, doctor, patient, reason");
+        assertInvalid(mockMvc.perform(as(a, json(post("/medical-appointments/register"),
+                        "{\"patient\":{},\"doctor\":{},\"dateTime\":\"2026-11-02T10:30:00\",\"reason\":\"x\"}"))),
+                "/medical-appointments/register", "Campos inválidos: doctor.id, patient.id");
+        assertInvalid(mockMvc.perform(as(a, json(post("/medical-appointments/register"),
+                        appointmentBody("").replace("\"Control\"", "\"   \"")))),
+                "/medical-appointments/register", "Campos inválidos: reason");
+        String longReason = "r".repeat(256);
+        assertInvalid(mockMvc.perform(as(a, json(post("/medical-appointments/register"),
+                        appointmentBody("").replace("Control", longReason)))),
+                "/medical-appointments/register", "Campos inválidos: reason", longReason);
+        verify(appointmentRepository, never()).save(any());
+
+        mockMvc.perform(as(a, json(post("/medical-appointments/register"),
+                        appointmentBody("").replace("Control", "r".repeat(255)))))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void appointmentRegisterKeepsTheAuthorizationMessage() throws Exception {
+        mockMvc.perform(as(b, json(post("/medical-appointments/register"), appointmentBody(""))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("Solo el paciente o el médico de la cita pueden agendarla"));
+    }
+
+    // ---------------------------------------------------------------- historiales
+
+    private String historyBody(String notes) {
+        return "{\"patient\":{\"id\":\"" + a.getId() + "\"},\"diagnosis\":\"Migraña\",\"notes\":\"" + notes
+                + "\",\"recordDate\":\"2026-10-05T10:00:00\"}";
+    }
+
+    @Test
+    void historyRegisterKeepsTheShapeAndIgnoresIdAndDeletedAt() throws Exception {
+        mockMvc.perform(as(a, json(post("/medical-histories/register"),
+                        historyBody("ok").replace("{\"patient\"", "{\"id\":\"" + UUID.randomUUID() + "\","
+                                + "\"deletedAt\":\"2020-01-01T00:00:00\",\"patient\""))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.diagnosis").value("Migraña"));
+
+        ArgumentCaptor<MedicalHistory> saved = ArgumentCaptor.forClass(MedicalHistory.class);
+        verify(medicalHistoryRepository).save(saved.capture());
+        assertThat(saved.getValue().getId()).isNull();
+        assertThat(saved.getValue().getDeletedAt()).isNull();
+    }
+
+    @Test
+    void historyRegisterNamesEveryInvalidFieldAndLimitsNotesTo5000() throws Exception {
+        assertInvalid(mockMvc.perform(as(a, json(post("/medical-histories/register"), "{}"))),
+                "/medical-histories/register", "Campos inválidos: diagnosis, patient, recordDate");
+        assertInvalid(mockMvc.perform(as(a, json(post("/medical-histories/register"),
+                        historyBody("ok").replace("Migraña", " ")))),
+                "/medical-histories/register", "Campos inválidos: diagnosis");
+        String longDiagnosis = "d".repeat(256);
+        assertInvalid(mockMvc.perform(as(a, json(post("/medical-histories/register"),
+                        historyBody("ok").replace("Migraña", longDiagnosis)))),
+                "/medical-histories/register", "Campos inválidos: diagnosis", longDiagnosis);
+
+        mockMvc.perform(as(a, json(post("/medical-histories/register"), historyBody("n".repeat(5000)))))
+                .andExpect(status().isCreated());
+        mockMvc.perform(as(a, json(post("/medical-histories/register"),
+                        historyBody("ok").replace("Migraña", "d".repeat(255)))))
+                .andExpect(status().isCreated());
+        String tooLong = "n".repeat(5001);
+        assertInvalid(mockMvc.perform(as(a, json(post("/medical-histories/register"), historyBody(tooLong)))),
+                "/medical-histories/register", "Campos inválidos: notes", tooLong);
+    }
+
+    @Test
+    void historyRegisterKeepsTheAuthorizationAndUnifiedMessages() throws Exception {
+        mockMvc.perform(as(b, json(post("/medical-histories/register"), historyBody("ok"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.length()").value(5));
+        // el médico sin cita vigente con el paciente tampoco puede
+        mockMvc.perform(as(doctor, json(post("/medical-histories/register"), historyBody("ok"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.length()").value(5));
+        // un paciente inexistente para quien sí puede escribir: el 400 unificado
+        when(userRepository.findById(a.getId())).thenReturn(Optional.empty());
+        mockMvc.perform(as(a, json(post("/medical-histories/register"), historyBody("ok"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message")
+                        .value("El usuario indicado no existe o no tiene el rol requerido (PATIENT)"));
+    }
+
+    // --------------------------------------------------------------------- vínculos
+
+    private String linkBody(User who) {
+        return "{\"caregiver\":{\"id\":\"" + who.getId() + "\"},\"patient\":{\"id\":\"" + b.getId() + "\"}}";
+    }
+
+    @Test
+    void linkRegisterKeepsTheShapeAndNamesMissingFields() throws Exception {
+        mockMvc.perform(as(b, json(post("/caregiver-links/register"),
+                        linkBody(caregiver).replace("}}", "},\"deletedAt\":\"2020-01-01T00:00:00\"}"))))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<CaregiverLink> saved = ArgumentCaptor.forClass(CaregiverLink.class);
+        verify(caregiverLinkRepository).save(saved.capture());
+        assertThat(saved.getValue().getDeletedAt()).isNull();
+
+        assertInvalid(mockMvc.perform(as(b, json(post("/caregiver-links/register"), "{}"))),
+                "/caregiver-links/register", "Campos inválidos: caregiver, patient");
+        assertInvalid(mockMvc.perform(as(b, json(post("/caregiver-links/register"),
+                        "{\"caregiver\":{},\"patient\":{}}"))),
+                "/caregiver-links/register", "Campos inválidos: caregiver.id, patient.id");
+    }
+
+    @Test
+    void linkRegisterKeepsTheBusinessMessages() throws Exception {
+        mockMvc.perform(as(b, json(post("/caregiver-links/register"), linkBody(doctor))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("El cuidador debe ser un usuario existente con rol CAREGIVER"));
+        mockMvc.perform(as(a, json(post("/caregiver-links/register"), linkBody(caregiver))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("Solo el paciente puede crear un vínculo sobre sí mismo"));
+
+        CaregiverLink existing = CaregiverLink.builder().caregiver(caregiver).patient(b).build();
+        when(caregiverLinkRepository.findById(new CaregiverLinkId(caregiver.getId(), b.getId())))
+                .thenReturn(Optional.of(existing));
+        mockMvc.perform(as(b, json(post("/caregiver-links/register"), linkBody(caregiver))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("El cuidador ya está vinculado a ese paciente"));
+    }
+
+    // ----------------------------------------------------------------- medicamentos
+
+    private static String medicationBody(String name, String form) {
+        return "{\"name\":\"" + name + "\",\"administrationForm\":\"" + form + "\"}";
+    }
+
+    @Test
+    void medicationRegisterKeepsTheShapeAndIgnoresIdAndDeletedAt() throws Exception {
+        mockMvc.perform(as(a, json(post("/medications/register"),
+                        "{\"id\":99,\"name\":\"Ibuprofeno\",\"administrationForm\":\"Oral\","
+                                + "\"deletedAt\":\"2020-01-01T00:00:00\"}")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(7))
+                .andExpect(jsonPath("$.name").value("Ibuprofeno"));
+
+        ArgumentCaptor<Medication> saved = ArgumentCaptor.forClass(Medication.class);
+        verify(medicationRepository).save(saved.capture());
+        assertThat(saved.getValue().getDeletedAt()).isNull();
+    }
+
+    @Test
+    void medicationRegisterNamesInvalidFieldsAndLimits() throws Exception {
+        assertInvalid(mockMvc.perform(as(a, json(post("/medications/register"), "{}"))),
+                "/medications/register", "Campos inválidos: administrationForm, name");
+        assertInvalid(mockMvc.perform(as(a, json(post("/medications/register"), medicationBody("  ", "")))),
+                "/medications/register", "Campos inválidos: administrationForm, name");
+        String longName = "n".repeat(151);
+        String longForm = "f".repeat(51);
+        assertInvalid(mockMvc.perform(as(a, json(post("/medications/register"), medicationBody(longName, longForm)))),
+                "/medications/register", "Campos inválidos: administrationForm, name", longName, longForm);
+        mockMvc.perform(as(a, json(post("/medications/register"),
+                        medicationBody("n".repeat(150), "f".repeat(50)))))
+                .andExpect(status().isCreated());
     }
 
     private static String messageOf(String json) {

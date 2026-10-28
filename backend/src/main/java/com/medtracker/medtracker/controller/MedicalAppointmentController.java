@@ -1,9 +1,11 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.MedicalAppointmentCreateRequestDTO;
 import com.medtracker.medtracker.dto.MedicalAppointmentDTO;
 import com.medtracker.medtracker.model.MedicalAppointment;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.service.MedicalAppointmentService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -26,8 +28,8 @@ public class MedicalAppointmentController {
     // Registrar cita médica
     @PostMapping("/register")
     public ResponseEntity<MedicalAppointmentDTO> register(@AuthenticationPrincipal AuthenticatedUser principal,
-                                                          @RequestBody MedicalAppointment appointment) {
-        MedicalAppointment created = medicalAppointmentService.register(principal, appointment);
+                                                          @Valid @RequestBody MedicalAppointmentCreateRequestDTO request) {
+        MedicalAppointment created = medicalAppointmentService.register(principal, request.toEntity());
         return ResponseEntity.status(HttpStatus.CREATED).body(new MedicalAppointmentDTO(created));
     }
 
