@@ -1,9 +1,11 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.MedicalHistoryCreateRequestDTO;
 import com.medtracker.medtracker.dto.MedicalHistoryDTO;
 import com.medtracker.medtracker.model.MedicalHistory;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.service.MedicalHistoryService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -26,8 +28,8 @@ public class MedicalHistoryController {
     // Registrar historial médico
     @PostMapping("/register")
     public ResponseEntity<MedicalHistoryDTO> register(@AuthenticationPrincipal AuthenticatedUser principal,
-                                                      @RequestBody MedicalHistory history) {
-        MedicalHistory created = medicalHistoryService.register(principal, history);
+                                                      @Valid @RequestBody MedicalHistoryCreateRequestDTO request) {
+        MedicalHistory created = medicalHistoryService.register(principal, request.toEntity());
         return ResponseEntity.status(HttpStatus.CREATED).body(new MedicalHistoryDTO(created));
     }
 

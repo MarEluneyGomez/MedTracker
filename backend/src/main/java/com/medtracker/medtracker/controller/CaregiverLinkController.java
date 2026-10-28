@@ -1,9 +1,11 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.CaregiverLinkCreateRequestDTO;
 import com.medtracker.medtracker.dto.CaregiverLinkDTO;
 import com.medtracker.medtracker.model.CaregiverLink;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.service.CaregiverLinkService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -26,8 +28,8 @@ public class CaregiverLinkController {
     // Registrar un nuevo enlace caregiver-paciente (lo crea el paciente sobre sí mismo)
     @PostMapping("/register")
     public ResponseEntity<CaregiverLinkDTO> register(@AuthenticationPrincipal AuthenticatedUser principal,
-                                                     @RequestBody CaregiverLink link) {
-        CaregiverLink created = caregiverLinkService.register(principal, link);
+                                                     @Valid @RequestBody CaregiverLinkCreateRequestDTO request) {
+        CaregiverLink created = caregiverLinkService.register(principal, request.toEntity());
         return ResponseEntity.status(HttpStatus.CREATED).body(new CaregiverLinkDTO(created));
     }
 

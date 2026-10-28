@@ -126,7 +126,7 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 
 #### Validación de entradas
 
-Los endpoints de la tanda A reciben un DTO de entrada con Bean Validation (`@Valid`) y no la entidad JPA, así que el cliente solo puede mandar los campos que le corresponden. La forma del JSON no cambió: las referencias siguen siendo objetos con `id`. Los campos que no figuran en la tabla se **ignoran** sin error (por ejemplo `id`, `deletedAt`, `createdAt` o un objeto referenciado completo en lugar de `{id}`); esto evita romper al frontend si manda de más, pero el cliente no se entera de que se descartaron.
+Los endpoints de las tandas A y B reciben un DTO de entrada con Bean Validation (`@Valid`) y no la entidad JPA, así que el cliente solo puede mandar los campos que le corresponden. La forma del JSON no cambió: las referencias siguen siendo objetos con `id`. Los campos que no figuran en la tabla se **ignoran** sin error (por ejemplo `id`, `deletedAt`, `createdAt` o un objeto referenciado completo en lugar de `{id}`); esto evita romper al frontend si manda de más, pero el cliente no se entera de que se descartaron.
 
 | Endpoint | Campos aceptados | Obligatorios | Límites |
 |---|---|---|---|
@@ -136,13 +136,17 @@ Los endpoints de la tanda A reciben un DTO de entrada con Bean Validation (`@Val
 | `POST /reminders/register` | `treatment{id}`, `time`, `daysOfWeek`, `message` | `treatment.id`, `time`, `message` | `message` ≤ 255; `daysOfWeek` hasta 7 elementos. Nace con `active=true` |
 | `PUT /reminders/{id}` | `time`, `daysOfWeek`, `message` | `time`, `message` | igual que el alta |
 | `POST /doses/register` | `reminder{id}`, `scheduledAt` | `reminder.id`, `scheduledAt` | Nace `PENDING`; el estado y `confirmedAt` no se aceptan |
+| `POST /medical-appointments/register` | `patient{id}`, `doctor{id}`, `dateTime`, `reason` | los cuatro | `reason` no vacío y ≤ 255. Nace `PENDING`; el estado no se acepta |
+| `POST /medical-histories/register` | `patient{id}`, `diagnosis`, `notes`, `recordDate` | `patient.id`, `diagnosis`, `recordDate` | `diagnosis` no vacío y ≤ 255; `notes` ≤ 5000 caracteres (límite de la aplicación: la columna es `TEXT`) |
+| `POST /caregiver-links/register` | `caregiver{id}`, `patient{id}` | los dos | Las reglas de negocio (409, rol `CAREGIVER`, 403) siguen en el service |
+| `POST /medications/register` | `name`, `administrationForm` | los dos | `name` no vacío y ≤ 150; `administrationForm` no vacío y ≤ 50 |
 
 - **Contraseña de registro.** Entre 8 y 72 caracteres, con al menos una letra y un dígito, y como máximo **72 bytes en UTF-8** (límite de BCrypt: una `ñ` ocupa 2 bytes, así que una contraseña con acentos puede ser rechazada antes de los 72 caracteres). El login no aplica esta política, para no dejar afuera a quienes ya tienen una contraseña anterior; una contraseña de más de 72 bytes en el login responde 401 "Credenciales incorrectas" como cualquier contraseña incorrecta.
 - **Mensaje de error.** Una falla de validación responde 400 con `Campos inválidos: a, b`: solo los **nombres** de los campos (ordenados, sin repetir; los anidados como `medication.id`), nunca el valor rechazado. La contraseña se nombra `password`, venga como `passwordHash` o como `password`.
 - **Orden.** La validación corre antes que la autorización por dueño: con un body inválido se responde 400 antes que 403 o 404.
 - **Medicamento.** En `POST /treatments/register`, un medicamento inexistente o dado de baja responde 400 "El medicamento indicado no existe". Se chequea después de autorizar sobre el paciente.
 - **Usuarios referenciados.** Un usuario inexistente, eliminado o con un rol que no corresponde (por ejemplo un `doctor` que no es `DOCTOR`) responde siempre el mismo 400 "El usuario indicado no existe o no tiene el rol requerido (ROL)", para que no se pueda averiguar qué ids existen ni qué rol tienen.
-- **Todavía con entidad (tanda B).** `POST /medical-appointments/register`, `/medical-histories/register`, `/caregiver-links/register` y `/medications/register` siguen recibiendo la entidad; su validación queda para la tanda B.
+- **Mensajes de los services.** Las reglas de negocio conservan su mensaje (409 de vínculo duplicado, 400 de cuidador sin rol `CAREGIVER`, 400 unificado de usuario inexistente o de otro rol, 403/404 de la autorización). Con un campo faltante o fuera de límite responde antes el 400 "Campos inválidos: …".
 
 #### Autorización por dueño (RN-01, RN-09)
 
