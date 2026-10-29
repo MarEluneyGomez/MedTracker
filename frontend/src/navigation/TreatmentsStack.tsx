@@ -1,4 +1,6 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import ReminderFormScreen from '../screens/ReminderFormScreen';
+import RemindersScreen from '../screens/RemindersScreen';
 import TreatmentFormScreen from '../screens/TreatmentFormScreen';
 import TreatmentsScreen from '../screens/TreatmentsScreen';
 import { backHeaderOptions } from './headerOptions';
@@ -13,6 +15,12 @@ export default function TreatmentsStack() {
       <Stack.Screen
         name="TreatmentForm"
         component={TreatmentFormScreen}
+        options={backHeaderOptions}
+      />
+      <Stack.Screen name="Reminders" component={RemindersScreen} options={backHeaderOptions} />
+      <Stack.Screen
+        name="ReminderForm"
+        component={ReminderFormScreen}
         options={backHeaderOptions}
       />
     </Stack.Navigator>

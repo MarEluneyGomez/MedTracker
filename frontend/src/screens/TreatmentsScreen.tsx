@@ -109,6 +109,21 @@ export default function TreatmentsScreen() {
     );
   }
 
+  // Provisorio: el backend todavía no permite reabrir un tratamiento completado
+  function confirmComplete(treatment: Treatment, medicationName: string) {
+    Alert.alert(
+      'Marcar como completado',
+      `¿Terminaste el tratamiento de ${medicationName}? Vas a dejar de recibir sus recordatorios y no se puede deshacer.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Sí, lo terminé',
+          onPress: () => runAction(treatment.id, () => completeTreatment(treatment.id)),
+        },
+      ],
+    );
+  }
+
   if (loading) {
     return (
       <Screen>
@@ -189,9 +204,15 @@ export default function TreatmentsScreen() {
                           }
                         />
                         <AppButton
+                          title="Horarios"
+                          onPress={() => navigation.navigate('Reminders', { treatmentId: item.id })}
+                        />
+                        <AppButton
                           title="Marcar como completado"
                           loading={busyId === item.id}
-                          onPress={() => runAction(item.id, () => completeTreatment(item.id))}
+                          onPress={() =>
+                            confirmComplete(item, medication?.name ?? 'este medicamento')
+                          }
                         />
                       </>
                     ) : null}

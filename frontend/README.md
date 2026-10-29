@@ -40,9 +40,23 @@ La pestaña Tratamientos del paciente cubre CU-03 (agregar tratamiento) y CU-08 
 - **Lista** (`GET /treatments/user/{userId}`): cada tratamiento muestra el medicamento, la dosis y la frecuencia. Al tocarlo se despliega el detalle (forma de administración, fechas y estado) con las acciones. Se actualiza al volver a la pantalla y deslizando hacia abajo.
 - **Nuevo tratamiento** (`POST /treatments/register`): el medicamento se busca en el catálogo sin distinguir mayúsculas ni tildes; si no existe, se puede agregar indicando cómo se toma (`POST /medications/register`).
 - **Editar** (`PUT /treatments/{id}`): usa el mismo formulario con los datos cargados. El medicamento no se puede cambiar: para otro medicamento se crea otro tratamiento.
-- **Marcar como completado** (`PUT /treatments/{id}/complete`) y **Eliminar** (`DELETE /treatments/{id}`, con confirmación, porque también desactiva sus recordatorios).
+- **Marcar como completado** (`PUT /treatments/{id}/complete`) y **Eliminar** (`DELETE /treatments/{id}`, porque también desactiva sus recordatorios), los dos con confirmación. Completar todavía no se puede deshacer: el backend no tiene forma de reabrir un tratamiento.
 
-La dosis y la frecuencia se eligen con opciones (cantidad y unidad; "Cada 8 horas", "Cada 1 día" u otra a medida) y se guardan como texto con un formato fijo, por ejemplo "2 comprimidos" y "Cada 8 horas". Así se pueden volver a leer al editar y más adelante sugerir los horarios de los recordatorios. Las fechas se eligen con un calendario propio (`react-native-calendars`) que sigue la estética de la app; la fecha de fin es opcional y se guarda al final del día, para que el último día también cuente.
+La dosis y la frecuencia se eligen con opciones (cantidad y unidad; "Cada 8 horas", "Cada 1 día", "Varias veces por día" de 2 a 6, u otra a medida) y se guardan como texto con un formato fijo, por ejemplo "2 comprimidos", "Cada 8 horas" o "3 veces por día". Así se pueden volver a leer al editar y calcular los horarios. Las fechas se eligen con un calendario propio (`react-native-calendars`) que sigue la estética de la app; la fecha de fin es opcional y se guarda al final del día, para que el último día también cuente.
+
+## Horarios (recordatorios)
+
+Cubre CU-04 (configurar recordatorio) y RF-11 (editar o eliminar un recordatorio). En el backend, un recordatorio es una hora del día con días de la semana opcionales: "Cada 8 horas" son tres recordatorios. Para que la frecuencia y los horarios no se contradigan, **la frecuencia decide cómo se cargan**:
+
+- **Fija** (cada N horas con N que divide 24, cada 1 día, cada 1 semana): se elige solo la primera toma del día (y el día, si es semanal) y la app calcula el resto. Por ejemplo, cada 8 horas desde las 08:00 da 08:00, 16:00 y 00:00.
+- **Libre** ("N veces por día"): se elige la hora de cada toma, con una propuesta repartida entre las 08:00 y las 20:00.
+- **A mano** (cada 2 días, cada 48 horas...): esas frecuencias no se repiten igual todas las semanas, así que el modelo del backend no las puede representar. Los horarios se agregan, editan y eliminan uno por uno, con sus días.
+
+Los horarios se eligen en el mismo formulario del tratamiento, al crearlo y al editarlo, y también desde la pantalla **Horarios** de cada tratamiento. Ahí se ve si ya está todo guardado y aparece un aviso si los horarios guardados no coinciden con la frecuencia, por ejemplo después de cambiarla. La hora se elige con botones + y − o escribiéndola.
+
+Al guardar no se borra y se crea todo de nuevo: los horarios que no cambian se conservan, los que cambian se editan (el backend mueve la toma pendiente de hoy) y recién lo que sobra se elimina y lo que falta se crea. Así se conserva el historial de tomas y el backend nunca rechaza un horario como duplicado (RN-07). El texto del recordatorio lo arma la app, por ejemplo "Tomar 400 mg de Ibuprofeno".
+
+Endpoints: `GET /reminders/treatment/{treatmentId}`, `GET /reminders/{id}`, `POST /reminders/register`, `PUT /reminders/{id}` y `DELETE /reminders/{id}`.
 
 ## Estructura
 
@@ -50,12 +64,13 @@ La dosis y la frecuencia se eligen con opciones (cantidad y unidad; "Cada 8 hora
 frontend/
 ├── assets/                 # Íconos y splash de la app
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, login, registro, tratamientos y su formulario, pestañas de cada rol, perfil)
+│   ├── screens/            # Pantallas (bienvenida, login, registro, tratamientos y su formulario, horarios y su formulario, pestañas de cada rol, perfil)
 │   ├── components/         # Componentes reutilizables
 │   │   ├── AppButton, Screen, TextField, Logo
-│   │   ├── RoleSelector, ChipSelector # Selección entre opciones
-│   │   ├── DateField # Campo de fecha con calendario
-│   │   └── MedicationPicker, DosagePicker, FrequencyPicker # Partes del formulario de tratamiento
+│   │   ├── Chip, RoleSelector, ChipSelector, DaySelector # Selección entre opciones
+│   │   ├── DateField, TimeField # Campos de fecha y hora
+│   │   ├── MedicationPicker, DosagePicker, FrequencyPicker # Partes del formulario de tratamiento
+│   │   └── SchedulePicker, ScheduleSaveBar # Horarios según la frecuencia
 │   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, headerOptions y lista de pantallas (types.ts)
 │   ├── context/            # AuthContext: sesión compartida por toda la app
 │   ├── hooks/
@@ -64,6 +79,7 @@ frontend/
 │   │   ├── api.ts          # Cliente HTTP: token en cada pedido, sesión vencida y errores (ApiError)
 │   │   ├── auth.ts         # Login, registro y guardado de la sesión con su token
 │   │   ├── medications.ts  # Catálogo de medicamentos
+│   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
 │   ├── types/              # Tipos de los DTOs del backend
 │   ├── theme/
@@ -73,6 +89,7 @@ frontend/
 │       ├── dates.ts        # Conversión de fechas entre la app y el backend
 │       ├── dosage.ts       # Formato y lectura de la dosis
 │       ├── frequency.ts    # Formato y lectura de la frecuencia
+│       ├── reminders.ts    # Cálculo de horarios y plan de cambios al guardarlos
 │       ├── text.ts         # Mayúscula inicial y búsqueda sin tildes
 │       └── calendarLocale.ts # Calendario en español
 ├── App.tsx                 # Componente raíz

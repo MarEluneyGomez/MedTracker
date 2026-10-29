@@ -8,4 +8,6 @@ export type RootStackParamList = {
 export type TreatmentsStackParamList = {
   TreatmentsList: undefined;
   TreatmentForm: { treatmentId?: string } | undefined;
+  Reminders: { treatmentId: string };
+  ReminderForm: { treatmentId: string; reminderId?: string };
 };

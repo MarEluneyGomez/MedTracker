@@ -1,6 +1,6 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors } from '../theme/colors';
+import { StyleSheet, Text, View } from 'react-native';
 import { fieldLabel } from '../theme/typography';
+import Chip from './Chip';
 
 type ChipSelectorProps = {
   label: string;
@@ -14,20 +14,14 @@ export default function ChipSelector({ label, options, value, onChange }: ChipSe
     <View>
       <Text style={styles.label}>{label}</Text>
       <View style={styles.options}>
-        {options.map((option) => {
-          const chosen = option === value;
-          return (
-            <Pressable
-              key={option}
-              style={[styles.chip, chosen && styles.chipChosen]}
-              onPress={() => onChange(option)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: chosen }}
-            >
-              <Text style={[styles.chipText, chosen && styles.chipTextChosen]}>{option}</Text>
-            </Pressable>
-          );
-        })}
+        {options.map((option) => (
+          <Chip
+            key={option}
+            label={option}
+            chosen={option === value}
+            onPress={() => onChange(option)}
+          />
+        ))}
       </View>
     </View>
   );
@@ -39,25 +33,5 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-  },
-  chip: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: 12,
-    backgroundColor: colors.surface,
-  },
-  chipChosen: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  chipText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.text,
-  },
-  chipTextChosen: {
-    color: colors.onPrimary,
   },
 });

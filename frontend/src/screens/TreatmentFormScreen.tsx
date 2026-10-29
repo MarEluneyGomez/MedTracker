@@ -3,6 +3,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,6 +16,7 @@ import DateField from '../components/DateField';
 import DosagePicker from '../components/DosagePicker';
 import FrequencyPicker from '../components/FrequencyPicker';
 import MedicationPicker from '../components/MedicationPicker';
+import SchedulePicker from '../components/SchedulePicker';
 import Screen from '../components/Screen';
 import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
@@ -26,6 +28,7 @@ import {
   getMedications,
   type NewMedication,
 } from '../services/medications';
+import { getRemindersByTreatment, syncReminders } from '../services/reminders';
 import {
   createTreatment,
   getTreatment,
@@ -34,10 +37,18 @@ import {
 } from '../services/treatments';
 import { colors } from '../theme/colors';
 import { fieldError } from '../theme/typography';
-import type { Medication } from '../types/api';
+import type { Medication, Reminder } from '../types/api';
 import { fromBackendDate, toEndOfDay, toStartOfDay } from '../utils/dates';
 import { formatDosage, parseDosage, type Dosage } from '../utils/dosage';
 import { formatFrequency, parseFrequency, type Frequency } from '../utils/frequency';
+import {
+  buildReminderMessage,
+  initialSchedule,
+  planSync,
+  scheduleTargets,
+  validateSchedule,
+  type Schedule,
+} from '../utils/reminders';
 
 const HAS_END_OPTIONS = ['Sí', 'No'];
 
@@ -45,6 +56,7 @@ type FieldErrors = {
   medication?: string;
   dosage?: string;
   frequency?: string;
+  schedule?: string;
   startDate?: string;
   hasEndDate?: string;
   endDate?: string;
@@ -60,6 +72,8 @@ export default function TreatmentFormScreen() {
   const [medication, setMedication] = useState<Medication | null>(null);
   const [dosage, setDosage] = useState<Dosage | null>(null);
   const [frequency, setFrequency] = useState<Frequency | null>(null);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [schedule, setSchedule] = useState<Schedule>(initialSchedule([]));
   const [startDate, setStartDate] = useState<Date | null>(new Date());
   const [hasEndDate, setHasEndDate] = useState<string | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
@@ -85,7 +99,13 @@ export default function TreatmentFormScreen() {
   async function loadTreatment(id: string) {
     try {
       const treatment = await getTreatment(id);
-      setMedication(await getMedication(treatment.medicationId));
+      const [treatmentMedication, savedReminders] = await Promise.all([
+        getMedication(treatment.medicationId),
+        getRemindersByTreatment(id),
+      ]);
+      setMedication(treatmentMedication);
+      setReminders(savedReminders);
+      setSchedule(initialSchedule(savedReminders));
       setDosage(parseDosage(treatment.dosage));
       setFrequency(parseFrequency(treatment.frequency));
       setStartDate(fromBackendDate(treatment.startDate));
@@ -114,6 +134,10 @@ export default function TreatmentFormScreen() {
     }
     if (!frequency) {
       errors.frequency = 'Indicá cada cuánto se toma.';
+    }
+    const scheduleError = validateSchedule(frequency, schedule);
+    if (scheduleError) {
+      errors.schedule = scheduleError;
     }
     if (!startDate) {
       errors.startDate = 'Elegí la fecha de inicio.';
@@ -151,18 +175,50 @@ export default function TreatmentFormScreen() {
 
     setError(null);
     setSaving(true);
+    let savedId: string;
     try {
-      if (treatmentId) {
-        await updateTreatment(treatmentId, changes);
-      } else {
-        await createTreatment(user.id, { ...changes, medicationId: medication.id });
-      }
-      navigation.goBack();
+      savedId = treatmentId
+        ? (await updateTreatment(treatmentId, changes)).id
+        : (await createTreatment(user.id, { ...changes, medicationId: medication.id })).id;
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo guardar el tratamiento.');
-    } finally {
       setSaving(false);
+      return;
     }
+
+    try {
+      await saveSchedule(savedId, changes.dosage, medication.name);
+      // Un tratamiento nuevo que se programa a mano sigue en Horarios, para que
+      // no quede sin recordatorios
+      if (!isEditing && scheduleTargets(frequency, schedule) === null) {
+        navigation.replace('Reminders', { treatmentId: savedId });
+      } else {
+        navigation.goBack();
+      }
+    } catch {
+      // El tratamiento ya quedó guardado: se lleva a Horarios para reintentar
+      // ahí, en vez de dejar el formulario como si no se hubiera guardado nada
+      setSaving(false);
+      Alert.alert(
+        'Faltan los horarios',
+        'El tratamiento se guardó, pero no se pudieron guardar los horarios. Revisalos en la pantalla de Horarios.',
+        [
+          {
+            text: 'Ir a Horarios',
+            onPress: () => navigation.replace('Reminders', { treatmentId: savedId }),
+          },
+        ],
+      );
+    }
+  }
+
+  async function saveSchedule(savedId: string, savedDosage: string, medicationName: string) {
+    const targets = scheduleTargets(frequency, schedule);
+    if (!targets) {
+      return;
+    }
+    const message = buildReminderMessage(savedDosage, medicationName);
+    await syncReminders(savedId, planSync(reminders, targets, message), message);
   }
 
   if (loading) {
@@ -205,6 +261,12 @@ export default function TreatmentFormScreen() {
         />
         <DosagePicker value={dosage} onChange={setDosage} error={fieldErrors.dosage} />
         <FrequencyPicker value={frequency} onChange={setFrequency} error={fieldErrors.frequency} />
+        <SchedulePicker
+          frequency={frequency}
+          value={schedule}
+          onChange={setSchedule}
+          error={fieldErrors.schedule}
+        />
         <DateField
           label="Fecha de inicio"
           value={startDate}
