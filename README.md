@@ -101,7 +101,7 @@ seguimiento-de-medicacion/
 
 Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA repository) → `service` → `controller` (REST) → `dto`. Los errores de negocio se responden con 400 (datos inválidos o rol incorrecto), 404 (recurso inexistente) o 409 (duplicados o estados que no admiten el cambio).
 
-> **Autenticación y autorización:** `POST /auth/login` valida las credenciales (CU-02) y emite un JWT (HS256, 24 h por defecto, configurable con `JWT_EXPIRATION_MINUTES`; el secreto sale de `JWT_SECRET`). Todos los endpoints exigen `Authorization: Bearer <token>`, salvo `POST /auth/login` y `POST /users/register`; sin token o con uno inválido responde 401. Además, cada recurso se autoriza por dueño con el usuario del token, nunca con un id que mande el cliente (ver [Autorización por dueño](#autorización-por-dueño-rn-01-rn-09)). Para frenar fuerza bruta, tras 5 intentos fallidos el login se bloquea 15 minutos (por email y por IP) y responde 429.
+> **Autenticación y autorización:** `POST /auth/login` valida las credenciales (CU-02) y emite un JWT (HS256, 24 h por defecto, configurable con `JWT_EXPIRATION_MINUTES`; el secreto sale de `JWT_SECRET`). Todos los endpoints exigen `Authorization: Bearer <token>`, salvo `POST /auth/login` y `POST /users/register`; sin token o con uno inválido responde 401. Además, cada recurso se autoriza por dueño con el usuario del token, nunca con un id que mande el cliente (ver [Autorización por dueño](#autorización-por-dueño-rn-01-rn-09)). Para frenar fuerza bruta, tras 5 intentos fallidos el login se bloquea 15 minutos (por email y por IP) y responde 429. La sesión es renovable con un refresh token (48 h por defecto, `JWT_REFRESH_EXPIRATION_MINUTES`): `POST /auth/refresh` y `POST /auth/logout` son públicos y se identifican con ese token (ver [Cambios de esquema, punto 7](#cambios-de-esquema-sobre-una-base-ya-creada)). El access token sigue en 24 h por defecto para no romper al frontend que todavía no refresca; cuando lo implemente, se recomienda bajarlo con `JWT_EXPIRATION_MINUTES=60`, sin cambios de código.
 
 | Módulo | Descripción | Endpoint REST |
 |---|---|---|
@@ -120,7 +120,9 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 
 | Método y ruta | Descripción |
 |---|---|
-| `POST /auth/login` | Body `{email, password}`. 200 con el JWT (`accessToken`) y el usuario, 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
+| `POST /auth/login` | Body `{email, password}`. 200 con el JWT (`accessToken`, `tokenType`, `expiresIn`), el usuario y el refresh token (`refreshToken`, `refreshExpiresIn` en segundos), 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
+| `POST /auth/refresh` | Público. Body `{refreshToken}`. 200 con la misma forma que el login: un access token nuevo y un refresh token nuevo (el recibido queda revocado: cada uso lo rota y le da otra ventana de 48 h). El usuario y su rol se leen de la base. 401 genérico ("Sesión inválida o vencida. Iniciá sesión de nuevo") si el token es desconocido, vencido, ya usado o el usuario fue dado de baja; reusar un token ya rotado revoca además todas las sesiones del usuario. 400 si falta el campo; 429 tras 5 intentos inválidos desde una IP (15 min). |
+| `POST /auth/logout` | Público. Body `{refreshToken}`. Revoca ese refresh token. 204 siempre, también si el token no existe o ya estaba revocado. |
 | `GET /users?role=DOCTOR` | Lista los médicos vigentes con `id` y `name` solamente, para elegir uno al agendar una cita. Cualquier otro `role`, o sin `role`, devuelve solo al propio usuario y a sus vinculados (`id`, `name`, `email` y `role`; sin `fcmToken`). |
 | `GET /users/{id}` | El propio perfil completo; un vinculado o la contraparte de una cita compartida, en versión reducida (`id`, `name`, `email` y `role`; sin `fcmToken`). Cualquier otro usuario: 404. Solo el listado de médicos (`GET /users?role=DOCTOR`) va sin `email`. |
 | `POST /users/register` | Solo roles `PATIENT` o `CAREGIVER`; sin `role` queda `PATIENT`. `DOCTOR` responde 400 (ver [Alta de médicos](#alta-de-médicos)). La contraseña se manda en `passwordHash` (también se acepta `password`) y tiene una política mínima: ver [Validación de entradas](#validación-de-entradas). |
@@ -213,7 +215,7 @@ El SQL por consola (`spring.jpa.show-sql`) está apagado; se activa con la varia
 
 El auto-registro (`POST /users/register`) no permite el rol `DOCTOR`: si no, cualquiera podría registrarse como médico y la RN-09 perdería sentido. Un médico se da de alta a mano en la base, con una de estas dos variantes (sin credenciales reales en el repositorio):
 
-1. **Registrar y promover.** El futuro médico se registra por la API como `PATIENT` y un operador cambia el rol. Debe volver a iniciar sesión después, porque el rol viaja dentro del JWT.
+1. **Registrar y promover.** El futuro médico se registra por la API como `PATIENT` y un operador cambia el rol. El cambio se refleja en el próximo refresh de la sesión (`POST /auth/refresh` lee el rol de la base) o, mientras el frontend no refresque, al vencer el access token (24 h por defecto); cerrar sesión e iniciar de nuevo lo aplica de inmediato, porque el rol viaja dentro del JWT.
 
 ```sql
 UPDATE "user" SET role = 'DOCTOR' WHERE email = 'medico@example.com' AND deleted_at IS NULL;
@@ -446,6 +448,20 @@ Vínculo entre un tutor/responsable y los pacientes que gestiona. Un usuario `CA
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
 
+### Tabla: `refresh_token`
+
+> **Nota de diseño:** sesión renovable. Es un registro técnico de seguridad, sin baja lógica: se revoca (`revoked_at`) y los vencidos se borran con un job diario. Guarda solo el hash del token (ver [punto 7 de cambios de esquema](#cambios-de-esquema-sobre-una-base-ya-creada)).
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| id | UUID | Identificador único |
+| user_id | FK → user.id | Usuario dueño de la sesión |
+| token_hash | VARCHAR(64) (único) | SHA-256 en hexadecimal del refresh token; nunca el token |
+| expires_at | TIMESTAMPTZ | Vencimiento (48 h desde la emisión por defecto) |
+| created_at | TIMESTAMPTZ | Fecha de emisión |
+| revoked_at | TIMESTAMPTZ (nullable) | Cuándo se rotó, se cerró con logout o se revocó por reuso. NULL si sigue vigente |
+| replaced_by | FK → refresh_token.id (nullable) | Token que lo reemplazó al rotar. NULL si se cerró con logout o se revocó por reuso |
+
 ---
 
 ## Base de datos
@@ -512,6 +528,15 @@ ALTER TABLE treatment ADD COLUMN end_time TIME;
 ```
 
 **6. Recordatorios cada N días.** `reminder` suma `interval_days INTEGER` y `start_date DATE`, ambas **nullable y sin `DEFAULT`**: los recordatorios existentes quedan con las dos en `NULL` y se comportan igual que antes. Se agregan tres `CHECK` (`interval_days >= 1`; `interval_days` y `days_of_week` excluyentes; `start_date` existe si y solo si hay `interval_days`) y se reemplaza el índice único de RN-07 para que incluya `interval_days` y `start_date`. Todo va en una transacción, en `database/migration-reminder-interval-days.sql`; la reversión está en `database/rollback-reminder-interval-days.sql` y aborta si ya hay recordatorios con intervalo, porque revertir los perdería. La versión anterior de la aplicación sigue funcionando sobre la base migrada (Hibernate en `validate` ignora las columnas de más), así que se migra primero y se despliega después.
+
+**7. Sesión renovable (refresh token).** Tabla nueva `refresh_token` (id, `user_id`, `token_hash`, `expires_at`, `created_at`, `revoked_at`, `replaced_by`): solo guarda el hash SHA-256 del token, que es opaco y aleatorio (256 bits), y nunca el token. Es un cambio aditivo en una transacción, en `database/migration-refresh-token.sql`; la reversión está en `database/rollback-refresh-token.sql` (borra la tabla: las sesiones activas tendrán que volver a iniciar sesión cuando venza su access token). Como la tabla es nueva y `ddl-auto=validate` la exige, **hay que migrar antes de desplegar** esta versión; la versión anterior sigue funcionando sobre la base migrada.
+
+- **Cómo funciona.** `POST /auth/login` devuelve además `refreshToken` y `refreshExpiresIn` (segundos). `POST /auth/refresh` con `{refreshToken}` revoca ese token y devuelve un par nuevo (access + refresh con otra ventana completa): la sesión se cierra tras 48 h sin uso. `POST /auth/logout` revoca el token enviado. Detalle de códigos en la tabla de endpoints.
+- **Reuso.** Presentar un refresh token ya rotado o revocado se toma como robo: se revocan todos los refresh tokens del usuario (en todos sus dispositivos) y se responde 401. Por eso el cliente debe hacer un solo refresh a la vez; dos simultáneos con el mismo token hacen que uno gane y el otro cierre la sesión.
+- **Revalidación.** En cada refresh el usuario se lee de la base: si fue dado de baja responde 401 y se revocan sus tokens, y el rol del access token nuevo sale de la base, no del token viejo.
+- **Variables.** `JWT_REFRESH_EXPIRATION_MINUTES` (por defecto 2880 = 48 h) y `JWT_EXPIRATION_MINUTES` (access, por defecto 1440 = 24 h). **El access token no se acortó en esta versión**, para no desloguear cada hora al frontend que todavía no refresca. Cuando el frontend implemente el refresh, se recomienda bajarlo con `JWT_EXPIRATION_MINUTES=60`, sin cambios de código: así un usuario dado de baja o con el rol cambiado pierde el acceso en hasta 60 min en vez de 24 h (el access token no se revalida contra la base en cada pedido).
+- **Rate limit.** Tras 5 refresh inválidos (token desconocido o reusado) desde una IP, `POST /auth/refresh` responde 429 durante 15 minutos, con el mismo contador en memoria del login. Un token vencido no cuenta.
+- **Limpieza.** Un job diario (03:30, zona `medtracker.timezone`) borra los refresh tokens vencidos hace más de 7 días; los revocados se conservan hasta entonces para poder detectar el reuso. Reusar un token cerrado con logout responde 401 sin cerrar las demás sesiones: solo un token ya rotado dispara la revocación total.
 
 ---
 

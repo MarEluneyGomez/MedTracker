@@ -39,6 +39,7 @@ import com.medtracker.medtracker.service.MedicalHistoryService;
 import com.medtracker.medtracker.service.NotificationService;
 import com.medtracker.medtracker.service.ReminderService;
 import com.medtracker.medtracker.service.TreatmentService;
+import com.medtracker.medtracker.service.RefreshTokenService;
 import com.medtracker.medtracker.service.UserService;
 import jakarta.servlet.Filter;
 import org.junit.jupiter.api.BeforeEach;
@@ -159,6 +160,11 @@ class AuthorizationIntegrationTest {
         @Bean
         LoginAttemptService loginAttemptService() {
             return Mockito.mock(LoginAttemptService.class);
+        }
+
+        @Bean
+        RefreshTokenService refreshTokenService() {
+            return Mockito.mock(RefreshTokenService.class);
         }
     }
 

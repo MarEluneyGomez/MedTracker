@@ -148,3 +148,19 @@ CREATE TABLE medical_history (
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     deleted_at TIMESTAMP
 );
+
+-- Sesion renovable: de cada refresh token solo se guarda el hash SHA-256,
+-- nunca el token. Cada uso lo rota (revoked_at + replaced_by) y emite otro;
+-- reusar uno ya revocado revoca todos los del usuario.
+CREATE TABLE refresh_token (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES "user"(id),
+    token_hash VARCHAR(64) NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revoked_at TIMESTAMPTZ,
+    replaced_by UUID REFERENCES refresh_token(id) ON DELETE SET NULL
+);
+
+CREATE INDEX refresh_token_user_id_idx ON refresh_token (user_id);
+CREATE INDEX refresh_token_expires_at_idx ON refresh_token (expires_at);

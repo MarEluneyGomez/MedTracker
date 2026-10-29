@@ -16,4 +16,7 @@ public class LoginResponseDTO {
     // Segundos hasta que el token expira
     private long expiresIn;
     private UserDTO user;
+    // Token para renovar la sesión en POST /auth/refresh y segundos hasta que vence
+    private String refreshToken;
+    private long refreshExpiresIn;
 }

@@ -4,6 +4,7 @@ import com.medtracker.medtracker.config.SecurityConfig;
 import com.medtracker.medtracker.controller.AuthController;
 import com.medtracker.medtracker.controller.UserController;
 import com.medtracker.medtracker.model.User;
+import com.medtracker.medtracker.service.RefreshTokenService;
 import com.medtracker.medtracker.service.UserService;
 import jakarta.servlet.Filter;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,6 +68,11 @@ class JwtSecurityIntegrationTest {
         UserService userService() {
             return Mockito.mock(UserService.class);
         }
+
+        @Bean
+        RefreshTokenService refreshTokenService() {
+            return Mockito.mock(RefreshTokenService.class);
+        }
     }
 
     @RestController
@@ -83,12 +89,16 @@ class JwtSecurityIntegrationTest {
     private JwtService jwtService;
     @Autowired
     private UserService userService;
+    @Autowired
+    private RefreshTokenService refreshTokenService;
 
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        Mockito.reset(userService);
+        Mockito.reset(userService, refreshTokenService);
+        when(refreshTokenService.issue(any()))
+                .thenReturn(new RefreshTokenService.IssuedToken("refresh-de-prueba", 172800));
         mockMvc = MockMvcBuilders.webAppContextSetup(context)
                 .addFilters((Filter) context.getBean("springSecurityFilterChain"))
                 .build();

@@ -23,7 +23,8 @@ import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWrite
 public class SecurityConfig {
 
     // API REST sin estado: no usa sesión ni cookies, así que CSRF no aplica.
-    // Solo el login y el registro son públicos; el resto exige un JWT válido
+    // Son públicos el login, el registro y la renovación y el cierre de sesión
+    // (refresh y logout, que se identifican con el refresh token); el resto exige un JWT válido
     // (Authorization: Bearer <token>). La pertenencia de cada recurso (RN-01,
     // RN-09) se valida en los services con AccessPolicy, usando el usuario del token.
     @Bean
@@ -49,7 +50,8 @@ public class SecurityConfig {
                         // Sin esto, los errores que Spring reenvía a /error (400, 404,
                         // 409...) se convertirían en 401
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
-                        .requestMatchers(HttpMethod.POST, "/auth/login", "/users/register").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/auth/login", "/auth/refresh", "/auth/logout",
+                                "/users/register").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(new JwtAuthenticationFilter(jwtService), UsernamePasswordAuthenticationFilter.class);
         return http.build();
