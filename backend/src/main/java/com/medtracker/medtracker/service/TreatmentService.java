@@ -9,6 +9,7 @@ import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +21,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TreatmentService {
@@ -28,6 +30,7 @@ public class TreatmentService {
     private final ReminderRepository reminderRepository;
     private final MedicationRepository medicationRepository;
     private final UserService userService;
+    private final DoseGenerationService doseGenerationService;
     private final AccessPolicy accessPolicy;
     private final Clock clock;
 
@@ -143,5 +146,29 @@ public class TreatmentService {
         Treatment treatment = accessPolicy.requireTreatment(principal, id);
         treatment.setCompleted(true);
         return treatmentRepository.save(treatment);
+    }
+
+    // Reabrir un tratamiento completado (por error o para continuarlo): revierte
+    // solo el flag, que es lo único que cambia "completar". Sin límite de tiempo.
+    // Los recordatorios no se tocan. Genera las dosis de hoy, no las de días pasados.
+    // No es @Transactional a propósito: el UPDATE se commitea en su propia
+    // transacción y recién después se generan las dosis, que así ven completed=false.
+    public Treatment reopen(AuthenticatedUser principal, UUID id) {
+        Treatment treatment = accessPolicy.requireTreatment(principal, id);
+        if (!treatment.isCompleted() || treatmentRepository.reopenIfCompleted(id, LocalDateTime.now(clock)) == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "El tratamiento no está completado");
+        }
+        // El UPDATE directo no refresca la entidad en memoria: se relee antes de generar
+        Treatment reopened = treatmentRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Tratamiento no encontrado: " + id));
+        try {
+            doseGenerationService.generateTodayForTreatment(id);
+        } catch (RuntimeException e) {
+            // El tratamiento ya quedó reabierto; las dosis de hoy que falten las genera
+            // el próximo arranque, o el job de medianoche desde mañana
+            log.error("No se pudieron generar las dosis de hoy del tratamiento {}", id, e);
+        }
+        return reopened;
     }
 }

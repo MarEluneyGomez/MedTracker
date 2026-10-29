@@ -58,6 +58,44 @@ class DoseGenerationServiceTest {
     }
 
     @Test
+    void generateTodayForTreatmentCreatesTodaysDoseOfEachActiveReminderOnly() {
+        UUID treatmentId = UUID.randomUUID();
+        Treatment treatment = Treatment.builder().startDate(WEDNESDAY.minusDays(10).atStartOfDay()).build();
+        Reminder active = reminderOf(treatment, LocalTime.of(8, 0), null);
+        Reminder inactive = reminderOf(treatment, LocalTime.of(14, 0), null);
+        inactive.setActive(false);
+        Reminder otherDay = reminderOf(treatment, LocalTime.of(20, 0), new String[]{"MON"});
+        when(reminderRepository.findByTreatmentIdAndDeletedAtIsNull(treatmentId))
+                .thenReturn(List.of(active, inactive, otherDay));
+
+        assertThat(service.generateTodayForTreatment(treatmentId)).isEqualTo(1);
+
+        ArgumentCaptor<Dose> saved = ArgumentCaptor.forClass(Dose.class);
+        verify(doseRepository).save(saved.capture());
+        assertThat(saved.getValue().getReminder()).isSameAs(active);
+        assertThat(saved.getValue().getScheduledAt()).isEqualTo(WEDNESDAY.atTime(8, 0));
+    }
+
+    @Test
+    void generateTodayForTreatmentIsIdempotentAndSkipsCompletedOrExpiredTreatments() {
+        UUID treatmentId = UUID.randomUUID();
+        Treatment treatment = Treatment.builder().startDate(WEDNESDAY.minusDays(10).atStartOfDay()).build();
+        Reminder existing = reminderOf(treatment, LocalTime.of(8, 0), null);
+        Treatment expired = Treatment.builder().startDate(WEDNESDAY.minusDays(10).atStartOfDay())
+                .endDate(WEDNESDAY.minusDays(1).atTime(23, 59)).build();
+        Treatment stillCompleted = Treatment.builder().startDate(WEDNESDAY.minusDays(10).atStartOfDay())
+                .completed(true).build();
+        when(reminderRepository.findByTreatmentIdAndDeletedAtIsNull(treatmentId)).thenReturn(List.of(
+                existing, reminderOf(expired, LocalTime.of(9, 0), null),
+                reminderOf(stillCompleted, LocalTime.of(10, 0), null)));
+        when(doseRepository.existsByReminderIdAndScheduledAt(existing.getId(), WEDNESDAY.atTime(8, 0)))
+                .thenReturn(true);
+
+        assertThat(service.generateTodayForTreatment(treatmentId)).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
     void skipsWhenTreatmentHasNotStartedYet() {
         Treatment future = Treatment.builder().startDate(WEDNESDAY.plusDays(1).atStartOfDay()).build();
         eligible(reminderOf(future, LocalTime.of(8, 0), null));

@@ -84,4 +84,11 @@ public class TreatmentController {
                                                         @PathVariable UUID id) {
         return ResponseEntity.ok(new TreatmentDTO(treatmentService.markAsCompleted(principal, id)));
     }
+
+    // Reabrir un tratamiento completado (sin límite de tiempo)
+    @PutMapping("/{id}/reopen")
+    public ResponseEntity<TreatmentDTO> reopen(@AuthenticationPrincipal AuthenticatedUser principal,
+                                               @PathVariable UUID id) {
+        return ResponseEntity.ok(new TreatmentDTO(treatmentService.reopen(principal, id)));
+    }
 }

@@ -1,5 +1,6 @@
 package com.medtracker.medtracker.security;
 
+import com.medtracker.medtracker.DoseRepositoryStubs;
 import com.medtracker.medtracker.config.GlobalExceptionHandler;
 import com.medtracker.medtracker.config.SecurityConfig;
 import com.medtracker.medtracker.controller.AuthController;
@@ -592,6 +593,7 @@ class RequestValidationIntegrationTest {
         when(doseRepository.save(any(Dose.class))).thenAnswer(inv -> inv.getArgument(0));
         when(doseRepository.findByIdAndDeletedAtIsNull(pending.getId())).thenReturn(Optional.of(pending));
         when(doseRepository.findByIdAndDeletedAtIsNull(other.getId())).thenReturn(Optional.of(other));
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, pending, other);
 
         mockMvc.perform(as(a, put("/doses/" + pending.getId() + "/confirm")))
                 .andExpect(status().isOk())
