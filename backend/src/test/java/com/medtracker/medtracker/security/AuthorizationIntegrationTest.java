@@ -1,5 +1,6 @@
 package com.medtracker.medtracker.security;
 
+import com.medtracker.medtracker.DoseRepositoryStubs;
 import com.medtracker.medtracker.config.SecurityConfig;
 import com.medtracker.medtracker.controller.AuthController;
 import com.medtracker.medtracker.controller.CaregiverLinkController;
@@ -67,6 +68,7 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -262,6 +264,16 @@ class AuthorizationIntegrationTest {
         when(doseRepository.findByOwners(anyCollection())).thenAnswer(inv ->
                 ((java.util.Collection<UUID>) inv.getArgument(0)).contains(a.getId()) ? List.of(doseA) : List.of());
         when(doseRepository.save(any(Dose.class))).thenAnswer(inv -> inv.getArgument(0));
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, doseA);
+        // Reabrir es un UPDATE condicional: aplica solo si el tratamiento sigue completado
+        when(treatmentRepository.findById(treatmentA.getId())).thenReturn(Optional.of(treatmentA));
+        when(treatmentRepository.reopenIfCompleted(eq(treatmentA.getId()), any())).thenAnswer(inv -> {
+            if (!treatmentA.isCompleted()) {
+                return 0;
+            }
+            treatmentA.setCompleted(false);
+            return 1;
+        });
         when(appointmentRepository.findByIdAndDeletedAtIsNull(appointment.getId())).thenReturn(Optional.of(appointment));
         when(appointmentRepository.findByParticipant(any())).thenAnswer(inv -> {
             UUID id = inv.getArgument(0);
@@ -402,7 +414,7 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(b, put("/doses/" + doseA.getId() + "/confirm"))).andExpect(status().isNotFound());
         mockMvc.perform(as(b, put("/doses/" + doseA.getId() + "/skip"))).andExpect(status().isNotFound());
         mockMvc.perform(as(b, get("/doses/" + doseA.getId()))).andExpect(status().isNotFound());
-        verify(doseRepository, never()).save(any());
+        verify(doseRepository, never()).updateStatusIfCurrent(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -422,7 +434,88 @@ class AuthorizationIntegrationTest {
     @Test
     void theLinkedCaregiverCanConfirmTheDoseOfTheirPatient() throws Exception {
         mockMvc.perform(as(caregiver, put("/doses/" + doseA.getId() + "/confirm"))).andExpect(status().isOk());
-        verify(doseRepository).save(any(Dose.class));
+        verify(doseRepository).updateStatusIfCurrent(eq(doseA.getId()), any(), eq(Dose.DoseStatus.CONFIRMED),
+                any(), any());
+    }
+
+    // ------------------------------------------------ reabrir tratamiento y deshacer toma
+
+    @Test
+    void theOwnerAndTheLinkedCaregiverCanReopenACompletedTreatment() throws Exception {
+        treatmentA.setCompleted(true);
+        mockMvc.perform(as(a, put("/treatments/" + treatmentA.getId() + "/reopen")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.completed").value(false));
+
+        treatmentA.setCompleted(true);
+        mockMvc.perform(as(caregiver, put("/treatments/" + treatmentA.getId() + "/reopen")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.completed").value(false));
+    }
+
+    @Test
+    void reopeningATreatmentThatIsNotCompletedIs409() throws Exception {
+        mockMvc.perform(as(a, put("/treatments/" + treatmentA.getId() + "/reopen")))
+                .andExpect(status().isConflict());
+        verify(treatmentRepository, never()).reopenIfCompleted(any(), any());
+    }
+
+    @Test
+    void reopeningTwiceIs409TheSecondTime() throws Exception {
+        treatmentA.setCompleted(true);
+        mockMvc.perform(as(a, put("/treatments/" + treatmentA.getId() + "/reopen"))).andExpect(status().isOk());
+        mockMvc.perform(as(a, put("/treatments/" + treatmentA.getId() + "/reopen"))).andExpect(status().isConflict());
+    }
+
+    @Test
+    void strangersDoctorsAndUnlinkedCaregiversCannotReopenAndGet404() throws Exception {
+        treatmentA.setCompleted(true);
+        mockMvc.perform(as(b, put("/treatments/" + treatmentA.getId() + "/reopen"))).andExpect(status().isNotFound());
+        mockMvc.perform(as(doctor, put("/treatments/" + treatmentA.getId() + "/reopen")))
+                .andExpect(status().isNotFound());
+        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), a.getId()))
+                .thenReturn(false);
+        mockMvc.perform(as(caregiver, put("/treatments/" + treatmentA.getId() + "/reopen")))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(put("/treatments/" + treatmentA.getId() + "/reopen")).andExpect(status().isUnauthorized());
+        verify(treatmentRepository, never()).reopenIfCompleted(any(), any());
+    }
+
+    @Test
+    void theOwnerAndTheLinkedCaregiverCanUndoADose() throws Exception {
+        doseA.setScheduledAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
+        mockMvc.perform(as(a, put("/doses/" + doseA.getId() + "/confirm"))).andExpect(status().isOk());
+        mockMvc.perform(as(a, put("/doses/" + doseA.getId() + "/undo")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.confirmedAt").doesNotExist());
+
+        mockMvc.perform(as(a, put("/doses/" + doseA.getId() + "/skip"))).andExpect(status().isOk());
+        mockMvc.perform(as(caregiver, put("/doses/" + doseA.getId() + "/undo")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PENDING"));
+    }
+
+    @Test
+    void undoingAPendingOrOutOfWindowDoseIs409() throws Exception {
+        mockMvc.perform(as(a, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isConflict());
+
+        doseA.setStatus(Dose.DoseStatus.CONFIRMED); // programada el 2026-10-13: ya fuera de ventana
+        mockMvc.perform(as(a, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isConflict());
+        verify(doseRepository, never()).updateStatusIfCurrent(any(), any(), eq(Dose.DoseStatus.PENDING), any(), any());
+    }
+
+    @Test
+    void strangersDoctorsAndUnlinkedCaregiversCannotUndoADoseAndGet404() throws Exception {
+        doseA.setStatus(Dose.DoseStatus.CONFIRMED);
+        doseA.setScheduledAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
+        mockMvc.perform(as(b, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isNotFound());
+        mockMvc.perform(as(doctor, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isNotFound());
+        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), a.getId()))
+                .thenReturn(false);
+        mockMvc.perform(as(caregiver, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isNotFound());
+        mockMvc.perform(put("/doses/" + doseA.getId() + "/undo")).andExpect(status().isUnauthorized());
+        verify(doseRepository, never()).updateStatusIfCurrent(any(), any(), any(), any(), any());
     }
 
     @Test

@@ -60,6 +60,21 @@ public class DoseGenerationService {
                 .orElse(0);
     }
 
+    // Al reabrir un tratamiento: genera la dosis de hoy de cada uno de sus
+    // recordatorios activos, con las mismas reglas que el job diario (fechas,
+    // horas, días o intervalo). Idempotente. Devuelve cuántas creó.
+    @Transactional
+    public int generateTodayForTreatment(UUID treatmentId) {
+        LocalDate today = LocalDate.now(clock);
+        int created = 0;
+        for (Reminder reminder : reminderRepository.findByTreatmentIdAndDeletedAtIsNull(treatmentId)) {
+            if (reminder.isActive() && createDoseIfDue(reminder, today)) {
+                created++;
+            }
+        }
+        return created;
+    }
+
     // Al editar un recordatorio, la dosis PENDING de hoy pasa al nuevo horario.
     // Las CONFIRMED o SKIPPED quedan intactas como historial.
     @Transactional
