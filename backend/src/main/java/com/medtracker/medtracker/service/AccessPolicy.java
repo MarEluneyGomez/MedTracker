@@ -80,10 +80,14 @@ public class AccessPolicy {
         return hasActiveLink(userA, userB) || hasActiveLink(userB, userA);
     }
 
-    // ¿Son paciente y médico de una misma cita vigente, en cualquier sentido?
+    // ¿Son paciente y médico de una misma cita vigente y no cancelada, en cualquier
+    // sentido? No cuenta las citas CANCELLED ni las dadas de baja (deleted_at). Es la
+    // misma condición que usa el acceso al historial médico (hasActiveAppointmentAsDoctor).
     public boolean shareAppointment(UUID userA, UUID userB) {
-        return medicalAppointmentRepository.existsByPatientIdAndDoctorIdAndDeletedAtIsNull(userA, userB)
-                || medicalAppointmentRepository.existsByPatientIdAndDoctorIdAndDeletedAtIsNull(userB, userA);
+        // existsActiveByDoctorAndPatient recibe (médico, paciente): la segunda llamada
+        // invierte los argumentos por simetría, para cubrir ambos sentidos
+        return medicalAppointmentRepository.existsActiveByDoctorAndPatient(userB, userA)
+                || medicalAppointmentRepository.existsActiveByDoctorAndPatient(userA, userB);
     }
 
     // Un listado que nombra a otro usuario por id: solo el propio usuario o
@@ -94,15 +98,13 @@ public class AccessPolicy {
         }
     }
 
-    // Igual, pero para citas: el propio usuario o la contraparte de una cita vigente
+    // Igual, pero para citas: el propio usuario o la contraparte de una cita vigente y no cancelada
     public void requireSelfOrSharedAppointment(AuthenticatedUser principal, UUID userId) {
         if (!principal.id().equals(userId) && !shareAppointment(principal.id(), userId)) {
             throw forbiddenUser();
         }
     }
 
-    // ¿Tiene el médico una cita vigente y no cancelada con ese paciente?
-    // (a propósito distinto de shareAppointment, que cuenta también las canceladas)
     public boolean hasActiveAppointmentAsDoctor(UUID doctorId, UUID patientId) {
         return medicalAppointmentRepository.existsActiveByDoctorAndPatient(doctorId, patientId);
     }

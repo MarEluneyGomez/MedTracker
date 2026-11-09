@@ -31,9 +31,6 @@ public interface MedicalAppointmentRepository extends JpaRepository<MedicalAppoi
             """)
     List<MedicalAppointment> findByParticipant(@Param("userId") UUID userId);
 
-    // ¿Hay una cita vigente entre ese paciente y ese médico?
-    boolean existsByPatientIdAndDoctorIdAndDeletedAtIsNull(UUID patientId, UUID doctorId);
-
     // ¿Hay una cita vigente y no cancelada entre ese médico y ese paciente? (acceso al historial médico)
     @Query("""
             select count(a) > 0 from MedicalAppointment a
