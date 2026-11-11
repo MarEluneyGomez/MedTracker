@@ -4,6 +4,7 @@ import com.medtracker.medtracker.config.SecurityConfig;
 import com.medtracker.medtracker.controller.AuthController;
 import com.medtracker.medtracker.controller.UserController;
 import com.medtracker.medtracker.model.User;
+import com.medtracker.medtracker.repository.UserRepository;
 import com.medtracker.medtracker.service.RefreshTokenService;
 import com.medtracker.medtracker.service.UserService;
 import jakarta.servlet.Filter;
@@ -33,7 +34,10 @@ import java.time.ZoneOffset;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -73,6 +77,11 @@ class JwtSecurityIntegrationTest {
         RefreshTokenService refreshTokenService() {
             return Mockito.mock(RefreshTokenService.class);
         }
+
+        @Bean
+        UserRepository userRepository() {
+            return Mockito.mock(UserRepository.class);
+        }
     }
 
     @RestController
@@ -91,12 +100,16 @@ class JwtSecurityIntegrationTest {
     private UserService userService;
     @Autowired
     private RefreshTokenService refreshTokenService;
+    @Autowired
+    private UserRepository userRepository;
 
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        Mockito.reset(userService, refreshTokenService);
+        Mockito.reset(userService, refreshTokenService, userRepository);
+        // El filtro JWT comprueba que el usuario del token siga vigente
+        when(userRepository.existsByIdAndDeletedAtIsNull(any())).thenReturn(true);
         when(refreshTokenService.issue(any()))
                 .thenReturn(new RefreshTokenService.IssuedToken("refresh-de-prueba", 172800));
         mockMvc = MockMvcBuilders.webAppContextSetup(context)
@@ -172,5 +185,89 @@ class JwtSecurityIntegrationTest {
     void otherUserEndpointsRequireAuthentication() throws Exception {
         mockMvc.perform(get("/users")).andExpect(status().isUnauthorized());
         mockMvc.perform(get("/users/" + UUID.randomUUID())).andExpect(status().isUnauthorized());
+    }
+
+    // --- Comprobación del usuario del token (existe y no está dado de baja) ---
+
+    @Test
+    void tokenUserIdIsTheOneCheckedAgainstTheRepository() throws Exception {
+        User user = user();
+        String token = jwtService.generateToken(user);
+
+        MvcResult probe = mockMvc.perform(get("/probe").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk()).andReturn();
+
+        assertEquals(user.getId() + ":PATIENT", probe.getResponse().getContentAsString());
+        verify(userRepository).existsByIdAndDeletedAtIsNull(user.getId());
+    }
+
+    // Con mocks, un usuario dado de baja y uno inexistente son el mismo caso:
+    // la consulta devuelve false
+    @Test
+    void tokenOfADeletedOrMissingUserIs401() throws Exception {
+        User user = user();
+        when(userRepository.existsByIdAndDeletedAtIsNull(user.getId())).thenReturn(false);
+        String token = jwtService.generateToken(user);
+
+        mockMvc.perform(get("/probe").header("Authorization", "Bearer " + token))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", "Bearer"))
+                .andExpect(jsonPath("$.status").value(401));
+        verify(userRepository).existsByIdAndDeletedAtIsNull(user.getId());
+    }
+
+    @Test
+    void userCheckFailureIs401WithoutLeakingTheError() throws Exception {
+        String detail = "detalle-interno-de-la-base";
+        when(userRepository.existsByIdAndDeletedAtIsNull(any())).thenThrow(new IllegalStateException(detail));
+        String token = jwtService.generateToken(user());
+
+        MvcResult result = mockMvc.perform(get("/probe").header("Authorization", "Bearer " + token))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value(401))
+                .andReturn();
+
+        assertFalse(result.getResponse().getContentAsString().contains(detail));
+    }
+
+    @Test
+    void requestWithoutTokenDoesNotQueryTheUser() throws Exception {
+        mockMvc.perform(get("/probe")).andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void invalidTokensDoNotQueryTheUser() throws Exception {
+        String expired = new JwtService(SECRET, 60, Clock.fixed(Instant.now().minus(Duration.ofHours(3)), ZoneOffset.UTC))
+                .generateToken(user());
+        String otherSecret = new JwtService("otro-secreto-distinto-de-32-caracteres!!", 60, Clock.systemUTC())
+                .generateToken(user());
+
+        for (String header : new String[] {"Bearer basura", "Bearer " + expired, "Bearer " + otherSecret,
+                "Bearer ", "Basic dXNlcjpwYXNz"}) {
+            mockMvc.perform(get("/probe").header("Authorization", header))
+                    .andExpect(status().isUnauthorized());
+        }
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void tokenOfADeletedUserDoesNotBlockPublicRoutes() throws Exception {
+        User deleted = user();
+        when(userRepository.existsByIdAndDeletedAtIsNull(deleted.getId())).thenReturn(false);
+        when(userService.login(any(), any(), any())).thenReturn(user());
+        String token = jwtService.generateToken(deleted);
+        String body = "{\"email\":\"ana@mail.com\",\"password\":\"secreto\"}";
+
+        mockMvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tokenType").value("Bearer"));
+        mockMvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON).content(body)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tokenType").value("Bearer"));
+        verify(userRepository).existsByIdAndDeletedAtIsNull(deleted.getId());
     }
 }

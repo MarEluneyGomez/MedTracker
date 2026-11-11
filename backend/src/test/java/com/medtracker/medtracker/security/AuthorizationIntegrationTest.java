@@ -238,6 +238,8 @@ class AuthorizationIntegrationTest {
     void setUp() {
         Mockito.reset(userRepository, treatmentRepository, medicationRepository, reminderRepository, doseRepository,
                 appointmentRepository, caregiverLinkRepository, medicalHistoryRepository, notificationRepository);
+        // El filtro JWT comprueba que el usuario del token siga vigente
+        when(userRepository.existsByIdAndDeletedAtIsNull(any())).thenReturn(true);
         when(medicationRepository.findById(1)).thenReturn(Optional.of(medication()));
         mockMvc =MockMvcBuilders.webAppContextSetup(context)
                 .addFilters((Filter) context.getBean("springSecurityFilterChain"))

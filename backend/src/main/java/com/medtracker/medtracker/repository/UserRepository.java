@@ -25,4 +25,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     List<User> findByRoleAndDeletedAtIsNull(User.Role role);
 
     List<User> findByIdInAndDeletedAtIsNull(Collection<UUID> ids);
+
+    // Verificar si el usuario existe y no está dado de baja (filtro JWT)
+    boolean existsByIdAndDeletedAtIsNull(UUID id);
 }

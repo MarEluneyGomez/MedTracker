@@ -1,5 +1,6 @@
 package com.medtracker.medtracker.config;
 
+import com.medtracker.medtracker.repository.UserRepository;
 import com.medtracker.medtracker.security.JwtAuthenticationFilter;
 import com.medtracker.medtracker.security.JwtService;
 import com.medtracker.medtracker.security.RestAccessDeniedHandler;
@@ -25,10 +26,12 @@ public class SecurityConfig {
     // API REST sin estado: no usa sesión ni cookies, así que CSRF no aplica.
     // Son públicos el login, el registro y la renovación y el cierre de sesión
     // (refresh y logout, que se identifican con el refresh token); el resto exige un JWT válido
-    // (Authorization: Bearer <token>). La pertenencia de cada recurso (RN-01,
-    // RN-09) se valida en los services con AccessPolicy, usando el usuario del token.
+    // (Authorization: Bearer <token>) y que su usuario exista y no esté dado de baja (el filtro
+    // lo comprueba en la base en cada request y falla cerrado). La pertenencia de cada recurso
+    // (RN-01, RN-09) se valida en los services con AccessPolicy, usando el usuario del token.
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService,
+                                                   UserRepository userRepository,
                                                    RestAuthenticationEntryPoint entryPoint,
                                                    RestAccessDeniedHandler accessDeniedHandler) throws Exception {
         http
@@ -53,7 +56,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/auth/login", "/auth/refresh", "/auth/logout",
                                 "/users/register").permitAll()
                         .anyRequest().authenticated())
-                .addFilterBefore(new JwtAuthenticationFilter(jwtService), UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(new JwtAuthenticationFilter(jwtService, userRepository), UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 
