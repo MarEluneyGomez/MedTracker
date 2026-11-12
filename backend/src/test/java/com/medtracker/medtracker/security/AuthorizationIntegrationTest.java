@@ -65,6 +65,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
@@ -237,6 +238,8 @@ class AuthorizationIntegrationTest {
     void setUp() {
         Mockito.reset(userRepository, treatmentRepository, medicationRepository, reminderRepository, doseRepository,
                 appointmentRepository, caregiverLinkRepository, medicalHistoryRepository, notificationRepository);
+        // El filtro JWT comprueba que el usuario del token siga vigente
+        when(userRepository.existsByIdAndDeletedAtIsNull(any())).thenReturn(true);
         when(medicationRepository.findById(1)).thenReturn(Optional.of(medication()));
         mockMvc =MockMvcBuilders.webAppContextSetup(context)
                 .addFilters((Filter) context.getBean("springSecurityFilterChain"))
@@ -280,9 +283,7 @@ class AuthorizationIntegrationTest {
             return id.equals(a.getId()) || id.equals(doctor.getId()) ? List.of(appointment) : List.of();
         });
         when(appointmentRepository.save(any(MedicalAppointment.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(appointmentRepository.existsByPatientIdAndDoctorIdAndDeletedAtIsNull(a.getId(), doctor.getId()))
-                .thenReturn(true);
-        // El médico asignado tiene una cita vigente y no cancelada con A (acceso al historial)
+        // El médico asignado tiene una cita vigente y no cancelada con A (acceso al perfil reducido y al historial)
         when(appointmentRepository.existsActiveByDoctorAndPatient(doctor.getId(), a.getId())).thenReturn(true);
         when(appointmentRepository.findActivePatientIdsByDoctor(doctor.getId())).thenReturn(List.of(a.getId()));
         when(medicalHistoryRepository.findByIdAndDeletedAtIsNull(historyA.getId())).thenReturn(Optional.of(historyA));
@@ -842,20 +843,63 @@ class AuthorizationIntegrationTest {
     }
 
     @Test
-    void aDoctorWhoseOnlyAppointmentIsCancelledHasNoHistoryAccessButStillSeesTheReducedProfile() throws Exception {
-        // la cita existe y no está borrada (la regla de /users/{id} la cuenta), pero está CANCELLED
-        when(appointmentRepository.existsByPatientIdAndDoctorIdAndDeletedAtIsNull(a.getId(), otherDoctor.getId()))
-                .thenReturn(true);
-
+    void aDoctorWhoseOnlyAppointmentIsCancelledHasNoHistoryAccessAndNoLongerSeesTheProfile() throws Exception {
+        // la única cita está CANCELLED: existsActiveByDoctorAndPatient (que excluye canceladas y
+        // eliminadas) responde false, que es el valor por defecto del mock para este médico
         mockMvc.perform(as(otherDoctor, get("/medical-histories/" + historyA.getId()))).andExpect(status().isNotFound());
         mockMvc.perform(as(otherDoctor, get("/medical-histories/patient/" + a.getId()))).andExpect(status().isForbidden());
         mockMvc.perform(as(otherDoctor, json(post("/medical-histories/register"), historyBody(a, "\"Falso\""))))
                 .andExpect(status().isForbidden());
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isNotFound());
+        verify(medicalHistoryRepository, never()).save(any());
+    }
+
+    @Test
+    void aCancelledAppointmentNoLongerOpensTheCounterpartsProfileNorTheListingsByUser() throws Exception {
+        // con una cita vigente y no cancelada entre otherDoctor y A, el perfil y los listados se abren
+        when(appointmentRepository.existsActiveByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(true);
+
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(a, get("/users/" + otherDoctor.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(otherDoctor, get("/medical-appointments/patient/" + a.getId())))
+                .andExpect(status().isOk());
+        mockMvc.perform(as(a, get("/medical-appointments/doctor/" + otherDoctor.getId())))
+                .andExpect(status().isOk());
+
+        // la cita pasa a CANCELLED: la consulta deja de encontrarla y se cierran los cuatro accesos
+        when(appointmentRepository.existsActiveByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(false);
+
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(a, get("/users/" + otherDoctor.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(otherDoctor, get("/medical-appointments/patient/" + a.getId())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(as(a, get("/medical-appointments/doctor/" + otherDoctor.getId())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void registeringANewAppointmentCreatesItAndWithItSimulatedAsActiveTheReducedProfileIsVisibleAgain() throws Exception {
+        AtomicBoolean rescheduled = new AtomicBoolean(false);
+        // el mock simula el efecto del save (cita nueva vigente); el JPQL real se prueba en el hot-test
+        when(appointmentRepository.existsActiveByDoctorAndPatient(otherDoctor.getId(), a.getId()))
+                .thenAnswer(inv -> rescheduled.get());
+        when(appointmentRepository.save(any(MedicalAppointment.class))).thenAnswer(inv -> {
+            rescheduled.set(true);
+            return inv.getArgument(0);
+        });
+        String body = "{\"patient\":{\"id\":\"" + a.getId() + "\"},\"doctor\":{\"id\":\"" + otherDoctor.getId()
+                + "\"},\"dateTime\":\"2026-12-01T10:00:00\",\"reason\":\"reagendada\"}";
+
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isNotFound());
+
+        mockMvc.perform(as(otherDoctor, json(post("/medical-appointments/register"), body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("PENDING"));
+
         mockMvc.perform(as(otherDoctor, get("/users/" + a.getId())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value(a.getName()))
                 .andExpect(jsonPath("$.fcmToken").doesNotExist());
-        verify(medicalHistoryRepository, never()).save(any());
     }
 
     @Test

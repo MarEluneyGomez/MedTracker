@@ -127,6 +127,8 @@ class AuthRefreshIntegrationTest {
     @BeforeEach
     void setUp() {
         Mockito.reset(refreshTokenRepository, userRepository);
+        // El filtro JWT comprueba que el usuario del token siga vigente
+        when(userRepository.existsByIdAndDeletedAtIsNull(any())).thenReturn(true);
         mockMvc = MockMvcBuilders.webAppContextSetup(context)
                 .addFilters((Filter) context.getBean("springSecurityFilterChain"))
                 .build();
