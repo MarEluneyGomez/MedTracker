@@ -121,6 +121,10 @@ public class DoseGenerationService {
                 || treatment.getStartDate() == null) {
             return false;
         }
+        // Un paciente dado de baja no recibe dosis nuevas. El null check es defensivo: en produccion Treatment.user es NOT NULL, pero algunos tests arman Treatment sin user.
+        if (treatment.getUser() != null && treatment.getUser().getDeletedAt() != null) {
+            return false;
+        }
         LocalDate startDay = treatment.getStartDate().toLocalDate();
         if (startDay.compareTo(day) > 0) {
             return false;

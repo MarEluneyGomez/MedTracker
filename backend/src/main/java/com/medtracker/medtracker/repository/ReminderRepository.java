@@ -24,8 +24,9 @@ public interface ReminderRepository extends JpaRepository<Reminder, UUID> {
 
     // Recordatorios vigentes, de tratamientos vigentes, de los usuarios indicados
     @Query("""
-            select r from Reminder r join r.treatment t
-            where t.user.id in :ownerIds and r.deletedAt is null and t.deletedAt is null
+            select r from Reminder r join r.treatment t join t.user u
+            where u.id in :ownerIds and r.deletedAt is null and t.deletedAt is null
+              and u.deletedAt is null
             """)
     List<Reminder> findByOwners(@Param("ownerIds") Collection<UUID> ownerIds);
 

@@ -58,6 +58,8 @@ public class AccessPolicy {
         Set<UUID> ids = new HashSet<>();
         ids.add(principal.id());
         caregiverLinkRepository.findByCaregiver_IdAndDeletedAtIsNull(principal.id())
+                .stream()
+                .filter(link -> link.getPatient().getDeletedAt() == null)
                 .forEach(link -> ids.add(link.getPatient().getId()));
         return ids;
     }
