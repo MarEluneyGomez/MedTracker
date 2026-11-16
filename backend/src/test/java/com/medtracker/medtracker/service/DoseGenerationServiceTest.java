@@ -3,6 +3,7 @@ package com.medtracker.medtracker.service;
 import com.medtracker.medtracker.model.Dose;
 import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.model.Treatment;
+import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.DoseRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -226,6 +227,31 @@ class DoseGenerationServiceTest {
                 .thenReturn(true);
 
         assertThat(service.generateTodayForReminder(r.getId())).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    private Treatment treatmentOfDeletedOwner() {
+        User deletedOwner = User.builder().id(UUID.randomUUID())
+                .deletedAt(WEDNESDAY.minusDays(1).atStartOfDay()).build();
+        return Treatment.builder().startDate(WEDNESDAY.minusDays(10).atStartOfDay()).user(deletedOwner).build();
+    }
+
+    @Test
+    void generateTodayForReminderSkipsWhenOwnerIsDeleted() {
+        Reminder r = reminderOf(treatmentOfDeletedOwner(), LocalTime.of(8, 0), null);
+        when(reminderRepository.findById(r.getId())).thenReturn(java.util.Optional.of(r));
+
+        assertThat(service.generateTodayForReminder(r.getId())).isZero();
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void generateTodayForTreatmentSkipsWhenOwnerIsDeleted() {
+        UUID treatmentId = UUID.randomUUID();
+        Reminder r = reminderOf(treatmentOfDeletedOwner(), LocalTime.of(8, 0), null);
+        when(reminderRepository.findByTreatmentIdAndDeletedAtIsNull(treatmentId)).thenReturn(List.of(r));
+
+        assertThat(service.generateTodayForTreatment(treatmentId)).isZero();
         verify(doseRepository, never()).save(any());
     }
 

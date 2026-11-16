@@ -24,8 +24,12 @@ public interface TreatmentRepository extends JpaRepository<Treatment, UUID> {
     // Tratamiento vigente por id (los eliminados lógicamente no se encuentran)
     Optional<Treatment> findByIdAndDeletedAtIsNull(UUID id);
 
-    // Tratamientos vigentes de cualquiera de los usuarios indicados
-    List<Treatment> findByUserIdInAndDeletedAtIsNull(Collection<UUID> userIds);
+    // Tratamientos vigentes de cualquiera de los usuarios indicados (sin los de usuarios dados de baja)
+    @Query("""
+            select t from Treatment t join t.user u
+            where u.id in :userIds and t.deletedAt is null and u.deletedAt is null
+            """)
+    List<Treatment> findByUserIdInAndDeletedAtIsNull(@Param("userIds") Collection<UUID> userIds);
 
     // Buscar tratamientos por medicamento
     List<Treatment> findByMedicationId(Integer medicationId);

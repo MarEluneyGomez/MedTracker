@@ -27,9 +27,10 @@ public interface DoseRepository extends JpaRepository<Dose, UUID> {
     // Dosis vigentes de los usuarios indicados, sin las de recordatorios o
     // tratamientos eliminados
     @Query("""
-            select d from Dose d join d.reminder r join r.treatment t
-            where t.user.id in :ownerIds
+            select d from Dose d join d.reminder r join r.treatment t join t.user u
+            where u.id in :ownerIds
               and d.deletedAt is null and r.deletedAt is null and t.deletedAt is null
+              and u.deletedAt is null
             order by d.scheduledAt
             """)
     List<Dose> findByOwners(@Param("ownerIds") Collection<UUID> ownerIds);
@@ -72,9 +73,10 @@ public interface DoseRepository extends JpaRepository<Dose, UUID> {
     // Dosis del usuario dentro de [start, end), sin las de tratamientos o
     // recordatorios eliminados (no deben aparecer como pendientes en "Hoy")
     @Query("""
-            select d from Dose d join d.reminder r join r.treatment t
-            where t.user.id = :userId
+            select d from Dose d join d.reminder r join r.treatment t join t.user u
+            where u.id = :userId
               and d.deletedAt is null and r.deletedAt is null and t.deletedAt is null
+              and u.deletedAt is null
               and d.scheduledAt >= :rangeStart and d.scheduledAt < :rangeEnd
             order by d.scheduledAt
             """)

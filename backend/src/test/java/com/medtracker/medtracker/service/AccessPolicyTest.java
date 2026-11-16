@@ -193,6 +193,23 @@ class AccessPolicyTest {
         assertThat(policy.manageablePatientIds(asB)).containsExactly(patientB.getId());
     }
 
+    @Test
+    void manageablePatientIdsExcludeDeletedPatientsAndKeepThePrincipal() {
+        User deletedPatient = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT)
+                .deletedAt(LocalDateTime.now()).build();
+        CaregiverLink activeLink = CaregiverLink.builder().id(new CaregiverLinkId(caregiver.getId(), patientA.getId()))
+                .caregiver(caregiver).patient(patientA).build();
+        CaregiverLink linkToDeleted = CaregiverLink.builder()
+                .id(new CaregiverLinkId(caregiver.getId(), deletedPatient.getId()))
+                .caregiver(caregiver).patient(deletedPatient).build();
+        when(caregiverLinkRepository.findByCaregiver_IdAndDeletedAtIsNull(caregiver.getId()))
+                .thenReturn(List.of(activeLink, linkToDeleted));
+
+        assertThat(policy.manageablePatientIds(asCaregiver))
+                .containsExactlyInAnyOrder(caregiver.getId(), patientA.getId())
+                .doesNotContain(deletedPatient.getId());
+    }
+
     // ---- RN-01: recordatorios y dosis
 
     @Test
