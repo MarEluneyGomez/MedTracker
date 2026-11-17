@@ -58,7 +58,7 @@ seguimiento-de-medicacion/
 │   │   ├── services/           # Llamadas a la API
 │   │   ├── types/              # Tipos de los datos que devuelve el backend
 │   │   ├── theme/              # Paleta de colores y estilos de texto compartidos
-│   │   └── utils/              # Fechas, dosis, frecuencia, texto y calendario en español
+│   │   └── utils/              # Fechas, dosis, frecuencia, horarios, texto y calendario en español
 │   ├── App.tsx                 # Componente raíz
 │   ├── index.ts                # Punto de entrada
 │   ├── app.json                # Configuración de Expo

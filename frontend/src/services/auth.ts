@@ -5,19 +5,41 @@ import * as SecureStore from 'expo-secure-store';
 export type Session = {
   user: User;
   token: string;
+  refreshToken: string;
 };
 
-type LoginResponse = {
+type SessionResponse = {
   accessToken: string;
+  refreshToken: string;
   user: User;
 };
 
+function toSession({ accessToken, refreshToken, user }: SessionResponse): Session {
+  return { user, token: accessToken, refreshToken };
+}
+
 export async function login(email: string, password: string): Promise<Session> {
-  const response = await apiRequest<LoginResponse>('POST', '/auth/login', {
-    email: email.trim().toLowerCase(),
-    password,
-  });
-  return { user: response.user, token: response.accessToken };
+  const response = await apiRequest<SessionResponse>(
+    'POST',
+    '/auth/login',
+    { email: email.trim().toLowerCase(), password },
+    { authenticated: false },
+  );
+  return toSession(response);
+}
+
+export async function refreshSession(refreshToken: string): Promise<Session> {
+  const response = await apiRequest<SessionResponse>(
+    'POST',
+    '/auth/refresh',
+    { refreshToken },
+    { authenticated: false },
+  );
+  return toSession(response);
+}
+
+export function logout(refreshToken: string): Promise<void> {
+  return apiRequest<void>('POST', '/auth/logout', { refreshToken }, { authenticated: false });
 }
 
 export type RegisterData = {
@@ -29,12 +51,17 @@ export type RegisterData = {
 
 // El registro no devuelve token: la sesión se obtiene con login() después
 export function register(data: RegisterData): Promise<User> {
-  return apiRequest<User>('POST', '/users/register', {
-    name: data.name.trim(),
-    email: data.email.trim().toLowerCase(),
-    passwordHash: data.password,
-    role: data.role,
-  });
+  return apiRequest<User>(
+    'POST',
+    '/users/register',
+    {
+      name: data.name.trim(),
+      email: data.email.trim().toLowerCase(),
+      passwordHash: data.password,
+      role: data.role,
+    },
+    { authenticated: false },
+  );
 }
 
 const SESSION_KEY = 'medtracker.session';
