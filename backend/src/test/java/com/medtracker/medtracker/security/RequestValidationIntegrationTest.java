@@ -322,6 +322,96 @@ class RequestValidationIntegrationTest {
     }
 
     @Test
+    void updatingTheFcmTokenAnswers204WithoutBodyAndReplacesAndTrimsTheStoredOne() throws Exception {
+        a.setFcmToken("token-viejo");
+
+        mockMvc.perform(json(as(a, put("/users/me/fcm-token")), "{\"fcmToken\":\"  token-nuevo  \"}"))
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertThat(a.getFcmToken()).isEqualTo("token-nuevo");
+        verify(userRepository).save(a);
+    }
+
+    @Test
+    void updatingTheFcmTokenWithoutBearerIs401() throws Exception {
+        mockMvc.perform(json(put("/users/me/fcm-token"), "{\"fcmToken\":\"token-nuevo\"}"))
+                .andExpect(status().isUnauthorized());
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void anAbsentEmptyOrBlankFcmTokenIs400() throws Exception {
+        for (String body : new String[] {"{}", "{\"fcmToken\":null}", "{\"fcmToken\":\"\"}",
+                "{\"fcmToken\":\"     \"}"}) {
+            assertInvalid(mockMvc.perform(json(as(a, put("/users/me/fcm-token")), body)),
+                    "/users/me/fcm-token", "Campos inválidos: fcmToken");
+        }
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void anFcmTokenOf256CharactersIs400AndOneOf255IsAccepted() throws Exception {
+        String tooLong = "x".repeat(256);
+        assertInvalid(mockMvc.perform(json(as(a, put("/users/me/fcm-token")),
+                        "{\"fcmToken\":\"" + tooLong + "\"}")),
+                "/users/me/fcm-token", "Campos inválidos: fcmToken", tooLong);
+        verify(userRepository, never()).save(any(User.class));
+
+        String maxLength = "y".repeat(255);
+        mockMvc.perform(json(as(a, put("/users/me/fcm-token")), "{\"fcmToken\":\"" + maxLength + "\"}"))
+                .andExpect(status().isNoContent());
+        assertThat(a.getFcmToken()).isEqualTo(maxLength);
+    }
+
+    @Test
+    void anAbsentOrUnreadableFcmTokenBodyIs400WithTheGenericMessage() throws Exception {
+        assertInvalid(mockMvc.perform(as(a, put("/users/me/fcm-token")).contentType(MediaType.APPLICATION_JSON)),
+                "/users/me/fcm-token", "El cuerpo de la solicitud no es válido");
+        assertInvalid(mockMvc.perform(json(as(a, put("/users/me/fcm-token")),
+                        "{\"fcmToken\":\"token-ilegible")),
+                "/users/me/fcm-token", "El cuerpo de la solicitud no es válido", "token-ilegible");
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    // El límite de 255 se mide sobre el valor enviado, antes de quitar los espacios
+    @Test
+    void the255LimitIsMeasuredBeforeTrimming() throws Exception {
+        String padded = "  " + "z".repeat(255) + "  ";
+        assertInvalid(mockMvc.perform(json(as(a, put("/users/me/fcm-token")),
+                        "{\"fcmToken\":\"" + padded + "\"}")),
+                "/users/me/fcm-token", "Campos inválidos: fcmToken", "z".repeat(255));
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    // \u0001 no es un espacio para @NotBlank, pero trim() lo recorta: queda vacío
+    @Test
+    void anFcmTokenMadeOnlyOfControlCharactersIs400() throws Exception {
+        a.setFcmToken("token-viejo");
+        assertInvalid(mockMvc.perform(json(as(a, put("/users/me/fcm-token")),
+                        "{\"fcmToken\":\"\\u0001\"}")),
+                "/users/me/fcm-token", "Campos inválidos: fcmToken");
+        assertThat(a.getFcmToken()).isEqualTo("token-viejo");
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void updatingTheFcmTokenIgnoresExtraFieldsAndNeverTouchesAnotherUser() throws Exception {
+        b.setFcmToken("token-de-b");
+        mockMvc.perform(json(as(a, put("/users/me/fcm-token")),
+                        "{\"fcmToken\":\"token-nuevo\",\"id\":\"" + b.getId() + "\",\"role\":\"DOCTOR\"}"))
+                .andExpect(status().isNoContent());
+
+        assertThat(a.getFcmToken()).isEqualTo("token-nuevo");
+        assertThat(a.getRole()).isEqualTo(User.Role.PATIENT);
+        assertThat(a.getId()).isNotEqualTo(b.getId());
+        assertThat(b.getFcmToken()).isEqualTo("token-de-b");
+        assertThat(b.getRole()).isEqualTo(User.Role.PATIENT);
+        verify(userRepository).save(a);
+        verify(userRepository, never()).save(b);
+    }
+
+    @Test
     void weakPasswordsAre400NamingThePasswordFieldAndNeverEchoingIt() throws Exception {
         for (String weak : new String[] {"corta1", "sololetrasaqui", "123456789012", "        "}) {
             assertInvalid(mockMvc.perform(json(post("/users/register"), register("ana@mail.com", weak))),
