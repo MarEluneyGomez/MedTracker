@@ -16,6 +16,7 @@ import com.medtracker.medtracker.repository.MedicalHistoryRepository;
 import com.medtracker.medtracker.repository.NotificationRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
+import com.medtracker.medtracker.repository.UserRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,7 +34,12 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -54,6 +60,8 @@ class AccessPolicyTest {
     private MedicalHistoryRepository medicalHistoryRepository;
     @Mock
     private NotificationRepository notificationRepository;
+    @Mock
+    private UserRepository userRepository;
 
     private AccessPolicy policy;
 
@@ -76,12 +84,21 @@ class AccessPolicyTest {
     @BeforeEach
     void setUp() {
         policy = new AccessPolicy(treatmentRepository, reminderRepository, doseRepository,
-                appointmentRepository, caregiverLinkRepository, medicalHistoryRepository, notificationRepository);
+                appointmentRepository, caregiverLinkRepository, medicalHistoryRepository, notificationRepository,
+                userRepository);
     }
 
     private void caregiverIsLinkedToA() {
         when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(
                 caregiver.getId(), patientA.getId())).thenReturn(true);
+        when(userRepository.existsByIdAndDeletedAtIsNull(patientA.getId())).thenReturn(true);
+    }
+
+    // El paciente A está dado de baja (user.deleted_at no nulo): el vínculo sigue en la base
+    private void caregiverIsLinkedToDeletedA() {
+        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(
+                caregiver.getId(), patientA.getId())).thenReturn(true);
+        when(userRepository.existsByIdAndDeletedAtIsNull(patientA.getId())).thenReturn(false);
     }
 
     private void assertStatus(Throwable e, HttpStatus status) {
@@ -181,6 +198,75 @@ class AccessPolicyTest {
         assertThat(policy.canManagePatient(asB, patientA.getId())).isFalse();
         assertThatThrownBy(() -> policy.requireCanManagePatient(asB, patientA.getId()))
                 .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+    }
+
+    @Test
+    void anActivePatientWithALinkIsManageableAndLinked() {
+        Treatment treatment = treatmentOfA();
+        caregiverIsLinkedToA();
+
+        assertThat(policy.canManagePatient(asCaregiver, patientA.getId())).isTrue();
+        assertThat(policy.areLinked(caregiver.getId(), patientA.getId())).isTrue();
+        assertThat(policy.requireTreatment(asCaregiver, treatment.getId())).isSameAs(treatment);
+    }
+
+    @Test
+    void aDeletedPatientWithALinkIsNotManageable() {
+        Treatment treatment = treatmentOfA();
+        Reminder reminder = reminderOfA(treatment);
+        Dose dose = doseOf(reminder);
+        caregiverIsLinkedToDeletedA();
+
+        assertAll(
+                () -> assertThat(policy.canManagePatient(asCaregiver, patientA.getId())).isFalse(),
+                () -> assertThatThrownBy(() -> policy.requireCanManagePatient(asCaregiver, patientA.getId()))
+                        .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN)),
+                () -> assertThatThrownBy(() -> policy.requireTreatment(asCaregiver, treatment.getId()))
+                        .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND)),
+                () -> assertThatThrownBy(() -> policy.requireReminder(asCaregiver, reminder.getId()))
+                        .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND)),
+                () -> assertThatThrownBy(() -> policy.requireDose(asCaregiver, dose.getId()))
+                        .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND)),
+                () -> assertThatThrownBy(() -> policy.requireSelfOrLinked(asCaregiver, patientA.getId()))
+                        .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN)));
+    }
+
+    @Test
+    void aDeletedPatientWithALinkIsNotLinkedInEitherArgumentOrder() {
+        caregiverIsLinkedToDeletedA();
+
+        assertAll(
+                () -> assertThat(policy.areLinked(caregiver.getId(), patientA.getId())).isFalse(),
+                () -> assertThat(policy.areLinked(patientA.getId(), caregiver.getId())).isFalse());
+    }
+
+    @Test
+    void anActivePatientWithoutALinkIsNotManageableNorLinked() {
+        // el paciente está activo, pero no se stubea el vínculo (el repository responde false)
+        when(userRepository.existsByIdAndDeletedAtIsNull(patientA.getId())).thenReturn(true);
+
+        assertAll(
+                () -> assertThat(policy.canManagePatient(asCaregiver, patientA.getId())).isFalse(),
+                () -> assertThatThrownBy(() -> policy.requireCanManagePatient(asCaregiver, patientA.getId()))
+                        .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN)),
+                () -> assertThat(policy.areLinked(caregiver.getId(), patientA.getId())).isFalse(),
+                () -> assertThat(policy.areLinked(patientA.getId(), caregiver.getId())).isFalse());
+    }
+
+    @Test
+    void withoutALinkTheUserRepositoryIsNotQueried() {
+        // sin vínculo (el repository responde false por defecto): no se consulta al usuario
+        assertThat(policy.canManagePatient(asCaregiver, patientA.getId())).isFalse();
+
+        verify(userRepository, never()).existsByIdAndDeletedAtIsNull(any());
+    }
+
+    @Test
+    void thePrincipalOnTheirOwnIdCanManageWithoutQueryingTheUserRepository() {
+        assertThat(policy.canManagePatient(asA, patientA.getId())).isTrue();
+
+        verifyNoInteractions(userRepository);
+        verifyNoInteractions(caregiverLinkRepository);
     }
 
     @Test

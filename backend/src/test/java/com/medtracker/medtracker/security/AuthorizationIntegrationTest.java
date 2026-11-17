@@ -238,7 +238,9 @@ class AuthorizationIntegrationTest {
     void setUp() {
         Mockito.reset(userRepository, treatmentRepository, medicationRepository, reminderRepository, doseRepository,
                 appointmentRepository, caregiverLinkRepository, medicalHistoryRepository, notificationRepository);
-        // El filtro JWT comprueba que el usuario del token siga vigente
+        // Todos los usuarios figuran vigentes: lo usa el filtro JWT (el usuario del token debe
+        // seguir vigente) y también AccessPolicy (el paciente de un cuidador no debe estar dado
+        // de baja). Los tests de baja lo pisan solo para el id del paciente.
         when(userRepository.existsByIdAndDeletedAtIsNull(any())).thenReturn(true);
         when(medicationRepository.findById(1)).thenReturn(Optional.of(medication()));
         mockMvc =MockMvcBuilders.webAppContextSetup(context)
@@ -560,6 +562,57 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(caregiver, get("/treatments/" + treatmentA.getId()))).andExpect(status().isNotFound());
         mockMvc.perform(as(caregiver, get("/reminders/" + reminderA.getId()))).andExpect(status().isNotFound());
         mockMvc.perform(as(caregiver, put("/doses/" + doseA.getId() + "/confirm"))).andExpect(status().isNotFound());
+    }
+
+    // El vínculo sigue activo, pero el paciente está dado de baja (user.deleted_at no nulo).
+    // El stub específico gana sobre el any() global solo para ese id: el cuidador sigue vigente.
+    @Test
+    void aCaregiverGets403OnTheUserListingsOfAPatientWhoWasDeactivated() throws Exception {
+        // control: con el paciente activo, las mismas rutas responden 200
+        mockMvc.perform(as(caregiver, get("/treatments/user/" + a.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(caregiver, get("/doses/user/" + a.getId()))).andExpect(status().isOk());
+
+        when(userRepository.existsByIdAndDeletedAtIsNull(a.getId())).thenReturn(false);
+
+        mockMvc.perform(as(caregiver, get("/treatments/user/" + a.getId()))).andExpect(status().isForbidden());
+        mockMvc.perform(as(caregiver, get("/doses/user/" + a.getId()))).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void aCaregiverGets404OnTheTreatmentOfAPatientWhoWasDeactivated() throws Exception {
+        // control: con el paciente activo la misma ruta responde 200
+        mockMvc.perform(as(caregiver, get("/treatments/" + treatmentA.getId()))).andExpect(status().isOk());
+
+        when(userRepository.existsByIdAndDeletedAtIsNull(a.getId())).thenReturn(false);
+
+        mockMvc.perform(as(caregiver, get("/treatments/" + treatmentA.getId()))).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void aCaregiverGets404OnTheReminderAndDoseOfAPatientWhoWasDeactivated() throws Exception {
+        // control: con el paciente activo las mismas rutas responden 200
+        mockMvc.perform(as(caregiver, get("/reminders/" + reminderA.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(caregiver, get("/doses/" + doseA.getId()))).andExpect(status().isOk());
+
+        when(userRepository.existsByIdAndDeletedAtIsNull(a.getId())).thenReturn(false);
+
+        mockMvc.perform(as(caregiver, get("/reminders/" + reminderA.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(caregiver, get("/doses/" + doseA.getId()))).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void aCaregiverGets403WhenRegisteringATreatmentForAPatientWhoWasDeactivated() throws Exception {
+        String forA = "{\"user\":{\"id\":\"" + a.getId() + "\"},\"medication\":{\"id\":1},"
+                + "\"dosage\":\"1\",\"frequency\":\"8h\",\"startDate\":\"2026-10-01T08:00:00\",\"completed\":false}";
+        // control: con el paciente activo el alta responde 201
+        mockMvc.perform(as(caregiver, json(post("/treatments/register"), forA))).andExpect(status().isCreated());
+
+        when(userRepository.existsByIdAndDeletedAtIsNull(a.getId())).thenReturn(false);
+
+        mockMvc.perform(as(caregiver, json(post("/treatments/register"), forA))).andExpect(status().isForbidden());
+        // el 403 se debe a la baja: el paciente fue consultado y la alta rechazada no persiste
+        verify(userRepository, Mockito.atLeastOnce()).existsByIdAndDeletedAtIsNull(a.getId());
+        verify(treatmentRepository, Mockito.times(1)).save(any());
     }
 
     // ---------------------------------------------------------------- RN-09: citas
