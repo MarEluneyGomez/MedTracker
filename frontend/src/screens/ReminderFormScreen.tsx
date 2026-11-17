@@ -101,6 +101,8 @@ export default function ReminderFormScreen() {
       // Los 7 días se guardan como "todos los días", para que el backend los
       // reconozca como el mismo horario al controlar duplicados
       daysOfWeek: isSomeDays && days.length < WEEK_DAYS.length ? days : null,
+      intervalDays: null,
+      startDate: null,
       message: buildReminderMessage(treatment.dosage, medication.name),
     };
     try {

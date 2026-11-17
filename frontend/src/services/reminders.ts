@@ -1,10 +1,14 @@
-import type { Reminder, WeekDay } from '../types/api';
-import { toBackendTime, type ReminderTarget, type SyncPlan } from '../utils/reminders';
+import type { Reminder } from '../types/api';
+import {
+  toBackendTime,
+  type ReminderTarget,
+  type Repetition,
+  type SyncPlan,
+} from '../utils/reminders';
 import { apiRequest } from './api';
 
-export type ReminderData = {
+export type ReminderData = Repetition & {
   time: string; // formato "08:30:00"
-  daysOfWeek: WeekDay[] | null; // null = todos los días
   message: string;
 };
 
@@ -21,6 +25,8 @@ export function createReminder(treatmentId: string, data: ReminderData): Promise
     treatment: { id: treatmentId },
     time: data.time,
     daysOfWeek: data.daysOfWeek,
+    intervalDays: data.intervalDays,
+    startDate: data.startDate,
     message: data.message.trim(),
   });
 }
@@ -29,6 +35,8 @@ export function updateReminder(id: string, data: ReminderData): Promise<Reminder
   return apiRequest<Reminder>('PUT', `/reminders/${id}`, {
     time: data.time,
     daysOfWeek: data.daysOfWeek,
+    intervalDays: data.intervalDays,
+    startDate: data.startDate,
     message: data.message.trim(),
   });
 }
@@ -37,8 +45,8 @@ export function deleteReminder(id: string): Promise<void> {
   return apiRequest<void>('DELETE', `/reminders/${id}`);
 }
 
-function toReminderData({ time, daysOfWeek }: ReminderTarget, message: string): ReminderData {
-  return { time: toBackendTime(time), daysOfWeek, message };
+function toReminderData({ time, ...repetition }: ReminderTarget, message: string): ReminderData {
+  return { time: toBackendTime(time), ...repetition, message };
 }
 
 export async function syncReminders(

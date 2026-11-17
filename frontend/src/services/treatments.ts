@@ -33,6 +33,10 @@ export function completeTreatment(id: string): Promise<Treatment> {
   return apiRequest<Treatment>('PUT', `/treatments/${id}/complete`);
 }
 
+export function reopenTreatment(id: string): Promise<Treatment> {
+  return apiRequest<Treatment>('PUT', `/treatments/${id}/reopen`);
+}
+
 // El medicamento no se puede cambiar: para otro medicamento se crea otro tratamiento
 export type TreatmentChanges = Omit<TreatmentData, 'medicationId'>;
 

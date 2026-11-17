@@ -40,17 +40,18 @@ La pestaña Tratamientos del paciente cubre CU-03 (agregar tratamiento) y CU-08 
 - **Lista** (`GET /treatments/user/{userId}`): cada tratamiento muestra el medicamento, la dosis y la frecuencia. Al tocarlo se despliega el detalle (forma de administración, fechas y estado) con las acciones. Se actualiza al volver a la pantalla y deslizando hacia abajo.
 - **Nuevo tratamiento** (`POST /treatments/register`): el medicamento se busca en el catálogo sin distinguir mayúsculas ni tildes; si no existe, se puede agregar indicando cómo se toma (`POST /medications/register`).
 - **Editar** (`PUT /treatments/{id}`): usa el mismo formulario con los datos cargados. El medicamento no se puede cambiar: para otro medicamento se crea otro tratamiento.
-- **Marcar como completado** (`PUT /treatments/{id}/complete`) y **Eliminar** (`DELETE /treatments/{id}`, porque también desactiva sus recordatorios), los dos con confirmación. Completar todavía no se puede deshacer: el backend no tiene forma de reabrir un tratamiento.
+- **Marcar como completado** (`PUT /treatments/{id}/complete`) y **Eliminar** (`DELETE /treatments/{id}`, porque también desactiva sus recordatorios), los dos con confirmación.
+- **Reabrir tratamiento** (`PUT /treatments/{id}/reopen`): aparece en los completados, por si se marcaron por error. El backend genera en el momento las tomas de hoy.
 
 La dosis y la frecuencia se eligen con opciones (cantidad y unidad; "Cada 8 horas", "Cada 1 día", "Varias veces por día" de 2 a 6, u otra a medida) y se guardan como texto con un formato fijo, por ejemplo "2 comprimidos", "Cada 8 horas" o "3 veces por día". Así se pueden volver a leer al editar y calcular los horarios. Las fechas se eligen con un calendario propio (`react-native-calendars`) que sigue la estética de la app; la fecha de fin es opcional y se guarda al final del día, para que el último día también cuente.
 
 ## Horarios (recordatorios)
 
-Cubre CU-04 (configurar recordatorio) y RF-11 (editar o eliminar un recordatorio). En el backend, un recordatorio es una hora del día con días de la semana opcionales: "Cada 8 horas" son tres recordatorios. Para que la frecuencia y los horarios no se contradigan, **la frecuencia decide cómo se cargan**:
+Cubre CU-04 (configurar recordatorio) y RF-11 (editar o eliminar un recordatorio). En el backend, un recordatorio es una hora del día que se repite todos los días, en ciertos días de la semana o cada N días desde una fecha: "Cada 8 horas" son tres recordatorios. Para que la frecuencia y los horarios no se contradigan, **la frecuencia decide cómo se cargan**:
 
-- **Fija** (cada N horas con N que divide 24, cada 1 día, cada 1 semana): se elige solo la primera toma del día (y el día, si es semanal) y la app calcula el resto. Por ejemplo, cada 8 horas desde las 08:00 da 08:00, 16:00 y 00:00.
+- **Fija**: se elige solo la primera toma del día (y el día, si es una vez por semana) y la app calcula el resto. Por ejemplo, cada 8 horas desde las 08:00 da 08:00, 16:00 y 00:00. Incluye cada N horas si N divide 24, y las frecuencias de días enteros: cada 1 día, cada 2 días, cada 48 horas, cada 1 semana, cada 2 semanas... Los intervalos de varios días se cuentan desde la fecha de inicio del tratamiento.
 - **Libre** ("N veces por día"): se elige la hora de cada toma, con una propuesta repartida entre las 08:00 y las 20:00.
-- **A mano** (cada 2 días, cada 48 horas...): esas frecuencias no se repiten igual todas las semanas, así que el modelo del backend no las puede representar. Los horarios se agregan, editan y eliminan uno por uno, con sus días.
+- **A mano** (cada 5 horas, cada 36 horas...): las tomas caen a horas distintas cada día, así que no se calculan automáticamente. Los horarios se agregan, editan y eliminan uno por uno, con sus días.
 
 Los horarios se eligen en el mismo formulario del tratamiento, al crearlo y al editarlo, y también desde la pantalla **Horarios** de cada tratamiento. Ahí se ve si ya está todo guardado y aparece un aviso si los horarios guardados no coinciden con la frecuencia, por ejemplo después de cambiarla. La hora se elige con botones + y − o escribiéndola.
 

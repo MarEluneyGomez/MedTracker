@@ -24,10 +24,11 @@ import { deleteReminder, getRemindersByTreatment, syncReminders } from '../servi
 import { getTreatment } from '../services/treatments';
 import { colors } from '../theme/colors';
 import type { Medication, Reminder, Treatment } from '../types/api';
+import { fromBackendDate, toDayString } from '../utils/dates';
 import { parseFrequency } from '../utils/frequency';
 import {
   buildReminderMessage,
-  formatDays,
+  formatRepetition,
   formatTime,
   initialSchedule,
   isPlanEmpty,
@@ -91,7 +92,8 @@ export default function RemindersScreen() {
       return;
     }
     const frequency = parseFrequency(treatment.frequency);
-    const targets = scheduleTargets(frequency, schedule);
+    const startDay = toDayString(fromBackendDate(treatment.startDate));
+    const targets = scheduleTargets(frequency, schedule, startDay);
     const scheduleError = validateSchedule(frequency, schedule);
     if (!targets || scheduleError) {
       setError(scheduleError);
@@ -158,13 +160,14 @@ export default function RemindersScreen() {
   const frequency = parseFrequency(treatment.frequency);
   const mode = scheduleModeOf(frequency);
   const message = buildReminderMessage(treatment.dosage, medication.name);
-  const targets = scheduleTargets(frequency, schedule);
+  const startDay = toDayString(fromBackendDate(treatment.startDate));
+  const targets = scheduleTargets(frequency, schedule, startDay);
   const isSaved = targets !== null && isPlanEmpty(planSync(reminders, targets, message));
   const isOutOfSync =
     mode !== 'manual' &&
     frequency !== null &&
     reminders.length > 0 &&
-    !matchesFrequency(reminders, frequency);
+    !matchesFrequency(reminders, frequency, startDay);
 
   return (
     <Screen hasHeader>
@@ -193,7 +196,12 @@ export default function RemindersScreen() {
 
         {mode !== 'manual' ? (
           <>
-            <SchedulePicker frequency={frequency} value={schedule} onChange={setSchedule} />
+            <SchedulePicker
+              frequency={frequency}
+              startDay={startDay}
+              value={schedule}
+              onChange={setSchedule}
+            />
             <ScheduleSaveBar
               isSaved={isSaved}
               isNew={reminders.length === 0}
@@ -219,7 +227,7 @@ export default function RemindersScreen() {
                   <Ionicons name="alarm-outline" size={28} color={colors.primary} />
                   <View style={styles.cardInfo}>
                     <Text style={styles.time}>{formatTime(parseTime(reminder.time))}</Text>
-                    <Text style={styles.days}>{formatDays(reminder.daysOfWeek)}</Text>
+                    <Text style={styles.days}>{formatRepetition(reminder)}</Text>
                   </View>
                   <View style={styles.action}>
                     <Ionicons name="create-outline" size={22} color={colors.primary} />

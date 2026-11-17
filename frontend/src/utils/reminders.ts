@@ -1,4 +1,5 @@
 import type { Reminder, WeekDay } from '../types/api';
+import { formatDate } from './dates';
 import type { Frequency, IntervalFrequency } from './frequency';
 
 export type TimeOfDay = {
@@ -6,10 +7,15 @@ export type TimeOfDay = {
   minutes: number;
 };
 
-// Un horario tal como debería quedar guardado
-export type ReminderTarget = {
-  time: TimeOfDay;
+// Todo en null = todos los días
+export type Repetition = {
   daysOfWeek: WeekDay[] | null;
+  intervalDays: number | null;
+  startDate: string | null;
+};
+
+export type ReminderTarget = Repetition & {
+  time: TimeOfDay;
 };
 
 export type SyncPlan = {
@@ -18,21 +24,25 @@ export type SyncPlan = {
   deletes: string[];
 };
 
-// Lo que el usuario elige en el selector de horarios. Se guardan los datos de
-// los dos tipos de carga, así cambiar de frecuencia no pierde lo elegido.
+// Guarda lo elegido para los dos tipos de carga, así cambiar de frecuencia no lo pierde
 export type Schedule = {
   firstTime: TimeOfDay;
   weekDay: WeekDay | null;
   freeTimes: TimeOfDay[];
 };
 
-// fixed: se calculan desde la primera toma; free: N horarios elegidos por el
-// usuario; manual: se cargan uno por uno porque la frecuencia no se puede
-// programar con recordatorios que se repiten cada semana
 export type ScheduleMode = 'fixed' | 'free' | 'manual';
 
+type FixedPattern = {
+  count: number;
+  stepHours: number;
+  intervalDays: number | null;
+};
+
+const EVERY_DAY: Repetition = { daysOfWeek: null, intervalDays: null, startDate: null };
 const DEFAULT_FIRST_TIME: TimeOfDay = { hours: 8, minutes: 0 };
 const HOURS_PER_DAY = 24;
+const DAYS_PER_WEEK = 7;
 const MINUTES_PER_HOUR = 60;
 const MINUTES_PER_DAY = HOURS_PER_DAY * MINUTES_PER_HOUR;
 const DAY_START_HOUR = 5;
@@ -77,6 +87,15 @@ export function formatDays(days: WeekDay[] | null): string {
     .join(', ');
 }
 
+export function formatRepetition({ daysOfWeek, intervalDays, startDate }: Repetition): string {
+  if (!intervalDays) {
+    return formatDays(daysOfWeek);
+  }
+  return startDate
+    ? `Cada ${intervalDays} días desde el ${formatDate(startDate)}`
+    : `Cada ${intervalDays} días`;
+}
+
 export function buildReminderMessage(dosage: string, medicationName: string): string {
   return `Tomar ${dosage} de ${medicationName}`;
 }
@@ -85,8 +104,10 @@ export function sortByTime(reminders: Reminder[]): Reminder[] {
   return [...reminders].sort((a, b) => a.time.localeCompare(b.time));
 }
 
+// Una vez por semana se programa por día de la semana, que es más fácil de
+// entender que "cada 7 días desde el ..."
 export function isWeekly(frequency: Frequency): boolean {
-  return frequency.kind === 'interval' && frequency.unit === 'weeks';
+  return frequency.kind === 'interval' && frequency.unit === 'weeks' && frequency.every === 1;
 }
 
 export function hasRepeatedTimes(times: TimeOfDay[]): boolean {
@@ -97,7 +118,6 @@ function toMinutes({ hours, minutes }: TimeOfDay): number {
   return hours * MINUTES_PER_HOUR + minutes;
 }
 
-// Da la vuelta a la medianoche: 24:00 pasa a ser 00:00
 function fromMinutes(total: number): TimeOfDay {
   const minutesOfDay = ((total % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
   return {
@@ -106,29 +126,39 @@ function fromMinutes(total: number): TimeOfDay {
   };
 }
 
-// Solo se pueden programar los intervalos que se repiten igual todas las
-// semanas: cada N horas con N que divide 24, cada 1 día o cada 1 semana
-function dosesPerDay({ every, unit }: IntervalFrequency): number | null {
-  if (unit === 'hours') {
-    return HOURS_PER_DAY % every === 0 ? HOURS_PER_DAY / every : null;
+// El backend repite un horario todos los días, en días de la semana o cada N
+// días. Alcanza para cada N horas si N divide 24 o es múltiplo de 24, y para
+// cualquier cantidad de días o semanas; el resto se programa a mano.
+function fixedPattern(frequency: IntervalFrequency): FixedPattern | null {
+  const { every, unit } = frequency;
+  if (unit === 'hours' && HOURS_PER_DAY % every === 0) {
+    return { count: HOURS_PER_DAY / every, stepHours: every, intervalDays: null };
   }
-  return every === 1 ? 1 : null;
+  const days = { hours: every / HOURS_PER_DAY, days: every, weeks: every * DAYS_PER_WEEK }[unit];
+  if (!Number.isInteger(days)) {
+    return null;
+  }
+  const usesInterval = days > 1 && !isWeekly(frequency);
+  return { count: 1, stepHours: 0, intervalDays: usesInterval ? days : null };
 }
 
 export function scheduleModeOf(frequency: Frequency | null): ScheduleMode {
   if (frequency?.kind === 'timesPerDay') {
     return 'free';
   }
-  if (frequency && dosesPerDay(frequency) !== null) {
+  if (frequency && fixedPattern(frequency) !== null) {
     return 'fixed';
   }
   return 'manual';
 }
 
 export function fixedTimes(frequency: IntervalFrequency, first: TimeOfDay): TimeOfDay[] {
-  const count = dosesPerDay(frequency) ?? 0;
-  const stepMinutes = frequency.unit === 'hours' ? frequency.every * MINUTES_PER_HOUR : 0;
-  return Array.from({ length: count }, (_, index) =>
+  const pattern = fixedPattern(frequency);
+  if (!pattern) {
+    return [];
+  }
+  const stepMinutes = pattern.stepHours * MINUTES_PER_HOUR;
+  return Array.from({ length: pattern.count }, (_, index) =>
     fromMinutes(toMinutes(first) + index * stepMinutes),
   );
 }
@@ -163,25 +193,29 @@ export function initialSchedule(reminders: Reminder[]): Schedule {
   };
 }
 
-// Si la cantidad de tomas no coincide (todavía no hay horarios o cambió la
-// frecuencia), se usa la propuesta repartida en el día
 export function freeTimesFor(schedule: Schedule, timesPerDay: number): TimeOfDay[] {
   return schedule.freeTimes.length === timesPerDay ? schedule.freeTimes : spreadTimes(timesPerDay);
 }
 
-// null cuando la frecuencia se programa a mano
+// Los intervalos se cuentan desde la fecha de inicio del tratamiento
 export function scheduleTargets(
   frequency: Frequency | null,
   schedule: Schedule,
+  startDay: string | null,
 ): ReminderTarget[] | null {
   if (!frequency || scheduleModeOf(frequency) === 'manual') {
     return null;
   }
   if (frequency.kind === 'timesPerDay') {
-    return freeTimesFor(schedule, frequency.times).map((time) => ({ time, daysOfWeek: null }));
+    return freeTimesFor(schedule, frequency.times).map((time) => ({ time, ...EVERY_DAY }));
   }
-  const daysOfWeek = isWeekly(frequency) && schedule.weekDay ? [schedule.weekDay] : null;
-  return fixedTimes(frequency, schedule.firstTime).map((time) => ({ time, daysOfWeek }));
+  const intervalDays = fixedPattern(frequency)?.intervalDays ?? null;
+  const repetition: Repetition = {
+    daysOfWeek: isWeekly(frequency) && schedule.weekDay ? [schedule.weekDay] : null,
+    intervalDays,
+    startDate: intervalDays ? startDay : null,
+  };
+  return fixedTimes(frequency, schedule.firstTime).map((time) => ({ time, ...repetition }));
 }
 
 export function validateSchedule(frequency: Frequency | null, schedule: Schedule): string | null {
@@ -197,12 +231,17 @@ export function validateSchedule(frequency: Frequency | null, schedule: Schedule
   return null;
 }
 
-function targetKey({ time, daysOfWeek }: ReminderTarget): string {
-  return `${formatTime(time)} ${daysOfWeek?.join(',') ?? 'ALL'}`;
+function targetKey({ time, daysOfWeek, intervalDays, startDate }: ReminderTarget): string {
+  return [formatTime(time), daysOfWeek?.join(',') ?? 'ALL', intervalDays, startDate].join(' ');
 }
 
 function toTarget(reminder: Reminder): ReminderTarget {
-  return { time: parseTime(reminder.time), daysOfWeek: reminder.daysOfWeek ?? null };
+  return {
+    time: parseTime(reminder.time),
+    daysOfWeek: reminder.daysOfWeek ?? null,
+    intervalDays: reminder.intervalDays ?? null,
+    startDate: reminder.startDate ?? null,
+  };
 }
 
 function sameTargets(a: ReminderTarget[], b: ReminderTarget[]): boolean {
@@ -210,24 +249,20 @@ function sameTargets(a: ReminderTarget[], b: ReminderTarget[]): boolean {
   return a.length === b.length && b.every((target) => keys.has(targetKey(target)));
 }
 
-// Si los horarios guardados son los que corresponden a la frecuencia. En las
-// fijas el horario es un ciclo, así que alcanza con recalcularlo desde
-// cualquiera de sus tomas: se usa la primera del día.
-export function matchesFrequency(reminders: Reminder[], frequency: Frequency): boolean {
-  if (reminders.length === 0) {
-    return false;
-  }
-  if (frequency.kind === 'timesPerDay') {
-    return reminders.length === frequency.times && reminders.every((r) => !r.daysOfWeek);
-  }
-  const days = reminders[0].daysOfWeek ?? null;
-  const hasValidDays = isWeekly(frequency) ? days?.length === 1 : days === null;
-  if (!hasValidDays) {
-    return false;
-  }
-  const first = firstOfDay(reminders.map((reminder) => parseTime(reminder.time)));
-  const expected = fixedTimes(frequency, first).map((time) => ({ time, daysOfWeek: days }));
-  return sameTargets(reminders.map(toTarget), expected);
+// En las fijas alcanza con recalcular desde la primera toma del día, porque el horario es un ciclo
+export function matchesFrequency(
+  reminders: Reminder[],
+  frequency: Frequency,
+  startDay: string,
+): boolean {
+  const schedule = initialSchedule(reminders);
+  const expected = scheduleTargets(frequency, schedule, startDay);
+  return (
+    reminders.length > 0 &&
+    expected !== null &&
+    validateSchedule(frequency, schedule) === null &&
+    sameTargets(reminders.map(toTarget), expected)
+  );
 }
 
 // Los horarios que no cambian se conservan. El resto se reutiliza editándolo,

@@ -38,7 +38,7 @@ import {
 import { colors } from '../theme/colors';
 import { fieldError } from '../theme/typography';
 import type { Medication, Reminder } from '../types/api';
-import { fromBackendDate, toEndOfDay, toStartOfDay } from '../utils/dates';
+import { fromBackendDate, toDayString, toEndOfDay, toStartOfDay } from '../utils/dates';
 import { formatDosage, parseDosage, type Dosage } from '../utils/dosage';
 import { formatFrequency, parseFrequency, type Frequency } from '../utils/frequency';
 import {
@@ -83,6 +83,7 @@ export default function TreatmentFormScreen() {
   const [loading, setLoading] = useState(isEditing);
   const [loadError, setLoadError] = useState<string | null>(null);
   const scrollRef = useFlashScrollIndicators<ScrollViewInstance>(!loading);
+  const startDay = startDate ? toDayString(startDate) : null;
 
   useEffect(() => {
     getMedications()
@@ -190,7 +191,7 @@ export default function TreatmentFormScreen() {
       await saveSchedule(savedId, changes.dosage, medication.name);
       // Un tratamiento nuevo que se programa a mano sigue en Horarios, para que
       // no quede sin recordatorios
-      if (!isEditing && scheduleTargets(frequency, schedule) === null) {
+      if (!isEditing && scheduleTargets(frequency, schedule, startDay) === null) {
         navigation.replace('Reminders', { treatmentId: savedId });
       } else {
         navigation.goBack();
@@ -213,7 +214,7 @@ export default function TreatmentFormScreen() {
   }
 
   async function saveSchedule(savedId: string, savedDosage: string, medicationName: string) {
-    const targets = scheduleTargets(frequency, schedule);
+    const targets = scheduleTargets(frequency, schedule, startDay);
     if (!targets) {
       return;
     }
@@ -263,6 +264,7 @@ export default function TreatmentFormScreen() {
         <FrequencyPicker value={frequency} onChange={setFrequency} error={fieldErrors.frequency} />
         <SchedulePicker
           frequency={frequency}
+          startDay={startDay}
           value={schedule}
           onChange={setSchedule}
           error={fieldErrors.schedule}

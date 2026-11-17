@@ -5,7 +5,7 @@ import { fieldError, fieldLabel } from '../theme/typography';
 import type { Frequency, IntervalFrequency } from '../utils/frequency';
 import {
   WEEK_DAYS,
-  formatDays,
+  formatRepetition,
   formatTime,
   freeTimesFor,
   isWeekly,
@@ -19,14 +19,20 @@ import TimeField from './TimeField';
 
 type SchedulePickerProps = {
   frequency: Frequency | null;
+  startDay: string | null;
   value: Schedule;
   onChange: (schedule: Schedule) => void;
   error?: string;
 };
 
-// Muestra los campos de horario que corresponden a la frecuencia. No guarda
-// nada: cada pantalla decide cuándo guardar.
-export default function SchedulePicker({ frequency, value, onChange, error }: SchedulePickerProps) {
+// No guarda: cada pantalla decide cuándo guardar
+export default function SchedulePicker({
+  frequency,
+  startDay,
+  value,
+  onChange,
+  error,
+}: SchedulePickerProps) {
   if (!frequency) {
     return null;
   }
@@ -43,7 +49,12 @@ export default function SchedulePicker({ frequency, value, onChange, error }: Sc
       {frequency.kind === 'timesPerDay' ? (
         <FreeTimesFields timesPerDay={frequency.times} value={value} onChange={onChange} />
       ) : (
-        <FixedTimesFields frequency={frequency} value={value} onChange={onChange} />
+        <FixedTimesFields
+          frequency={frequency}
+          startDay={startDay}
+          value={value}
+          onChange={onChange}
+        />
       )}
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
@@ -82,13 +93,13 @@ function FreeTimesFields({ timesPerDay, value, onChange }: FreeTimesFieldsProps)
 
 type FixedTimesFieldsProps = {
   frequency: IntervalFrequency;
+  startDay: string | null;
   value: Schedule;
   onChange: (schedule: Schedule) => void;
 };
-
-function FixedTimesFields({ frequency, value, onChange }: FixedTimesFieldsProps) {
+function FixedTimesFields({ frequency, startDay, value, onChange }: FixedTimesFieldsProps) {
   const weekly = isWeekly(frequency);
-  const targets = scheduleTargets(frequency, value) ?? [];
+  const targets = scheduleTargets(frequency, value, startDay) ?? [];
   const weekDayLabel = WEEK_DAYS.find(({ day }) => day === value.weekDay)?.label ?? null;
 
   function handleWeekDay(label: string) {
@@ -116,12 +127,12 @@ function FixedTimesFields({ frequency, value, onChange }: FixedTimesFieldsProps)
       <View>
         <Text style={styles.label}>Horarios</Text>
         <View style={styles.times}>
-          {targets.map(({ time, daysOfWeek }) => (
-            <View key={formatTime(time)} style={styles.timeRow}>
+          {targets.map((target) => (
+            <View key={formatTime(target.time)} style={styles.timeRow}>
               <Ionicons name="alarm-outline" size={24} color={colors.primary} />
-              <Text style={styles.time}>{formatTime(time)}</Text>
+              <Text style={styles.time}>{formatTime(target.time)}</Text>
               <Text style={styles.days}>
-                {weekly && !value.weekDay ? '' : formatDays(daysOfWeek)}
+                {weekly && !value.weekDay ? '' : formatRepetition(target)}
               </Text>
             </View>
           ))}

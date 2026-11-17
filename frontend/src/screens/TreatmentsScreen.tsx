@@ -14,7 +14,13 @@ import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import { ApiError } from '../services/api';
 import { getMedications } from '../services/medications';
-import { completeTreatment, deleteTreatment, getTreatmentsByUser } from '../services/treatments';
+import {
+  completeTreatment,
+  deleteTreatment,
+  getTreatmentsByUser,
+  reopenTreatment,
+} from '../services/treatments';
+
 import { colors } from '../theme/colors';
 import type { Medication, Treatment } from '../types/api';
 import { formatDate } from '../utils/dates';
@@ -109,11 +115,10 @@ export default function TreatmentsScreen() {
     );
   }
 
-  // Provisorio: el backend todavía no permite reabrir un tratamiento completado
   function confirmComplete(treatment: Treatment, medicationName: string) {
     Alert.alert(
       'Marcar como completado',
-      `¿Terminaste el tratamiento de ${medicationName}? Vas a dejar de recibir sus recordatorios y no se puede deshacer.`,
+      `¿Terminaste el tratamiento de ${medicationName}? Vas a dejar de recibir sus recordatorios. Si te equivocaste, lo podés reabrir.`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -215,7 +220,13 @@ export default function TreatmentsScreen() {
                           }
                         />
                       </>
-                    ) : null}
+                    ) : (
+                      <AppButton
+                        title="Reabrir tratamiento"
+                        loading={busyId === item.id}
+                        onPress={() => runAction(item.id, () => reopenTreatment(item.id))}
+                      />
+                    )}
 
                     <AppButton
                       title="Eliminar"
