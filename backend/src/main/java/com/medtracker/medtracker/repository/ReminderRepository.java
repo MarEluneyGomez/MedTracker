@@ -24,8 +24,9 @@ public interface ReminderRepository extends JpaRepository<Reminder, UUID> {
 
     // Recordatorios vigentes, de tratamientos vigentes, de los usuarios indicados
     @Query("""
-            select r from Reminder r join r.treatment t
-            where t.user.id in :ownerIds and r.deletedAt is null and t.deletedAt is null
+            select r from Reminder r join r.treatment t join t.user u
+            where u.id in :ownerIds and r.deletedAt is null and t.deletedAt is null
+              and u.deletedAt is null
             """)
     List<Reminder> findByOwners(@Param("ownerIds") Collection<UUID> ownerIds);
 
@@ -34,12 +35,13 @@ public interface ReminderRepository extends JpaRepository<Reminder, UUID> {
 
     // Recordatorios que pueden generar dosis en un día: activos, sin borrar y
     // con tratamiento vigente (no borrado, no completado y dentro de su rango
-    // de fechas). El filtro por días de la semana se hace en el service porque
-    // days_of_week es un array de Postgres.
+    // de fechas) de un usuario vigente (sin baja). El filtro por días de la
+    // semana se hace en el service porque days_of_week es un array de Postgres.
     @Query("""
-            select r from Reminder r join fetch r.treatment t
+            select r from Reminder r join fetch r.treatment t join t.user u
             where r.active = true and r.deletedAt is null
               and t.deletedAt is null and t.completed = false
+              and u.deletedAt is null
               and t.startDate < :endOfDay
               and (t.endDate is null or t.endDate >= :startOfDay)
             """)

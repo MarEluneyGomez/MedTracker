@@ -111,4 +111,11 @@ public class DoseController {
                                         @PathVariable UUID id) {
         return ResponseEntity.ok(new DoseDTO(doseService.changeStatus(principal, id, Dose.DoseStatus.SKIPPED)));
     }
+
+    // Deshacer una toma confirmada u omitida por error: vuelve a PENDING
+    @PutMapping("/{id}/undo")
+    public ResponseEntity<DoseDTO> undo(@AuthenticationPrincipal AuthenticatedUser principal,
+                                        @PathVariable UUID id) {
+        return ResponseEntity.ok(new DoseDTO(doseService.undo(principal, id)));
+    }
 }

@@ -1,5 +1,6 @@
 package com.medtracker.medtracker.security;
 
+import com.medtracker.medtracker.DoseRepositoryStubs;
 import com.medtracker.medtracker.config.SecurityConfig;
 import com.medtracker.medtracker.controller.AuthController;
 import com.medtracker.medtracker.controller.CaregiverLinkController;
@@ -39,6 +40,7 @@ import com.medtracker.medtracker.service.MedicalHistoryService;
 import com.medtracker.medtracker.service.NotificationService;
 import com.medtracker.medtracker.service.ReminderService;
 import com.medtracker.medtracker.service.TreatmentService;
+import com.medtracker.medtracker.service.RefreshTokenService;
 import com.medtracker.medtracker.service.UserService;
 import jakarta.servlet.Filter;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,9 +65,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -160,6 +164,11 @@ class AuthorizationIntegrationTest {
         LoginAttemptService loginAttemptService() {
             return Mockito.mock(LoginAttemptService.class);
         }
+
+        @Bean
+        RefreshTokenService refreshTokenService() {
+            return Mockito.mock(RefreshTokenService.class);
+        }
     }
 
     @Autowired
@@ -229,6 +238,10 @@ class AuthorizationIntegrationTest {
     void setUp() {
         Mockito.reset(userRepository, treatmentRepository, medicationRepository, reminderRepository, doseRepository,
                 appointmentRepository, caregiverLinkRepository, medicalHistoryRepository, notificationRepository);
+        // Todos los usuarios figuran vigentes: lo usa el filtro JWT (el usuario del token debe
+        // seguir vigente) y también AccessPolicy (el paciente de un cuidador no debe estar dado
+        // de baja). Los tests de baja lo pisan solo para el id del paciente.
+        when(userRepository.existsByIdAndDeletedAtIsNull(any())).thenReturn(true);
         when(medicationRepository.findById(1)).thenReturn(Optional.of(medication()));
         mockMvc =MockMvcBuilders.webAppContextSetup(context)
                 .addFilters((Filter) context.getBean("springSecurityFilterChain"))
@@ -256,15 +269,23 @@ class AuthorizationIntegrationTest {
         when(doseRepository.findByOwners(anyCollection())).thenAnswer(inv ->
                 ((java.util.Collection<UUID>) inv.getArgument(0)).contains(a.getId()) ? List.of(doseA) : List.of());
         when(doseRepository.save(any(Dose.class))).thenAnswer(inv -> inv.getArgument(0));
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, doseA);
+        // Reabrir es un UPDATE condicional: aplica solo si el tratamiento sigue completado
+        when(treatmentRepository.findById(treatmentA.getId())).thenReturn(Optional.of(treatmentA));
+        when(treatmentRepository.reopenIfCompleted(eq(treatmentA.getId()), any())).thenAnswer(inv -> {
+            if (!treatmentA.isCompleted()) {
+                return 0;
+            }
+            treatmentA.setCompleted(false);
+            return 1;
+        });
         when(appointmentRepository.findByIdAndDeletedAtIsNull(appointment.getId())).thenReturn(Optional.of(appointment));
         when(appointmentRepository.findByParticipant(any())).thenAnswer(inv -> {
             UUID id = inv.getArgument(0);
             return id.equals(a.getId()) || id.equals(doctor.getId()) ? List.of(appointment) : List.of();
         });
         when(appointmentRepository.save(any(MedicalAppointment.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(appointmentRepository.existsByPatientIdAndDoctorIdAndDeletedAtIsNull(a.getId(), doctor.getId()))
-                .thenReturn(true);
-        // El médico asignado tiene una cita vigente y no cancelada con A (acceso al historial)
+        // El médico asignado tiene una cita vigente y no cancelada con A (acceso al perfil reducido y al historial)
         when(appointmentRepository.existsActiveByDoctorAndPatient(doctor.getId(), a.getId())).thenReturn(true);
         when(appointmentRepository.findActivePatientIdsByDoctor(doctor.getId())).thenReturn(List.of(a.getId()));
         when(medicalHistoryRepository.findByIdAndDeletedAtIsNull(historyA.getId())).thenReturn(Optional.of(historyA));
@@ -396,7 +417,7 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(b, put("/doses/" + doseA.getId() + "/confirm"))).andExpect(status().isNotFound());
         mockMvc.perform(as(b, put("/doses/" + doseA.getId() + "/skip"))).andExpect(status().isNotFound());
         mockMvc.perform(as(b, get("/doses/" + doseA.getId()))).andExpect(status().isNotFound());
-        verify(doseRepository, never()).save(any());
+        verify(doseRepository, never()).updateStatusIfCurrent(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -416,7 +437,88 @@ class AuthorizationIntegrationTest {
     @Test
     void theLinkedCaregiverCanConfirmTheDoseOfTheirPatient() throws Exception {
         mockMvc.perform(as(caregiver, put("/doses/" + doseA.getId() + "/confirm"))).andExpect(status().isOk());
-        verify(doseRepository).save(any(Dose.class));
+        verify(doseRepository).updateStatusIfCurrent(eq(doseA.getId()), any(), eq(Dose.DoseStatus.CONFIRMED),
+                any(), any());
+    }
+
+    // ------------------------------------------------ reabrir tratamiento y deshacer toma
+
+    @Test
+    void theOwnerAndTheLinkedCaregiverCanReopenACompletedTreatment() throws Exception {
+        treatmentA.setCompleted(true);
+        mockMvc.perform(as(a, put("/treatments/" + treatmentA.getId() + "/reopen")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.completed").value(false));
+
+        treatmentA.setCompleted(true);
+        mockMvc.perform(as(caregiver, put("/treatments/" + treatmentA.getId() + "/reopen")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.completed").value(false));
+    }
+
+    @Test
+    void reopeningATreatmentThatIsNotCompletedIs409() throws Exception {
+        mockMvc.perform(as(a, put("/treatments/" + treatmentA.getId() + "/reopen")))
+                .andExpect(status().isConflict());
+        verify(treatmentRepository, never()).reopenIfCompleted(any(), any());
+    }
+
+    @Test
+    void reopeningTwiceIs409TheSecondTime() throws Exception {
+        treatmentA.setCompleted(true);
+        mockMvc.perform(as(a, put("/treatments/" + treatmentA.getId() + "/reopen"))).andExpect(status().isOk());
+        mockMvc.perform(as(a, put("/treatments/" + treatmentA.getId() + "/reopen"))).andExpect(status().isConflict());
+    }
+
+    @Test
+    void strangersDoctorsAndUnlinkedCaregiversCannotReopenAndGet404() throws Exception {
+        treatmentA.setCompleted(true);
+        mockMvc.perform(as(b, put("/treatments/" + treatmentA.getId() + "/reopen"))).andExpect(status().isNotFound());
+        mockMvc.perform(as(doctor, put("/treatments/" + treatmentA.getId() + "/reopen")))
+                .andExpect(status().isNotFound());
+        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), a.getId()))
+                .thenReturn(false);
+        mockMvc.perform(as(caregiver, put("/treatments/" + treatmentA.getId() + "/reopen")))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(put("/treatments/" + treatmentA.getId() + "/reopen")).andExpect(status().isUnauthorized());
+        verify(treatmentRepository, never()).reopenIfCompleted(any(), any());
+    }
+
+    @Test
+    void theOwnerAndTheLinkedCaregiverCanUndoADose() throws Exception {
+        doseA.setScheduledAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
+        mockMvc.perform(as(a, put("/doses/" + doseA.getId() + "/confirm"))).andExpect(status().isOk());
+        mockMvc.perform(as(a, put("/doses/" + doseA.getId() + "/undo")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.confirmedAt").doesNotExist());
+
+        mockMvc.perform(as(a, put("/doses/" + doseA.getId() + "/skip"))).andExpect(status().isOk());
+        mockMvc.perform(as(caregiver, put("/doses/" + doseA.getId() + "/undo")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PENDING"));
+    }
+
+    @Test
+    void undoingAPendingOrOutOfWindowDoseIs409() throws Exception {
+        mockMvc.perform(as(a, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isConflict());
+
+        doseA.setStatus(Dose.DoseStatus.CONFIRMED); // programada el 2026-10-13: ya fuera de ventana
+        mockMvc.perform(as(a, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isConflict());
+        verify(doseRepository, never()).updateStatusIfCurrent(any(), any(), eq(Dose.DoseStatus.PENDING), any(), any());
+    }
+
+    @Test
+    void strangersDoctorsAndUnlinkedCaregiversCannotUndoADoseAndGet404() throws Exception {
+        doseA.setStatus(Dose.DoseStatus.CONFIRMED);
+        doseA.setScheduledAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
+        mockMvc.perform(as(b, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isNotFound());
+        mockMvc.perform(as(doctor, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isNotFound());
+        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), a.getId()))
+                .thenReturn(false);
+        mockMvc.perform(as(caregiver, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isNotFound());
+        mockMvc.perform(put("/doses/" + doseA.getId() + "/undo")).andExpect(status().isUnauthorized());
+        verify(doseRepository, never()).updateStatusIfCurrent(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -460,6 +562,57 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(caregiver, get("/treatments/" + treatmentA.getId()))).andExpect(status().isNotFound());
         mockMvc.perform(as(caregiver, get("/reminders/" + reminderA.getId()))).andExpect(status().isNotFound());
         mockMvc.perform(as(caregiver, put("/doses/" + doseA.getId() + "/confirm"))).andExpect(status().isNotFound());
+    }
+
+    // El vínculo sigue activo, pero el paciente está dado de baja (user.deleted_at no nulo).
+    // El stub específico gana sobre el any() global solo para ese id: el cuidador sigue vigente.
+    @Test
+    void aCaregiverGets403OnTheUserListingsOfAPatientWhoWasDeactivated() throws Exception {
+        // control: con el paciente activo, las mismas rutas responden 200
+        mockMvc.perform(as(caregiver, get("/treatments/user/" + a.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(caregiver, get("/doses/user/" + a.getId()))).andExpect(status().isOk());
+
+        when(userRepository.existsByIdAndDeletedAtIsNull(a.getId())).thenReturn(false);
+
+        mockMvc.perform(as(caregiver, get("/treatments/user/" + a.getId()))).andExpect(status().isForbidden());
+        mockMvc.perform(as(caregiver, get("/doses/user/" + a.getId()))).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void aCaregiverGets404OnTheTreatmentOfAPatientWhoWasDeactivated() throws Exception {
+        // control: con el paciente activo la misma ruta responde 200
+        mockMvc.perform(as(caregiver, get("/treatments/" + treatmentA.getId()))).andExpect(status().isOk());
+
+        when(userRepository.existsByIdAndDeletedAtIsNull(a.getId())).thenReturn(false);
+
+        mockMvc.perform(as(caregiver, get("/treatments/" + treatmentA.getId()))).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void aCaregiverGets404OnTheReminderAndDoseOfAPatientWhoWasDeactivated() throws Exception {
+        // control: con el paciente activo las mismas rutas responden 200
+        mockMvc.perform(as(caregiver, get("/reminders/" + reminderA.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(caregiver, get("/doses/" + doseA.getId()))).andExpect(status().isOk());
+
+        when(userRepository.existsByIdAndDeletedAtIsNull(a.getId())).thenReturn(false);
+
+        mockMvc.perform(as(caregiver, get("/reminders/" + reminderA.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(caregiver, get("/doses/" + doseA.getId()))).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void aCaregiverGets403WhenRegisteringATreatmentForAPatientWhoWasDeactivated() throws Exception {
+        String forA = "{\"user\":{\"id\":\"" + a.getId() + "\"},\"medication\":{\"id\":1},"
+                + "\"dosage\":\"1\",\"frequency\":\"8h\",\"startDate\":\"2026-10-01T08:00:00\",\"completed\":false}";
+        // control: con el paciente activo el alta responde 201
+        mockMvc.perform(as(caregiver, json(post("/treatments/register"), forA))).andExpect(status().isCreated());
+
+        when(userRepository.existsByIdAndDeletedAtIsNull(a.getId())).thenReturn(false);
+
+        mockMvc.perform(as(caregiver, json(post("/treatments/register"), forA))).andExpect(status().isForbidden());
+        // el 403 se debe a la baja: el paciente fue consultado y la alta rechazada no persiste
+        verify(userRepository, Mockito.atLeastOnce()).existsByIdAndDeletedAtIsNull(a.getId());
+        verify(treatmentRepository, Mockito.times(1)).save(any());
     }
 
     // ---------------------------------------------------------------- RN-09: citas
@@ -743,20 +896,63 @@ class AuthorizationIntegrationTest {
     }
 
     @Test
-    void aDoctorWhoseOnlyAppointmentIsCancelledHasNoHistoryAccessButStillSeesTheReducedProfile() throws Exception {
-        // la cita existe y no está borrada (la regla de /users/{id} la cuenta), pero está CANCELLED
-        when(appointmentRepository.existsByPatientIdAndDoctorIdAndDeletedAtIsNull(a.getId(), otherDoctor.getId()))
-                .thenReturn(true);
-
+    void aDoctorWhoseOnlyAppointmentIsCancelledHasNoHistoryAccessAndNoLongerSeesTheProfile() throws Exception {
+        // la única cita está CANCELLED: existsActiveByDoctorAndPatient (que excluye canceladas y
+        // eliminadas) responde false, que es el valor por defecto del mock para este médico
         mockMvc.perform(as(otherDoctor, get("/medical-histories/" + historyA.getId()))).andExpect(status().isNotFound());
         mockMvc.perform(as(otherDoctor, get("/medical-histories/patient/" + a.getId()))).andExpect(status().isForbidden());
         mockMvc.perform(as(otherDoctor, json(post("/medical-histories/register"), historyBody(a, "\"Falso\""))))
                 .andExpect(status().isForbidden());
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isNotFound());
+        verify(medicalHistoryRepository, never()).save(any());
+    }
+
+    @Test
+    void aCancelledAppointmentNoLongerOpensTheCounterpartsProfileNorTheListingsByUser() throws Exception {
+        // con una cita vigente y no cancelada entre otherDoctor y A, el perfil y los listados se abren
+        when(appointmentRepository.existsActiveByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(true);
+
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(a, get("/users/" + otherDoctor.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(otherDoctor, get("/medical-appointments/patient/" + a.getId())))
+                .andExpect(status().isOk());
+        mockMvc.perform(as(a, get("/medical-appointments/doctor/" + otherDoctor.getId())))
+                .andExpect(status().isOk());
+
+        // la cita pasa a CANCELLED: la consulta deja de encontrarla y se cierran los cuatro accesos
+        when(appointmentRepository.existsActiveByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(false);
+
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(a, get("/users/" + otherDoctor.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(otherDoctor, get("/medical-appointments/patient/" + a.getId())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(as(a, get("/medical-appointments/doctor/" + otherDoctor.getId())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void registeringANewAppointmentCreatesItAndWithItSimulatedAsActiveTheReducedProfileIsVisibleAgain() throws Exception {
+        AtomicBoolean rescheduled = new AtomicBoolean(false);
+        // el mock simula el efecto del save (cita nueva vigente); el JPQL real se prueba en el hot-test
+        when(appointmentRepository.existsActiveByDoctorAndPatient(otherDoctor.getId(), a.getId()))
+                .thenAnswer(inv -> rescheduled.get());
+        when(appointmentRepository.save(any(MedicalAppointment.class))).thenAnswer(inv -> {
+            rescheduled.set(true);
+            return inv.getArgument(0);
+        });
+        String body = "{\"patient\":{\"id\":\"" + a.getId() + "\"},\"doctor\":{\"id\":\"" + otherDoctor.getId()
+                + "\"},\"dateTime\":\"2026-12-01T10:00:00\",\"reason\":\"reagendada\"}";
+
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isNotFound());
+
+        mockMvc.perform(as(otherDoctor, json(post("/medical-appointments/register"), body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("PENDING"));
+
         mockMvc.perform(as(otherDoctor, get("/users/" + a.getId())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value(a.getName()))
                 .andExpect(jsonPath("$.fcmToken").doesNotExist());
-        verify(medicalHistoryRepository, never()).save(any());
     }
 
     @Test

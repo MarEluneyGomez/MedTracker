@@ -85,6 +85,79 @@ class UserServiceTest {
     }
 
     @Test
+    void updateFcmTokenReplacesThePreviousTokenTrimmedAndTouchesNothingElse() {
+        User current = User.builder().id(UUID.randomUUID()).name("Ana").email("ana@mail.com")
+                .passwordHash("hash").role(User.Role.PATIENT).fcmToken("token-viejo").build();
+        when(userRepository.findById(current.getId())).thenReturn(Optional.of(current));
+
+        userService.updateFcmToken(new AuthenticatedUser(current.getId(), User.Role.PATIENT), "  token-nuevo  ");
+
+        assertThat(current.getFcmToken()).isEqualTo("token-nuevo");
+        assertThat(current.getName()).isEqualTo("Ana");
+        assertThat(current.getEmail()).isEqualTo("ana@mail.com");
+        assertThat(current.getPasswordHash()).isEqualTo("hash");
+        assertThat(current.getRole()).isEqualTo(User.Role.PATIENT);
+        verify(userRepository).save(current);
+    }
+
+    @Test
+    void updateFcmTokenWithTheSameTokenDoesNotSave() {
+        User current = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT).fcmToken("token-1").build();
+        when(userRepository.findById(current.getId())).thenReturn(Optional.of(current));
+
+        // Igual al guardado una vez normalizado: no se guarda y updated_at no se toca
+        userService.updateFcmToken(new AuthenticatedUser(current.getId(), User.Role.PATIENT), "  token-1 ");
+
+        assertThat(current.getFcmToken()).isEqualTo("token-1");
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void updateFcmTokenWithADifferentTokenSavesTheNormalizedValue() {
+        User current = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT).fcmToken("token-1").build();
+        when(userRepository.findById(current.getId())).thenReturn(Optional.of(current));
+
+        userService.updateFcmToken(new AuthenticatedUser(current.getId(), User.Role.PATIENT), "  token-2 ");
+
+        assertThat(current.getFcmToken()).isEqualTo("token-2");
+        verify(userRepository).save(current);
+    }
+
+    @Test
+    void updateFcmTokenThatIsEmptyAfterTrimmingIs400AndSavesNothing() {
+        User current = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT).fcmToken("token-viejo").build();
+        AuthenticatedUser principal = new AuthenticatedUser(current.getId(), User.Role.PATIENT);
+
+        // \u0001 pasa @NotBlank (no es espacio) pero trim() lo recorta
+        for (String empty : new String[] {"\u0001", " \u0001\u0002 ", "\u0000"}) {
+            assertThatThrownBy(() -> userService.updateFcmToken(principal, empty))
+                    .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST))
+                    .hasMessageContaining("Campos inválidos: fcmToken")
+                    .hasMessageNotContaining(empty);
+        }
+        assertThat(current.getFcmToken()).isEqualTo("token-viejo");
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void updateFcmTokenOfAnUnknownOrDeletedUserIs404WithoutEchoingTheToken() {
+        User deleted = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT).fcmToken("token-viejo")
+                .deletedAt(LocalDateTime.of(2026, 1, 1, 0, 0)).build();
+        UUID unknown = UUID.randomUUID();
+        when(userRepository.findById(deleted.getId())).thenReturn(Optional.of(deleted));
+        when(userRepository.findById(unknown)).thenReturn(Optional.empty());
+
+        for (UUID id : List.of(deleted.getId(), unknown)) {
+            assertThatThrownBy(() -> userService.updateFcmToken(
+                    new AuthenticatedUser(id, User.Role.PATIENT), "token-secreto"))
+                    .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND))
+                    .hasMessageNotContaining("token-secreto");
+        }
+        assertThat(deleted.getFcmToken()).isEqualTo("token-viejo");
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
     void loginReturnsUserWhenCredentialsMatch() {
         User user = user();
         when(userRepository.findByEmail("ana@mail.com")).thenReturn(Optional.of(user));

@@ -95,6 +95,29 @@ public class UserService {
                 .orElseThrow(() -> notFound);
     }
 
+    // Reemplaza el fcmToken del usuario autenticado (el token de FCM rota). El
+    // id sale del JWT, nunca del cliente. Se guarda sin espacios en los
+    // extremos y solo cambia ese campo. Si el token normalizado queda vacío
+    // (por ejemplo solo caracteres de control, que pasan @NotBlank pero trim()
+    // recorta) responde 400 como el resto de las validaciones. Si es igual al
+    // que ya tiene no se guarda, para no tocar updated_at. El valor del token
+    // no se loguea ni va en ningún mensaje.
+    public void updateFcmToken(AuthenticatedUser principal, String fcmToken) {
+        String normalized = fcmToken == null ? "" : fcmToken.trim();
+        if (normalized.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Campos inválidos: fcmToken");
+        }
+        User user = userRepository.findById(principal.id())
+                .filter(found -> found.getDeletedAt() == null)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Usuario no encontrado: " + principal.id()));
+        if (normalized.equals(user.getFcmToken())) {
+            return;
+        }
+        user.setFcmToken(normalized);
+        userRepository.save(user);
+    }
+
     // Médicos vigentes, para elegir con quién agendar una cita (CU-09)
     public List<User> findDoctors() {
         return userRepository.findByRoleAndDeletedAtIsNull(User.Role.DOCTOR);

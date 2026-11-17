@@ -7,7 +7,7 @@ import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.UUID;
 
@@ -22,6 +22,8 @@ public class ReminderDTO {
     private UUID treatmentId;
     private LocalTime time;
     private String[] daysOfWeek;
+    private Integer intervalDays;
+    private LocalDate startDate;
     private String message;
     private boolean active;
 
@@ -31,6 +33,8 @@ public class ReminderDTO {
         this.treatmentId = reminder.getTreatment().getId();
         this.time = reminder.getTime();
         this.daysOfWeek = reminder.getDaysOfWeek();
+        this.intervalDays = reminder.getIntervalDays();
+        this.startDate = reminder.getStartDate();
         this.message = reminder.getMessage();
         this.active = reminder.isActive();
     }

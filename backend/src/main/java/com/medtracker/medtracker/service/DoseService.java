@@ -19,6 +19,9 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class DoseService {
 
+    // Días hacia atrás (además de hoy) en que una toma todavía se puede deshacer
+    static final int UNDO_WINDOW_DAYS = 1;
+
     private final DoseRepository doseRepository;
     private final AccessPolicy accessPolicy;
     private final Clock clock;
@@ -81,10 +84,42 @@ public class DoseService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "La toma ya fue " + dose.getStatus().name().toLowerCase(Locale.ROOT));
         }
-        dose.setStatus(newStatus);
-        if (newStatus == Dose.DoseStatus.CONFIRMED) {
-            dose.setConfirmedAt(LocalDateTime.now(clock));
+        LocalDateTime now = LocalDateTime.now(clock);
+        LocalDateTime confirmedAt = newStatus == Dose.DoseStatus.CONFIRMED ? now : null;
+        // El cambio solo se aplica si la toma sigue PENDING en la base: si otro
+        // pedido se adelantó, no se pisa su resultado
+        int updated = doseRepository.updateStatusIfCurrent(id, List.of(Dose.DoseStatus.PENDING),
+                newStatus, confirmedAt, now);
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La toma ya cambió de estado");
         }
-        return doseRepository.save(dose);
+        return reload(id);
+    }
+
+    // Deshacer una toma marcada por error: CONFIRMED o SKIPPED vuelve a PENDING
+    // y se limpia confirmedAt. Solo las programadas hoy o ayer (zona configurada),
+    // para no reescribir la adherencia de períodos anteriores.
+    public Dose undo(AuthenticatedUser principal, UUID id) {
+        Dose dose = accessPolicy.requireDose(principal, id);
+        if (dose.getStatus() == Dose.DoseStatus.PENDING) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La toma está pendiente: no hay nada que deshacer");
+        }
+        LocalDateTime windowStart = LocalDate.now(clock).minusDays(UNDO_WINDOW_DAYS).atStartOfDay();
+        if (dose.getScheduledAt().isBefore(windowStart)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La toma ya no se puede deshacer");
+        }
+        int updated = doseRepository.updateStatusIfCurrent(id,
+                List.of(Dose.DoseStatus.CONFIRMED, Dose.DoseStatus.SKIPPED),
+                Dose.DoseStatus.PENDING, null, LocalDateTime.now(clock));
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La toma ya cambió de estado");
+        }
+        return reload(id);
+    }
+
+    // Relee la toma después de un UPDATE directo, que no actualiza la entidad en memoria
+    private Dose reload(UUID id) {
+        return doseRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Toma no encontrada: " + id));
     }
 }

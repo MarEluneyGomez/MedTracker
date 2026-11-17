@@ -1,6 +1,7 @@
 package com.medtracker.medtracker.controller;
 
 import com.medtracker.medtracker.dto.DoctorSummaryDTO;
+import com.medtracker.medtracker.dto.FcmTokenUpdateRequestDTO;
 import com.medtracker.medtracker.dto.UserDTO;
 import com.medtracker.medtracker.dto.UserRegisterRequestDTO;
 import com.medtracker.medtracker.dto.UserSummaryDTO;
@@ -31,6 +32,15 @@ public class UserController {
     public ResponseEntity<UserDTO> register(@Valid @RequestBody UserRegisterRequestDTO request) {
         User created = userService.register(request.toEntity());
         return ResponseEntity.status(HttpStatus.CREATED).body(new UserDTO(created));
+    }
+
+    // Actualizar el token de FCM del usuario autenticado (el de Bearer; no se
+    // acepta ningún id). Reemplaza al anterior y responde 204 sin body.
+    @PutMapping("/me/fcm-token")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void updateFcmToken(@AuthenticationPrincipal AuthenticatedUser principal,
+                               @Valid @RequestBody FcmTokenUpdateRequestDTO request) {
+        userService.updateFcmToken(principal, request.getFcmToken());
     }
 
     // Buscar usuario por ID. El propio perfil es completo; el de un vinculado

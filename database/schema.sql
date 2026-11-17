@@ -42,7 +42,8 @@ CREATE TABLE treatment (
 );
 
 -- Patron recurrente de recordatorio para un tratamiento: una hora del dia
--- (y, opcionalmente, dias de la semana puntuales) que se repite mientras el
+-- (y, opcionalmente, dias de la semana puntuales o un intervalo de N dias
+-- contado desde start_date) que se repite mientras el
 -- tratamiento este vigente. Para "4 veces al dia" se crean hasta 4 filas de
 -- reminder (una por horario), NO una fila por cada toma real: las tomas
 -- individuales se modelan en "dose", generadas a partir de este patron
@@ -54,19 +55,30 @@ CREATE TABLE reminder (
     treatment_id UUID NOT NULL REFERENCES treatment(id),
     time TIME NOT NULL,
     days_of_week VARCHAR(20)[],
+    interval_days INTEGER,
+    start_date DATE,
     message VARCHAR(255) NOT NULL,
     active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
-    deleted_at TIMESTAMP
+    deleted_at TIMESTAMP,
+    CONSTRAINT reminder_interval_days_check
+        CHECK (interval_days IS NULL OR interval_days >= 1),
+    -- cada N dias y dias de la semana son excluyentes
+    CONSTRAINT reminder_interval_xor_days_check
+        CHECK (interval_days IS NULL OR days_of_week IS NULL),
+    -- la fecha de inicio existe si y solo si hay intervalo
+    CONSTRAINT reminder_interval_start_check
+        CHECK ((interval_days IS NULL) = (start_date IS NULL))
 );
 
 -- RN-07: un tratamiento no puede tener dos recordatorios con la misma hora y
--- los mismos dias. NULLS NOT DISTINCT hace que dos "todos los dias"
--- (days_of_week NULL) cuenten como duplicados, y el WHERE deja fuera a los
+-- el mismo patron (dias de la semana, o intervalo y fecha de inicio).
+-- NULLS NOT DISTINCT hace que dos "todos los dias" (days_of_week e
+-- interval_days NULL) cuenten como duplicados, y el WHERE deja fuera a los
 -- eliminados logicamente para poder volver a crear uno igual.
 CREATE UNIQUE INDEX reminder_treatment_time_days_key
-    ON reminder (treatment_id, time, days_of_week) NULLS NOT DISTINCT
+    ON reminder (treatment_id, time, days_of_week, interval_days, start_date) NULLS NOT DISTINCT
     WHERE deleted_at IS NULL;
 
 -- Cada fila es UNA toma real, generada a partir de un reminder para una
@@ -136,3 +148,19 @@ CREATE TABLE medical_history (
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     deleted_at TIMESTAMP
 );
+
+-- Sesion renovable: de cada refresh token solo se guarda el hash SHA-256,
+-- nunca el token. Cada uso lo rota (revoked_at + replaced_by) y emite otro;
+-- reusar uno ya revocado revoca todos los del usuario.
+CREATE TABLE refresh_token (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES "user"(id),
+    token_hash VARCHAR(64) NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revoked_at TIMESTAMPTZ,
+    replaced_by UUID REFERENCES refresh_token(id) ON DELETE SET NULL
+);
+
+CREATE INDEX refresh_token_user_id_idx ON refresh_token (user_id);
+CREATE INDEX refresh_token_expires_at_idx ON refresh_token (expires_at);

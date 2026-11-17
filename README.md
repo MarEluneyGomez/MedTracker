@@ -101,7 +101,7 @@ seguimiento-de-medicacion/
 
 Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA repository) → `service` → `controller` (REST) → `dto`. Los errores de negocio se responden con 400 (datos inválidos o rol incorrecto), 404 (recurso inexistente) o 409 (duplicados o estados que no admiten el cambio).
 
-> **Autenticación y autorización:** `POST /auth/login` valida las credenciales (CU-02) y emite un JWT (HS256, 24 h por defecto, configurable con `JWT_EXPIRATION_MINUTES`; el secreto sale de `JWT_SECRET`). Todos los endpoints exigen `Authorization: Bearer <token>`, salvo `POST /auth/login` y `POST /users/register`; sin token o con uno inválido responde 401. Además, cada recurso se autoriza por dueño con el usuario del token, nunca con un id que mande el cliente (ver [Autorización por dueño](#autorización-por-dueño-rn-01-rn-09)). Para frenar fuerza bruta, tras 5 intentos fallidos el login se bloquea 15 minutos (por email y por IP) y responde 429.
+> **Autenticación y autorización:** `POST /auth/login` valida las credenciales (CU-02) y emite un JWT (HS256, 24 h por defecto, configurable con `JWT_EXPIRATION_MINUTES`; el secreto sale de `JWT_SECRET`). Todos los endpoints exigen `Authorization: Bearer <token>`, salvo `POST /auth/login` y `POST /users/register`; sin token o con uno inválido responde 401. Además, cada recurso se autoriza por dueño con el usuario del token, nunca con un id que mande el cliente (ver [Autorización por dueño](#autorización-por-dueño-rn-01-rn-09)). Para frenar fuerza bruta, tras 5 intentos fallidos el login se bloquea 15 minutos (por email y por IP) y responde 429. La sesión es renovable con un refresh token (48 h por defecto, `JWT_REFRESH_EXPIRATION_MINUTES`): `POST /auth/refresh` y `POST /auth/logout` son públicos y se identifican con ese token (ver [Cambios de esquema, punto 7](#cambios-de-esquema-sobre-una-base-ya-creada)). El access token sigue en 24 h por defecto para no romper al frontend que todavía no refresca; cuando lo implemente, se recomienda bajarlo con `JWT_EXPIRATION_MINUTES=60`, sin cambios de código.
 
 | Módulo | Descripción | Endpoint REST |
 |---|---|---|
@@ -120,22 +120,28 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 
 | Método y ruta | Descripción |
 |---|---|
-| `POST /auth/login` | Body `{email, password}`. 200 con el JWT (`accessToken`) y el usuario, 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
+| `POST /auth/login` | Body `{email, password}`. 200 con el JWT (`accessToken`, `tokenType`, `expiresIn`), el usuario y el refresh token (`refreshToken`, `refreshExpiresIn` en segundos), 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
+| `POST /auth/refresh` | Público. Body `{refreshToken}`. 200 con la misma forma que el login: un access token nuevo y un refresh token nuevo (el recibido queda revocado: cada uso lo rota y le da otra ventana de 48 h). El usuario y su rol se leen de la base. 401 genérico ("Sesión inválida o vencida. Iniciá sesión de nuevo") si el token es desconocido, vencido, ya usado o el usuario fue dado de baja; reusar un token ya rotado revoca además todas las sesiones del usuario. 400 si falta el campo; 429 tras 5 intentos inválidos desde una IP (15 min). |
+| `POST /auth/logout` | Público. Body `{refreshToken}`. Revoca ese refresh token. 204 siempre, también si el token no existe o ya estaba revocado. |
 | `GET /users?role=DOCTOR` | Lista los médicos vigentes con `id` y `name` solamente, para elegir uno al agendar una cita. Cualquier otro `role`, o sin `role`, devuelve solo al propio usuario y a sus vinculados (`id`, `name`, `email` y `role`; sin `fcmToken`). |
-| `GET /users/{id}` | El propio perfil completo; un vinculado o la contraparte de una cita compartida, en versión reducida (`id`, `name`, `email` y `role`; sin `fcmToken`). Cualquier otro usuario: 404. Solo el listado de médicos (`GET /users?role=DOCTOR`) va sin `email`. |
+| `GET /users/{id}` | El propio perfil completo; un vinculado o la contraparte de una cita vigente y no cancelada, en versión reducida (`id`, `name`, `email` y `role`; sin `fcmToken`). Cualquier otro usuario: 404. Solo el listado de médicos (`GET /users?role=DOCTOR`) va sin `email`. |
 | `POST /users/register` | Solo roles `PATIENT` o `CAREGIVER`; sin `role` queda `PATIENT`. `DOCTOR` responde 400 (ver [Alta de médicos](#alta-de-médicos)). La contraseña se manda en `passwordHash` (también se acepta `password`) y tiene una política mínima: ver [Validación de entradas](#validación-de-entradas). |
-| `GET /treatments/user/{userId}` | Tratamientos vigentes (sin eliminados) del usuario. 403 si `userId` no es el propio ni el de un paciente que el usuario cuida. |
+| `PUT /users/me/fcm-token` | Body `{fcmToken}`. Guarda el token de notificaciones push del usuario del token y reemplaza el anterior (el token de FCM rota). 204 sin body. 400 si falta, está vacío, tiene solo espacios o solo caracteres de control, o supera los 255 caracteres (el límite se mide sobre el valor enviado, antes de quitar los espacios; se guarda sin espacios ni caracteres de control en los extremos); 401 sin token; 404 si el usuario no existe o fue dado de baja entre la autenticación y el guardado (caso raro: normalmente el filtro JWT ya responde 401). Si el token es igual al que ya tiene, no se vuelve a guardar. El usuario sale siempre del token, nunca de un id que mande el cliente, y cualquier otro campo del body se ignora. El valor se trata como texto opaco (no se valida el formato) y solo se devuelve en el perfil propio. **Cambio de contrato para el frontend:** la app debe llamarlo cuando cambie el token del dispositivo, porque hasta ahora solo se podía mandar al registrarse. |
+| `GET /treatments/user/{userId}` | Tratamientos vigentes (sin eliminados) del usuario. 403 si `userId` no es el propio ni el de un paciente vigente (no dado de baja) que el usuario cuida; ver la tabla de permisos de [Autorización por dueño](#autorización-por-dueño-rn-01-rn-09). |
 | `PUT /treatments/{id}` | Edita `dosage`, `frequency`, `startDate` y `endDate` (CU-08). 400 si `endDate` < `startDate`; 404 si no existe o está eliminado. |
 | `DELETE /treatments/{id}` | Eliminación lógica + desactiva sus recordatorios (RN-06); conserva las dosis ya generadas. 204. |
 | `GET /reminders/treatment/{treatmentId}` | Recordatorios vigentes (sin eliminados) del tratamiento. |
-| `PUT /reminders/{id}` | Edita `time`, `daysOfWeek` y `message` (RF-11), con la misma normalización de días y validación de duplicados (RN-07), sin contar el propio recordatorio. |
-| `POST /reminders/register` | Además de guardar, si hoy coincide con `daysOfWeek` y el tratamiento está vigente hoy, genera ya la dosis de hoy (idempotente). `PUT /reminders/{id}` mueve al nuevo horario la dosis `PENDING` de hoy; las `CONFIRMED`/`SKIPPED` no se tocan. |
-| `PUT /doses/{id}/confirm`, `PUT /doses/{id}/skip` | 404 si la dosis no existe; 409 si ya no está `PENDING` (RN-03). |
+| `PUT /reminders/{id}` | Edita `time`, `daysOfWeek` o `intervalDays` + `startDate`, y `message` (RF-11), con la misma normalización de días y validación de duplicados (RN-07), sin contar el propio recordatorio. Como el PUT reemplaza todo, omitir `intervalDays` vuelve el recordatorio a su forma sin intervalo. |
+| `POST /reminders/register` | `intervalDays` (1 a 365) repite el recordatorio cada N días desde `startDate` (`yyyy-MM-dd`, ese día incluido): se genera dosis el día D si `D ≥ startDate` y `(D − startDate)` es múltiplo de `intervalDays`, siempre dentro de las fechas del tratamiento. Es excluyente con `daysOfWeek`, y `startDate` es obligatorio con `intervalDays` y no se admite sin él (400). Además de guardar, si hoy coincide con `daysOfWeek` o con el intervalo y el tratamiento está vigente hoy, genera ya la dosis de hoy (idempotente). `PUT /reminders/{id}` mueve al nuevo horario la dosis `PENDING` de hoy; las `CONFIRMED`/`SKIPPED` no se tocan. |
+| `PUT /treatments/{id}/complete` | Marca el tratamiento como completado: solo cambia `completed`, no toca recordatorios ni dosis. Completar uno ya completado también responde 200. Mientras está completado no se generan dosis nuevas. |
+| `PUT /treatments/{id}/reopen` | Reabre un tratamiento completado (`completed=false`), sin límite de tiempo: sirve para deshacer un "completar" por error o para continuar el tratamiento días después. Sin body; responde 200 con el tratamiento. No toca los recordatorios (un recordatorio desactivado a mano sigue desactivado) y genera las dosis de **hoy** que correspondan; **no genera dosis de días pasados**, así que el período en que estuvo completado queda sin dosis. Si la `endDate` ya venció se reabre igual (200), pero no se generan dosis hasta **extenderla con `PUT /treatments/{id}`**. 409 si no está completado (también al reabrirlo dos veces); 404 si no existe, tiene baja lógica o no es del usuario ni de un paciente que cuida (el médico tampoco puede). |
+| `PUT /doses/{id}/confirm`, `PUT /doses/{id}/skip` | 404 si la dosis no existe; 409 si ya no está `PENDING` (RN-03). El cambio se aplica con un `UPDATE` condicional por estado, así que dos pedidos simultáneos sobre la misma toma no se pisan: uno gana y el otro recibe 409. |
+| `PUT /doses/{id}/undo` | Deshace una toma marcada por error: `CONFIRMED` o `SKIPPED` vuelve a `PENDING` y se limpia `confirmedAt`. Sin body; responde 200 con la toma. **Ventana de deshacer:** solo las tomas programadas **hoy o ayer** (según `medtracker.timezone`, con `scheduledAt` desde las 00:00 de ayer); así no se reescribe la adherencia de períodos anteriores (RN-05). 409 "La toma ya no se puede deshacer" fuera de la ventana; 409 si la toma ya está `PENDING` o si otro pedido la cambió antes; 404 si no existe o no es del usuario ni de un paciente que cuida. |
 | `POST /caregiver-links/register` | Solo lo crea el paciente sobre sí mismo (`patient.id` = usuario del token, si no 403); `caregiver.id` debe ser un usuario existente con rol `CAREGIVER` (si no 400). 409 si el vínculo ya existe y está activo; si estaba dado de baja lógicamente, se reactiva. |
 | `DELETE /caregiver-links/{caregiverId}/{patientId}` | Baja lógica del vínculo; la puede pedir el paciente o el cuidador involucrado, un tercero recibe 404. 204. Los `GET` solo devuelven vínculos del propio usuario; si la ruta nombra a otro usuario sin vínculo activo con él, 403. |
 | `DELETE /reminders/{id}` | Eliminación lógica (`deleted_at`) y `active=false`: deja de generar dosis. 204. |
-| `GET /doses/user/{userId}?date=YYYY-MM-DD` | Dosis del usuario para ese día (por defecto, hoy), ordenadas por hora. No incluye dosis de tratamientos o recordatorios eliminados. 403 si `userId` no es el propio ni el de un paciente que el usuario cuida. |
-| `POST /doses/generate-daily` | **Herramienta de desarrollo/testing**, apagada por defecto: con `medtracker.dev-tools.enabled=false` (variable de entorno `MEDTRACKER_DEV_TOOLS_ENABLED`) responde 404 "Recurso no encontrado", igual que una ruta inexistente. Encendida, dispara a demanda la generación de dosis de hoy (la misma que corre sola cada día a medianoche y al arrancar, RF-06/CU-05, que no dependen de la propiedad). Es idempotente. Devuelve `{"generated": n}`. No encenderla en un entorno con recordatorios reales. |
+| `GET /doses/user/{userId}?date=YYYY-MM-DD` | Dosis del usuario para ese día (por defecto, hoy), ordenadas por hora. No incluye dosis de tratamientos o recordatorios eliminados. 403 si `userId` no es el propio ni el de un paciente vigente (no dado de baja) que el usuario cuida; ver la tabla de permisos de [Autorización por dueño](#autorización-por-dueño-rn-01-rn-09). |
+| `POST /doses/generate-daily` | **Herramienta de desarrollo/testing**, apagada por defecto: con `medtracker.dev-tools.enabled=false` (variable de entorno `MEDTRACKER_DEV_TOOLS_ENABLED`) responde 404 "Recurso no encontrado", igual que una ruta inexistente. Encendida, dispara a demanda la generación de dosis de hoy (la misma que corre sola cada día a medianoche y al arrancar, RF-06/CU-05, que no dependen de la propiedad). Es idempotente. Devuelve `{"generated": n}`. No encenderla en un entorno con recordatorios reales. Con `MEDTRACKER_DEV_TOOLS_ENABLED=true` cualquier usuario autenticado, de cualquier rol, puede dispararlo; es una herramienta de desarrollo y no debe activarse en producción. |
 | `POST /medications/register` | Solo `PATIENT` o `CAREGIVER` (RN-08); un `DOCTOR` recibe 403 "Solo un paciente o un cuidador puede dar de alta medicamentos". `GET /medications` y `GET /medications/{id}` siguen abiertos a todos los roles autenticados y no incluyen medicamentos dados de baja (por id, 404). Un tratamiento existente que referencia un medicamento dado de baja se sigue leyendo con su `medicationId`. |
 
 #### Validación de entradas
@@ -145,10 +151,11 @@ Los endpoints de las tandas A y B reciben un DTO de entrada con Bean Validation 
 | Endpoint | Campos aceptados | Obligatorios | Límites |
 |---|---|---|---|
 | `POST /users/register` | `name`, `email`, `passwordHash` (alias `password`), `role`, `fcmToken` | `name`, `email`, contraseña | `name` ≤ 150; `email` con formato válido y ≤ 254; `fcmToken` ≤ 255; `role` solo `PATIENT` o `CAREGIVER` |
+| `PUT /users/me/fcm-token` | `fcmToken` | `fcmToken` | No vacío (después de quitar espacios y caracteres de control en los extremos) y ≤ 255, medido sobre el valor enviado |
 | `POST /treatments/register` | `user{id}`, `medication{id}`, `dosage`, `frequency`, `startDate`, `endDate`, `startTime`, `endTime` | `user.id`, `medication.id`, `dosage`, `frequency`, `startDate` | `dosage` y `frequency` ≤ 100. Nace con `completed=false` |
 | `PUT /treatments/{id}` | `dosage`, `frequency`, `startDate`, `endDate`, `startTime`, `endTime` | `dosage`, `frequency`, `startDate` | `dosage` y `frequency` ≤ 100 |
-| `POST /reminders/register` | `treatment{id}`, `time`, `daysOfWeek`, `message` | `treatment.id`, `time`, `message` | `message` ≤ 255; `daysOfWeek` hasta 7 elementos. Nace con `active=true` |
-| `PUT /reminders/{id}` | `time`, `daysOfWeek`, `message` | `time`, `message` | igual que el alta |
+| `POST /reminders/register` | `treatment{id}`, `time`, `daysOfWeek`, `intervalDays`, `startDate`, `message` | `treatment.id`, `time`, `message` | `message` ≤ 255; `daysOfWeek` hasta 7 elementos; `intervalDays` entre 1 y 365; `intervalDays` y `daysOfWeek` no pueden ir juntos; `startDate` va si y solo si va `intervalDays`. Nace con `active=true` |
+| `PUT /reminders/{id}` | `time`, `daysOfWeek`, `intervalDays`, `startDate`, `message` | `time`, `message` | igual que el alta |
 | `POST /doses/register` | `reminder{id}`, `scheduledAt` | `reminder.id`, `scheduledAt` | Nace `PENDING`; el estado y `confirmedAt` no se aceptan |
 | `POST /medical-appointments/register` | `patient{id}`, `doctor{id}`, `dateTime`, `reason` | los cuatro | `reason` no vacío y ≤ 255. Nace `PENDING`; el estado no se acepta |
 | `POST /medical-histories/register` | `patient{id}`, `diagnosis`, `notes`, `recordDate` | `patient.id`, `diagnosis`, `recordDate` | `diagnosis` no vacío y ≤ 255; `notes` ≤ 5000 caracteres (límite de la aplicación: la columna es `TEXT`) |
@@ -168,8 +175,8 @@ La identidad sale siempre del token. Un recurso ajeno, inexistente o eliminado l
 
 | Recursos | Quién puede verlos y gestionarlos |
 |---|---|
-| Tratamientos, recordatorios y dosis (`/treatments`, `/reminders`, `/doses`) | El propio paciente y los cuidadores con vínculo activo con él (`caregiver_link.deleted_at` nulo). La pertenencia de un recordatorio y de una dosis se resuelve a través de su tratamiento. Los listados (`GET /treatments`, `/reminders`, `/doses`) devuelven solo lo propio y lo de los pacientes que cuida. |
-| Citas médicas (`/medical-appointments`) | Solo el paciente y el médico (`doctor_id`) de la cita; el cuidador no tiene acceso. Para agendar, el usuario del token debe ser el paciente o el médico de la cita (si no 403). Los listados por paciente o por médico responden 403 si el id nombrado no es el propio ni el de la contraparte de una cita. |
+| Tratamientos, recordatorios y dosis (`/treatments`, `/reminders`, `/doses`) | El propio paciente y los cuidadores con vínculo activo con él (`caregiver_link.deleted_at` nulo). La pertenencia de un recordatorio y de una dosis se resuelve a través de su tratamiento. Los listados (`GET /treatments`, `/reminders`, `/doses`) devuelven solo lo propio y lo de los pacientes que cuida. Un paciente dado de baja (`user.deleted_at` no nulo) deja de ser accesible para sus cuidadores: 403 en las listas por usuario y en `POST /treatments/register` para ese paciente (antes 400), y 404 en tratamientos, recordatorios y dosis por id, incluidas las rutas anidadas (recordatorios y dosis por tratamiento o recordatorio, y las altas de recordatorios y dosis). |
+| Citas médicas (`/medical-appointments`) | Solo el paciente y el médico (`doctor_id`) de la cita; el cuidador no tiene acceso. Para agendar, el usuario del token debe ser el paciente o el médico de la cita (si no 403). Los listados por paciente o por médico responden 403 si el id nombrado no es el propio ni el de la contraparte de una cita vigente y no cancelada. `GET /users/{id}` y esos listados solo cuentan citas vigentes y no canceladas: con una cita cancelada responden 404 y 403 respectivamente, y `GET /medical-appointments` sigue mostrando las citas propias. |
 | Historial médico (`/medical-histories`) | El propio paciente y un médico con una cita vigente (`deleted_at` nulo) y **no cancelada** (`status` distinto de `CANCELLED`) con ese paciente; ambos leen y crean. El cuidador no tiene acceso, aunque tenga vínculo activo. `GET /medical-histories/{id}` de un historial ajeno, inexistente o eliminado responde 404; `GET /medical-histories/patient/{id}` y `POST /medical-histories/register` que nombran a un paciente sin acceso responden 403. `GET /medical-histories` devuelve solo los historiales visibles, del más reciente al más antiguo (`record_date` descendente). `diagnosis` y `record_date` son obligatorios y `diagnosis` admite hasta 255 caracteres (si no, 400). |
 | Notificaciones (`/notifications`) | Solo su destinatario (`user_id`), incluso con vínculo de cuidador: el cuidador y el médico ven únicamente las propias. Una notificación ajena, inexistente o eliminada responde 404; `GET /notifications/user/{id}` con otro usuario responde 403; `GET /notifications` devuelve solo las propias. `PUT /notifications/{id}/read` solo sobre las propias. |
 
@@ -181,9 +188,9 @@ La identidad sale siempre del token. Un recurso ajeno, inexistente o eliminado l
 - *Cita unilateral.* RN-09 permite que el médico agende una cita con cualquier paciente (conociendo su `id`) y cambie su estado sin intervención del paciente. Como el acceso al historial se apoya en tener una cita vigente y no cancelada, un médico puede darse acceso al historial de un paciente agendando una cita por su cuenta. Se acepta como riesgo conocido de esta etapa; la mitigación pendiente es exigir que el paciente confirme la cita antes de habilitar el acceso.
 **Pendientes.**
 
-- `GET /users/{id}` da acceso al perfil reducido también con un turno `CANCELLED` (`shareAppointment` no filtra el estado), a diferencia del historial médico.
 - `POST /doses/register` no valida que `scheduledAt` caiga dentro de las fechas del tratamiento.
 - No existe un endpoint para dar de baja ni editar medicamentos: la baja lógica (`deleted_at`) solo se aplica por base de datos.
+- Al editar un recordatorio de forma que hoy ya no corresponda tomar, la dosis pendiente de hoy no se elimina (`rescheduleTodayPending`).
 
 #### Formato de errores
 
@@ -212,7 +219,7 @@ El SQL por consola (`spring.jpa.show-sql`) está apagado; se activa con la varia
 
 El auto-registro (`POST /users/register`) no permite el rol `DOCTOR`: si no, cualquiera podría registrarse como médico y la RN-09 perdería sentido. Un médico se da de alta a mano en la base, con una de estas dos variantes (sin credenciales reales en el repositorio):
 
-1. **Registrar y promover.** El futuro médico se registra por la API como `PATIENT` y un operador cambia el rol. Debe volver a iniciar sesión después, porque el rol viaja dentro del JWT.
+1. **Registrar y promover.** El futuro médico se registra por la API como `PATIENT` y un operador cambia el rol. El cambio se refleja en el próximo refresh de la sesión (`POST /auth/refresh` lee el rol de la base) o, mientras el frontend no refresque, al vencer el access token (24 h por defecto); cerrar sesión e iniciar de nuevo lo aplica de inmediato, porque el rol viaja dentro del JWT.
 
 ```sql
 UPDATE "user" SET role = 'DOCTOR' WHERE email = 'medico@example.com' AND deleted_at IS NULL;
@@ -282,7 +289,7 @@ CREATE UNIQUE INDEX dose_reminder_scheduled_key ON dose (reminder_id, scheduled_
 - **RN-04:** Si una toma no se confirma ni se marca como omitida dentro de una ventana de tiempo determinada (ej. 2 horas después del horario), se marca automáticamente como **omitida**.
 - **RN-05:** El porcentaje de adherencia de un tratamiento se calcula como `(dosis en estado confirmed / dosis totales generadas en el período) × 100`, sobre el período que el usuario seleccione en el historial.
 - **RN-06:** Un tratamiento eliminado lógicamente (`deleted_at` distinto de NULL) no genera nuevas notificaciones, pero conserva su historial.
-- **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, mismo `time` y mismos `days_of_week`). Dos recordatorios "todos los días" (`days_of_week` NULL) a la misma hora también cuentan como duplicados, y los recordatorios eliminados lógicamente no se consideran. *(implementado en `ReminderService` y reforzado en la base con un índice único parcial)*
+- **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, mismo `time` y mismo patrón: los mismos `days_of_week`, o el mismo `interval_days` con la misma `start_date`). Dos recordatorios "todos los días" (`days_of_week` e `interval_days` NULL) a la misma hora también cuentan como duplicados, y los recordatorios eliminados lógicamente no se consideran. *(implementado en `ReminderService` y reforzado en la base con un índice único parcial)*
 - **RN-08:** El alta de medicamentos y tratamientos la realiza el propio paciente o su tutor/responsable (`role = PATIENT` o `CAREGIVER`); el sistema no contempla intervención directa del médico, salvo para agendar/gestionar sus propias citas (RN-09).
 - **RN-09:** Una cita médica (`medical_appointment`) solo puede ser creada o modificada por el paciente involucrado o por el médico (`doctor_id`) asignado a esa cita.
 
@@ -360,7 +367,9 @@ Relación entre un usuario y un medicamento. Acá viven los datos que varían se
 | id | UUID | Identificador único |
 | treatment_id | FK → treatment.id | Tratamiento asociado |
 | time | TIME | Hora del día en que corresponde la toma |
-| days_of_week | VARCHAR[] (nullable) | Días en que aplica; `NULL` = todos los días |
+| days_of_week | VARCHAR[] (nullable) | Días en que aplica; `NULL` = todos los días. Excluyente con `interval_days` |
+| interval_days | INTEGER (nullable) | Se repite cada N días (≥ 1; la API admite hasta 365) contando desde `start_date`. `NULL` = sin intervalo |
+| start_date | DATE (nullable) | Día desde el que se cuenta `interval_days` (ese día incluido). Existe si y solo si hay `interval_days` |
 | message | VARCHAR | Texto del recordatorio |
 | active | BOOLEAN | Si el recordatorio sigue generando tomas |
 | created_at | TIMESTAMP | Fecha de alta del registro |
@@ -443,6 +452,20 @@ Vínculo entre un tutor/responsable y los pacientes que gestiona. Un usuario `CA
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
 
+### Tabla: `refresh_token`
+
+> **Nota de diseño:** sesión renovable. Es un registro técnico de seguridad, sin baja lógica: se revoca (`revoked_at`) y los vencidos se borran con un job diario. Guarda solo el hash del token (ver [punto 7 de cambios de esquema](#cambios-de-esquema-sobre-una-base-ya-creada)).
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| id | UUID | Identificador único |
+| user_id | FK → user.id | Usuario dueño de la sesión |
+| token_hash | VARCHAR(64) (único) | SHA-256 en hexadecimal del refresh token; nunca el token |
+| expires_at | TIMESTAMPTZ | Vencimiento (48 h desde la emisión por defecto) |
+| created_at | TIMESTAMPTZ | Fecha de emisión |
+| revoked_at | TIMESTAMPTZ (nullable) | Cuándo se rotó, se cerró con logout o se revocó por reuso. NULL si sigue vigente |
+| replaced_by | FK → refresh_token.id (nullable) | Token que lo reemplazó al rotar. NULL si se cerró con logout o se revocó por reuso |
+
 ---
 
 ## Base de datos
@@ -507,6 +530,17 @@ UPDATE "user" SET email = lower(trim(email)) WHERE email <> lower(trim(email));
 ALTER TABLE treatment ADD COLUMN start_time TIME;
 ALTER TABLE treatment ADD COLUMN end_time TIME;
 ```
+
+**6. Recordatorios cada N días.** `reminder` suma `interval_days INTEGER` y `start_date DATE`, ambas **nullable y sin `DEFAULT`**: los recordatorios existentes quedan con las dos en `NULL` y se comportan igual que antes. Se agregan tres `CHECK` (`interval_days >= 1`; `interval_days` y `days_of_week` excluyentes; `start_date` existe si y solo si hay `interval_days`) y se reemplaza el índice único de RN-07 para que incluya `interval_days` y `start_date`. Todo va en una transacción, en `database/migration-reminder-interval-days.sql`; la reversión está en `database/rollback-reminder-interval-days.sql` y aborta si ya hay recordatorios con intervalo, porque revertir los perdería. La versión anterior de la aplicación sigue funcionando sobre la base migrada (Hibernate en `validate` ignora las columnas de más), así que se migra primero y se despliega después.
+
+**7. Sesión renovable (refresh token).** Tabla nueva `refresh_token` (id, `user_id`, `token_hash`, `expires_at`, `created_at`, `revoked_at`, `replaced_by`): solo guarda el hash SHA-256 del token, que es opaco y aleatorio (256 bits), y nunca el token. Es un cambio aditivo en una transacción, en `database/migration-refresh-token.sql`; la reversión está en `database/rollback-refresh-token.sql` (borra la tabla: las sesiones activas tendrán que volver a iniciar sesión cuando venza su access token). Como la tabla es nueva y `ddl-auto=validate` la exige, **hay que migrar antes de desplegar** esta versión; la versión anterior sigue funcionando sobre la base migrada.
+
+- **Cómo funciona.** `POST /auth/login` devuelve además `refreshToken` y `refreshExpiresIn` (segundos). `POST /auth/refresh` con `{refreshToken}` revoca ese token y devuelve un par nuevo (access + refresh con otra ventana completa): la sesión se cierra tras 48 h sin uso. `POST /auth/logout` revoca el token enviado. Detalle de códigos en la tabla de endpoints.
+- **Reuso.** Presentar un refresh token ya rotado o revocado se toma como robo: se revocan todos los refresh tokens del usuario (en todos sus dispositivos) y se responde 401. Por eso el cliente debe hacer un solo refresh a la vez; dos simultáneos con el mismo token hacen que uno gane y el otro cierre la sesión.
+- **Revalidación.** En cada refresh el usuario se lee de la base: si fue dado de baja responde 401 y se revocan sus tokens, y el rol del access token nuevo sale de la base, no del token viejo.
+- **Variables.** `JWT_REFRESH_EXPIRATION_MINUTES` (por defecto 2880 = 48 h) y `JWT_EXPIRATION_MINUTES` (access, por defecto 1440 = 24 h). **El access token no se acortó en esta versión**, para no desloguear cada hora al frontend que todavía no refresca. Cuando el frontend implemente el refresh, se recomienda bajarlo con `JWT_EXPIRATION_MINUTES=60`, sin cambios de código: así un usuario dado de baja o con el rol cambiado pierde el acceso en hasta 60 min en vez de 24 h (el access token no se revalida contra la base en cada pedido).
+- **Rate limit.** Tras 5 refresh inválidos (token desconocido o reusado) desde una IP, `POST /auth/refresh` responde 429 durante 15 minutos, con el mismo contador en memoria del login. Un token vencido no cuenta.
+- **Limpieza.** Un job diario (03:30, zona `medtracker.timezone`) borra los refresh tokens vencidos hace más de 7 días; los revocados se conservan hasta entonces para poder detectar el reuso. Reusar un token cerrado con logout responde 401 sin cerrar las demás sesiones: solo un token ya rotado dispara la revocación total.
 
 ---
 

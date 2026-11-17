@@ -15,6 +15,7 @@ import com.medtracker.medtracker.repository.MedicalHistoryRepository;
 import com.medtracker.medtracker.repository.NotificationRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
+import com.medtracker.medtracker.repository.UserRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -29,7 +30,9 @@ import java.util.UUID;
 // token (AuthenticatedUser), nunca con un id que mande el cliente. Un recurso
 // ajeno, inexistente o eliminado lógicamente responde igual: 404. Un id de
 // usuario ajeno nombrado explícitamente (registro, listados por usuario)
-// responde 403.
+// responde 403. Un paciente dado de baja deja de ser accesible para sus cuidadores
+// (cuenta como "sin vínculo"): 403 donde se nombra al usuario (listados por usuario
+// y altas), 404 por id de recurso.
 @Component
 @RequiredArgsConstructor
 public class AccessPolicy {
@@ -41,8 +44,11 @@ public class AccessPolicy {
     private final CaregiverLinkRepository caregiverLinkRepository;
     private final MedicalHistoryRepository medicalHistoryRepository;
     private final NotificationRepository notificationRepository;
+    private final UserRepository userRepository;
 
-    // El propio usuario, o un cuidador con vínculo activo con ese paciente
+    // El propio usuario, o un cuidador con vínculo activo con ese paciente. Un
+    // paciente dado de baja cuenta como "sin vínculo" (ver hasActiveLink). El propio
+    // usuario no consulta la base: el filtro JWT ya rechaza tokens de usuarios dados de baja.
     public boolean canManagePatient(AuthenticatedUser principal, UUID patientId) {
         return principal.id().equals(patientId) || hasActiveLink(principal.id(), patientId);
     }
@@ -58,6 +64,8 @@ public class AccessPolicy {
         Set<UUID> ids = new HashSet<>();
         ids.add(principal.id());
         caregiverLinkRepository.findByCaregiver_IdAndDeletedAtIsNull(principal.id())
+                .stream()
+                .filter(link -> link.getPatient().getDeletedAt() == null)
                 .forEach(link -> ids.add(link.getPatient().getId()));
         return ids;
     }
@@ -71,8 +79,11 @@ public class AccessPolicy {
         return ids;
     }
 
+    // Vínculo cuidador-paciente activo Y paciente no dado de baja (user.deleted_at nulo).
+    // Se chequea primero el vínculo: sin vínculo no se consulta al usuario.
     public boolean hasActiveLink(UUID caregiverId, UUID patientId) {
-        return caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiverId, patientId);
+        return caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiverId, patientId)
+                && userRepository.existsByIdAndDeletedAtIsNull(patientId);
     }
 
     // ¿Los dos usuarios tienen un vínculo cuidador-paciente activo, en cualquier sentido?
@@ -80,10 +91,14 @@ public class AccessPolicy {
         return hasActiveLink(userA, userB) || hasActiveLink(userB, userA);
     }
 
-    // ¿Son paciente y médico de una misma cita vigente, en cualquier sentido?
+    // ¿Son paciente y médico de una misma cita vigente y no cancelada, en cualquier
+    // sentido? No cuenta las citas CANCELLED ni las dadas de baja (deleted_at). Es la
+    // misma condición que usa el acceso al historial médico (hasActiveAppointmentAsDoctor).
     public boolean shareAppointment(UUID userA, UUID userB) {
-        return medicalAppointmentRepository.existsByPatientIdAndDoctorIdAndDeletedAtIsNull(userA, userB)
-                || medicalAppointmentRepository.existsByPatientIdAndDoctorIdAndDeletedAtIsNull(userB, userA);
+        // existsActiveByDoctorAndPatient recibe (médico, paciente): la segunda llamada
+        // invierte los argumentos por simetría, para cubrir ambos sentidos
+        return medicalAppointmentRepository.existsActiveByDoctorAndPatient(userB, userA)
+                || medicalAppointmentRepository.existsActiveByDoctorAndPatient(userA, userB);
     }
 
     // Un listado que nombra a otro usuario por id: solo el propio usuario o
@@ -94,15 +109,13 @@ public class AccessPolicy {
         }
     }
 
-    // Igual, pero para citas: el propio usuario o la contraparte de una cita vigente
+    // Igual, pero para citas: el propio usuario o la contraparte de una cita vigente y no cancelada
     public void requireSelfOrSharedAppointment(AuthenticatedUser principal, UUID userId) {
         if (!principal.id().equals(userId) && !shareAppointment(principal.id(), userId)) {
             throw forbiddenUser();
         }
     }
 
-    // ¿Tiene el médico una cita vigente y no cancelada con ese paciente?
-    // (a propósito distinto de shareAppointment, que cuenta también las canceladas)
     public boolean hasActiveAppointmentAsDoctor(UUID doctorId, UUID patientId) {
         return medicalAppointmentRepository.existsActiveByDoctorAndPatient(doctorId, patientId);
     }
@@ -181,7 +194,10 @@ public class AccessPolicy {
                 || principal.id().equals(appointment.getDoctor().getId());
     }
 
-    // Vínculo vigente del que el usuario forma parte (como cuidador o como paciente)
+    // Vínculo vigente del que el usuario forma parte (como cuidador o como paciente).
+    // NO considera la baja del paciente, a propósito: así un cuidador puede quitarse un
+    // vínculo hacia un paciente dado de baja (el endpoint de baja de usuarios futuro
+    // revocará esos vínculos).
     public CaregiverLink requireLink(AuthenticatedUser principal, UUID caregiverId, UUID patientId) {
         return caregiverLinkRepository.findById(new CaregiverLinkId(caregiverId, patientId))
                 .filter(link -> link.getDeletedAt() == null)

@@ -5,6 +5,7 @@ import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.security.JwtService;
 import com.medtracker.medtracker.service.DoseGenerationService;
 import com.medtracker.medtracker.service.DoseService;
+import com.medtracker.medtracker.service.RefreshTokenService;
 import com.medtracker.medtracker.service.UserService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,6 +46,8 @@ class ReadAndAuthControllersTest {
     @Mock
     private UserService userService;
     @Mock
+    private RefreshTokenService refreshTokenService;
+    @Mock
     private DoseService doseService;
     @Mock
     private DoseGenerationService doseGenerationService;
@@ -60,7 +63,7 @@ class ReadAndAuthControllersTest {
                 new UsernamePasswordAuthenticationToken(principal, null, List.of()));
         mockMvc = MockMvcBuilders.standaloneSetup(
                 new AuthController(userService, new JwtService(
-                        "secreto-de-prueba-con-al-menos-32-caracteres", 60, Clock.systemUTC())),
+                        "secreto-de-prueba-con-al-menos-32-caracteres", 60, Clock.systemUTC()), refreshTokenService),
                 new UserController(userService),
                 new DoseController(doseService, doseGenerationService, false))
                 .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
@@ -83,7 +86,9 @@ class ReadAndAuthControllersTest {
 
     @Test
     void loginReturnsTokenAndUserWithoutPasswordHash() throws Exception {
-        when(userService.login(eq("ana@mail.com"), eq("secreto"), any())).thenReturn(user());
+        User user = user();
+        when(userService.login(eq("ana@mail.com"), eq("secreto"), any())).thenReturn(user);
+        when(refreshTokenService.issue(user)).thenReturn(new RefreshTokenService.IssuedToken("refresh-de-prueba", 172800));
 
         mockMvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"ana@mail.com\",\"password\":\"secreto\"}"))
@@ -91,6 +96,8 @@ class ReadAndAuthControllersTest {
                 .andExpect(jsonPath("$.accessToken").isNotEmpty())
                 .andExpect(jsonPath("$.tokenType").value("Bearer"))
                 .andExpect(jsonPath("$.expiresIn").value(3600))
+                .andExpect(jsonPath("$.refreshToken").value("refresh-de-prueba"))
+                .andExpect(jsonPath("$.refreshExpiresIn").value(172800))
                 .andExpect(jsonPath("$.user.email").value("ana@mail.com"))
                 .andExpect(jsonPath("$.user.passwordHash").doesNotExist());
     }

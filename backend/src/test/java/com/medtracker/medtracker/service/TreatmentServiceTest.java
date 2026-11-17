@@ -11,9 +11,11 @@ import com.medtracker.medtracker.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Clock;
@@ -30,8 +32,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -49,6 +53,8 @@ class TreatmentServiceTest {
     @Mock
     private UserService userService;
     @Mock
+    private DoseGenerationService doseGenerationService;
+    @Mock
     private AccessPolicy accessPolicy;
 
     private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), User.Role.PATIENT);
@@ -58,7 +64,7 @@ class TreatmentServiceTest {
     void setUp() {
         Clock clock = Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC);
         service = new TreatmentService(treatmentRepository, reminderRepository, medicationRepository,
-                userService, accessPolicy, clock);
+                userService, doseGenerationService, accessPolicy, clock);
     }
 
     private Treatment existing(UUID id) {
@@ -340,5 +346,132 @@ class TreatmentServiceTest {
         assertThatThrownBy(() -> service.markAsCompleted(principal, id))
                 .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
         verify(treatmentRepository, never()).save(any());
+    }
+
+    @Test
+    void markAsCompletedOfAnAlreadyCompletedTreatmentStaysIdempotent() {
+        UUID id = UUID.randomUUID();
+        Treatment treatment = existing(id);
+        treatment.setCompleted(true);
+        when(accessPolicy.requireTreatment(principal, id)).thenReturn(treatment);
+        when(treatmentRepository.save(treatment)).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(service.markAsCompleted(principal, id).isCompleted()).isTrue();
+    }
+
+    private Treatment completed(UUID id) {
+        Treatment treatment = existing(id);
+        treatment.setCompleted(true);
+        return treatment;
+    }
+
+    @Test
+    void reopenReturnsTheTreatmentWithCompletedFalseAndGeneratesTodaysDoses() {
+        UUID id = UUID.randomUUID();
+        Treatment completed = completed(id);
+        Treatment reloaded = existing(id);
+        when(accessPolicy.requireTreatment(principal, id)).thenReturn(completed);
+        when(treatmentRepository.reopenIfCompleted(id, NOW)).thenReturn(1);
+        when(treatmentRepository.findById(id)).thenReturn(Optional.of(reloaded));
+
+        Treatment result = service.reopen(principal, id);
+
+        assertThat(result.isCompleted()).isFalse();
+        verify(doseGenerationService).generateTodayForTreatment(id);
+    }
+
+    @Test
+    void reopenGeneratesDosesOnlyAfterTheUpdateIsCommitted() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(accessPolicy.requireTreatment(principal, id)).thenReturn(completed(id));
+        when(treatmentRepository.reopenIfCompleted(id, NOW)).thenReturn(1);
+        when(treatmentRepository.findById(id)).thenReturn(Optional.of(existing(id)));
+
+        service.reopen(principal, id);
+
+        // El UPDATE del repositorio es una transacción propia que se commitea al volver;
+        // la generación va después y fuera de cualquier transacción abierta por el service
+        InOrder order = inOrder(treatmentRepository, doseGenerationService);
+        order.verify(treatmentRepository).reopenIfCompleted(id, NOW);
+        order.verify(treatmentRepository).findById(id);
+        order.verify(doseGenerationService).generateTodayForTreatment(id);
+        assertThat(TreatmentService.class.isAnnotationPresent(Transactional.class)).isFalse();
+        assertThat(TreatmentService.class.getMethod("reopen", AuthenticatedUser.class, UUID.class)
+                .isAnnotationPresent(Transactional.class)).isFalse();
+        assertThat(TreatmentRepository.class.getMethod("reopenIfCompleted", UUID.class, LocalDateTime.class)
+                .isAnnotationPresent(Transactional.class)).isTrue();
+    }
+
+    @Test
+    void reopenDoesNotTouchTheReminders() {
+        UUID id = UUID.randomUUID();
+        when(accessPolicy.requireTreatment(principal, id)).thenReturn(completed(id));
+        when(treatmentRepository.reopenIfCompleted(id, NOW)).thenReturn(1);
+        when(treatmentRepository.findById(id)).thenReturn(Optional.of(existing(id)));
+
+        service.reopen(principal, id);
+
+        verifyNoInteractions(reminderRepository);
+    }
+
+    @Test
+    void reopenStillSucceedsWhenTheTreatmentEndDateAlreadyPassed() {
+        UUID id = UUID.randomUUID();
+        Treatment expired = completed(id);
+        expired.setEndDate(NOW.minusDays(2));
+        Treatment reloaded = existing(id);
+        reloaded.setEndDate(NOW.minusDays(2));
+        when(accessPolicy.requireTreatment(principal, id)).thenReturn(expired);
+        when(treatmentRepository.reopenIfCompleted(id, NOW)).thenReturn(1);
+        when(treatmentRepository.findById(id)).thenReturn(Optional.of(reloaded));
+
+        assertThat(service.reopen(principal, id).isCompleted()).isFalse();
+    }
+
+    @Test
+    void reopenSucceedsEvenIfGeneratingDosesFails() {
+        UUID id = UUID.randomUUID();
+        when(accessPolicy.requireTreatment(principal, id)).thenReturn(completed(id));
+        when(treatmentRepository.reopenIfCompleted(id, NOW)).thenReturn(1);
+        when(treatmentRepository.findById(id)).thenReturn(Optional.of(existing(id)));
+        doThrow(new IllegalStateException("fallo de generación"))
+                .when(doseGenerationService).generateTodayForTreatment(id);
+
+        assertThat(service.reopen(principal, id).isCompleted()).isFalse();
+    }
+
+    @Test
+    void reopenOfATreatmentThatIsNotCompletedIs409AndNothingIsWritten() {
+        UUID id = UUID.randomUUID();
+        when(accessPolicy.requireTreatment(principal, id)).thenReturn(existing(id));
+
+        assertThatThrownBy(() -> service.reopen(principal, id))
+                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+        verify(treatmentRepository, never()).reopenIfCompleted(any(), any());
+        verifyNoInteractions(doseGenerationService);
+    }
+
+    @Test
+    void reopenLosingTheRaceAgainstAnotherReopenIs409AndGeneratesNothing() {
+        UUID id = UUID.randomUUID();
+        // La lectura lo ve completado, pero otro pedido lo reabrió antes del UPDATE
+        when(accessPolicy.requireTreatment(principal, id)).thenReturn(completed(id));
+        when(treatmentRepository.reopenIfCompleted(id, NOW)).thenReturn(0);
+
+        assertThatThrownBy(() -> service.reopen(principal, id))
+                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+        verifyNoInteractions(doseGenerationService);
+    }
+
+    @Test
+    void reopenOfAForeignOrDeletedTreatmentIs404AndNothingIsWritten() {
+        UUID id = UUID.randomUUID();
+        when(accessPolicy.requireTreatment(principal, id))
+                .thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND));
+
+        assertThatThrownBy(() -> service.reopen(principal, id))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        verify(treatmentRepository, never()).reopenIfCompleted(any(), any());
+        verifyNoInteractions(doseGenerationService);
     }
 }
