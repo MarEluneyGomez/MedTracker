@@ -17,9 +17,10 @@ Al abrir la app sin sesión se ve la pantalla de bienvenida, con las opciones de
 Las dos pantallas usan el backend real, así que necesitan el backend corriendo (ver [Conexión con el backend](#conexión-con-el-backend)).
 
 - **Registro** (`POST /users/register`): pide nombre, email, contraseña (con su repetición) y rol, y valida los datos antes de enviarlos. La contraseña sigue la misma regla que el backend: entre 8 y 72 caracteres, con al menos una letra y un número. El registro no devuelve token, así que después la app inicia sesión sola con los mismos datos.
-- **Inicio de sesión** (`POST /auth/login`): el backend devuelve un token JWT junto con el usuario. Después de 5 intentos fallidos con el mismo email, lo bloquea por 15 minutos.
+- **Inicio de sesión** (`POST /auth/login`): el backend devuelve un token de acceso (JWT, 24 horas) y uno de renovación (48 horas sin uso), junto con el usuario. Después de 5 intentos fallidos con el mismo email, lo bloquea por 15 minutos.
+- **Cerrar sesión** (`POST /auth/logout`): además de borrar la sesión del dispositivo, anula el token de renovación en el servidor.
 
-El token se manda en cada pedido como `Authorization: Bearer <token>` (lo agrega `src/services/api.ts`); sin él, todos los endpoints salvo el login y el registro responden 401. El token vence a las 24 horas: cuando el backend lo rechaza, la app cierra la sesión, avisa "Tu sesión expiró" y vuelve a la bienvenida.
+El token de acceso se manda en cada pedido como `Authorization: Bearer <token>` (lo agrega `src/services/api.ts`); sin él, todos los endpoints salvo el login, el registro y la renovación responden 401. Cuando vence, la app pide un par nuevo con `POST /auth/refresh` y reintenta el pedido sin que el usuario se entere. Si fallan varios pedidos a la vez, se renueva una sola vez, porque el backend toma un token de renovación usado dos veces como robado y cierra todas las sesiones. Solo si la renovación es rechazada (por ejemplo, tras 48 horas sin usar la app), la app cierra la sesión, avisa "Tu sesión expiró" y vuelve a la bienvenida. Sin conexión la sesión no se cierra.
 
 Los mensajes de error que se muestran son los que devuelve el backend (por ejemplo "Credenciales incorrectas"), que nunca incluyen detalles internos; si no manda ninguno, se usa un mensaje genérico según el código de respuesta. Si el servidor no responde en 15 segundos, se avisa que no se pudo conectar.
 
@@ -31,7 +32,7 @@ Los mensajes de error que se muestran son los que devuelve el backend (por ejemp
 
 Mientras la app corre en modo desarrollo, la pantalla de inicio de sesión muestra un botón de acceso rápido para cada uno. En la app compilada para publicar esos botones no aparecen (`__DEV__`).
 
-La sesión (usuario y token) se guarda cifrada en el dispositivo (`expo-secure-store`), así que se mantiene al cerrar y volver a abrir la app mientras el token no haya vencido.
+La sesión (usuario y tokens) se guarda cifrada en el dispositivo (`expo-secure-store`), así que se mantiene al cerrar y volver a abrir la app.
 
 ## Tratamientos
 
@@ -77,8 +78,8 @@ frontend/
 │   ├── hooks/
 │   │   └── useFlashScrollIndicators.ts # Muestra la barra de scroll al abrir una lista en iOS
 │   ├── services/
-│   │   ├── api.ts          # Cliente HTTP: token en cada pedido, sesión vencida y errores (ApiError)
-│   │   ├── auth.ts         # Login, registro y guardado de la sesión con su token
+│   │   ├── api.ts          # Cliente HTTP: token en cada pedido, renovación de la sesión y errores (ApiError)
+│   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
