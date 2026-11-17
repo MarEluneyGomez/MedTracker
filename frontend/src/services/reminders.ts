@@ -16,6 +16,10 @@ export function getRemindersByTreatment(treatmentId: string): Promise<Reminder[]
   return apiRequest<Reminder[]>('GET', `/reminders/treatment/${treatmentId}`);
 }
 
+export function getReminders(): Promise<Reminder[]> {
+  return apiRequest<Reminder[]>('GET', '/reminders');
+}
+
 export function getReminder(id: string): Promise<Reminder> {
   return apiRequest<Reminder>('GET', `/reminders/${id}`);
 }

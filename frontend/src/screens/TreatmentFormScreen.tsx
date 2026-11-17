@@ -38,11 +38,18 @@ import {
 import { colors } from '../theme/colors';
 import { fieldError } from '../theme/typography';
 import type { Medication, Reminder } from '../types/api';
-import { fromBackendDate, toDayString, toEndOfDay, toStartOfDay } from '../utils/dates';
+import {
+  fromBackendDate,
+  isFutureDay,
+  toDayString,
+  toEndOfDay,
+  toStartOfDay,
+} from '../utils/dates';
 import { formatDosage, parseDosage, type Dosage } from '../utils/dosage';
 import { formatFrequency, parseFrequency, type Frequency } from '../utils/frequency';
 import {
   buildReminderMessage,
+  firstDayStartTime,
   initialSchedule,
   planSync,
   scheduleTargets,
@@ -74,6 +81,7 @@ export default function TreatmentFormScreen() {
   const [frequency, setFrequency] = useState<Frequency | null>(null);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [schedule, setSchedule] = useState<Schedule>(initialSchedule([]));
+  const [savedStart, setSavedStart] = useState<{ date: Date; time: string | null } | null>(null);
   const [startDate, setStartDate] = useState<Date | null>(new Date());
   const [hasEndDate, setHasEndDate] = useState<string | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
@@ -107,6 +115,7 @@ export default function TreatmentFormScreen() {
       setMedication(treatmentMedication);
       setReminders(savedReminders);
       setSchedule(initialSchedule(savedReminders));
+      setSavedStart({ date: fromBackendDate(treatment.startDate), time: treatment.startTime });
       setDosage(parseDosage(treatment.dosage));
       setFrequency(parseFrequency(treatment.frequency));
       setStartDate(fromBackendDate(treatment.startDate));
@@ -167,11 +176,18 @@ export default function TreatmentFormScreen() {
       return;
     }
 
+    // Si el tratamiento ya empezó, su hora de inicio es historial y no se recalcula
+    const hasStarted = savedStart !== null && !isFutureDay(savedStart.date);
+    const keepsStartTime = hasStarted && !isFutureDay(startDate);
+
     const changes: TreatmentChanges = {
       dosage: formatDosage(dosage),
       frequency: formatFrequency(frequency),
       startDate: toStartOfDay(startDate),
       endDate: hasEndDate === 'Sí' && endDate ? toEndOfDay(endDate) : null,
+      startTime: keepsStartTime
+        ? (savedStart?.time ?? null)
+        : firstDayStartTime(frequency, schedule, startDate),
     };
 
     setError(null);

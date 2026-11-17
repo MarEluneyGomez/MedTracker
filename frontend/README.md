@@ -4,7 +4,7 @@ App móvil del sistema de seguimiento de medicación, construida con **React Nat
 
 ## Estado actual
 
-Base de la app armada (Expo SDK 58): cliente de API, sesión de usuario, navegación según el rol, las pantallas de inicio de sesión y registro, y la gestión de tratamientos del paciente. El resto de las pantallas de cada sección son provisorias y se completan en las etapas siguientes. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
+Base de la app armada (Expo SDK 58): cliente de API, sesión de usuario, navegación según el rol, las pantallas de inicio de sesión y registro, la gestión de tratamientos y horarios del paciente, y la pantalla "Hoy" con las tomas del día. El resto de las pantallas de cada sección son provisorias y se completan en las etapas siguientes. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
 
 Al abrir la app sin sesión se ve la pantalla de bienvenida, con las opciones de iniciar sesión (CU-02) o crear una cuenta (CU-01). Al iniciar sesión se ven las pestañas que corresponden al rol:
 
@@ -58,7 +58,18 @@ Los horarios se eligen en el mismo formulario del tratamiento, al crearlo y al e
 
 Al guardar no se borra y se crea todo de nuevo: los horarios que no cambian se conservan, los que cambian se editan (el backend mueve la toma pendiente de hoy) y recién lo que sobra se elimina y lo que falta se crea. Así se conserva el historial de tomas y el backend nunca rechaza un horario como duplicado (RN-07). El texto del recordatorio lo arma la app, por ejemplo "Tomar 400 mg de Ibuprofeno".
 
-Endpoints: `GET /reminders/treatment/{treatmentId}`, `GET /reminders/{id}`, `POST /reminders/register`, `PUT /reminders/{id}` y `DELETE /reminders/{id}`.
+El día de inicio del tratamiento no se generan tomas anteriores a la primera toma, ni anteriores al momento de la carga si empieza hoy: la app lo indica al backend con `startTime`. Así, un tratamiento cargado a la tarde no muestra como atrasadas las tomas de la mañana. Una vez que el tratamiento empezó, `startTime` no se recalcula al editarlo, porque forma parte del historial.
+
+Endpoints: `GET /reminders`, `GET /reminders/treatment/{treatmentId}`, `GET /reminders/{id}`, `POST /reminders/register`, `PUT /reminders/{id}` y `DELETE /reminders/{id}`.
+
+## Hoy (tomas del día)
+
+Cubre CU-06 (confirmar toma) y RF-07. La pestaña Hoy muestra las tomas del día ordenadas por hora (`GET /doses/user/{userId}`, sin fecha: el backend usa el día de hoy de su zona horaria), con un resumen ("Tomaste 2 de 5") y una barra de progreso. Cada toma muestra la hora, el medicamento, la dosis y su estado con ícono y texto:
+
+- **Pendiente** o **Atrasada** (si la hora ya pasó): botones "La tomé" (`PUT /doses/{id}/confirm`) y "No la tomé" (`PUT /doses/{id}/skip`).
+- **Tomada a las HH:MM** o **No tomada**: botón "Deshacer" (`PUT /doses/{id}/undo`), que el backend permite para las tomas de hoy y de ayer.
+
+Ninguna acción pide confirmación porque todas se pueden deshacer. La toma solo trae su recordatorio, así que el medicamento y la dosis se buscan cruzando recordatorios, tratamientos y medicamentos, que se piden en paralelo. Al confirmar, omitir o deshacer se actualiza solo esa toma con la respuesta del backend, sin recargar la pantalla.
 
 ## Estructura
 
@@ -66,13 +77,14 @@ Endpoints: `GET /reminders/treatment/{treatmentId}`, `GET /reminders/{id}`, `POS
 frontend/
 ├── assets/                 # Íconos y splash de la app
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, login, registro, tratamientos y su formulario, horarios y su formulario, pestañas de cada rol, perfil)
+│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, pestañas de cada rol, perfil)
 │   ├── components/         # Componentes reutilizables
 │   │   ├── AppButton, Screen, TextField, Logo
 │   │   ├── Chip, RoleSelector, ChipSelector, DaySelector # Selección entre opciones
 │   │   ├── DateField, TimeField # Campos de fecha y hora
 │   │   ├── MedicationPicker, DosagePicker, FrequencyPicker # Partes del formulario de tratamiento
-│   │   └── SchedulePicker, ScheduleSaveBar # Horarios según la frecuencia
+│   │   ├── SchedulePicker, ScheduleSaveBar # Horarios según la frecuencia
+│   │   └── DoseCard # Una toma del día con su estado y acciones
 │   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, headerOptions y lista de pantallas (types.ts)
 │   ├── context/            # AuthContext: sesión compartida por toda la app
 │   ├── hooks/
@@ -80,6 +92,7 @@ frontend/
 │   ├── services/
 │   │   ├── api.ts          # Cliente HTTP: token en cada pedido, renovación de la sesión y errores (ApiError)
 │   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión
+│   │   ├── doses.ts        # Tomas del día: confirmar, omitir y deshacer
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
@@ -88,7 +101,7 @@ frontend/
 │   │   ├── colors.ts       # Paleta de colores
 │   │   └── typography.ts   # Estilos de texto compartidos (etiquetas y errores de campos)
 │   └── utils/
-│       ├── dates.ts        # Conversión de fechas entre la app y el backend
+│       ├── dates.ts        # Conversión y formato de fechas y horas, nombres de días y meses
 │       ├── dosage.ts       # Formato y lectura de la dosis
 │       ├── frequency.ts    # Formato y lectura de la frecuencia
 │       ├── reminders.ts    # Cálculo de horarios y plan de cambios al guardarlos

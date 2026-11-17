@@ -1,5 +1,5 @@
 import type { Reminder, WeekDay } from '../types/api';
-import { formatDate } from './dates';
+import { formatDate, isToday } from './dates';
 import type { Frequency, IntervalFrequency } from './frequency';
 
 export type TimeOfDay = {
@@ -304,4 +304,32 @@ export function planSync(
 
 export function isPlanEmpty({ updates, creates, deletes }: SyncPlan): boolean {
   return updates.length === 0 && creates.length === 0 && deletes.length === 0;
+}
+
+function currentTimeOfDay(): TimeOfDay {
+  const now = new Date();
+  return { hours: now.getHours(), minutes: now.getMinutes() };
+}
+
+function firstDoseTime(frequency: Frequency | null, schedule: Schedule): TimeOfDay | null {
+  if (frequency?.kind === 'timesPerDay') {
+    return firstOfDay(freeTimesFor(schedule, frequency.times));
+  }
+  return scheduleModeOf(frequency) === 'fixed' ? schedule.firstTime : null;
+}
+
+// El día de inicio no se generan tomas anteriores a la primera, ni anteriores al
+// momento de la carga si empieza hoy: no corresponde tomarlas y afectarían la adherencia
+export function firstDayStartTime(
+  frequency: Frequency | null,
+  schedule: Schedule,
+  startDate: Date,
+): string | null {
+  const first = firstDoseTime(frequency, schedule);
+  if (!isToday(startDate)) {
+    return first ? toBackendTime(first) : null;
+  }
+  const now = currentTimeOfDay();
+  const latest = first && toMinutes(first) > toMinutes(now) ? first : now;
+  return toBackendTime(latest);
 }

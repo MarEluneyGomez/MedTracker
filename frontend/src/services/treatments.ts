@@ -7,6 +7,7 @@ export type TreatmentData = {
   frequency: string;
   startDate: string; // formato "2026-10-20T08:00:00"
   endDate: string | null;
+  startTime: string | null; // formato "08:00:00"
 };
 
 // El backend ya excluye los tratamientos eliminados lógicamente
@@ -26,6 +27,7 @@ export function createTreatment(userId: string, data: TreatmentData): Promise<Tr
     frequency: data.frequency.trim(),
     startDate: data.startDate,
     endDate: data.endDate,
+    startTime: data.startTime,
   });
 }
 
@@ -46,6 +48,7 @@ export function updateTreatment(id: string, changes: TreatmentChanges): Promise<
     frequency: changes.frequency.trim(),
     startDate: changes.startDate,
     endDate: changes.endDate,
+    startTime: changes.startTime,
   });
 }
 

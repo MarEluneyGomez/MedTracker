@@ -18,6 +18,14 @@ export function toDayString(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+export function isToday(date: Date): boolean {
+  return toDayString(date) === toDayString(new Date());
+}
+
+export function isFutureDay(date: Date): boolean {
+  return toDayString(date) > toDayString(new Date());
+}
+
 function toBackendDate(date: Date, time: string): string {
   return `${toDayString(date)}T${time}`;
 }
@@ -29,4 +37,31 @@ export function toStartOfDay(date: Date): string {
 // El fin se guarda al final del día para que el último día del tratamiento también cuente
 export function toEndOfDay(date: Date): string {
   return toBackendDate(date, '23:59:59');
+}
+
+export const MONTH_NAMES = [
+  'Enero',
+  'Febrero',
+  'Marzo',
+  'Abril',
+  'Mayo',
+  'Junio',
+  'Julio',
+  'Agosto',
+  'Septiembre',
+  'Octubre',
+  'Noviembre',
+  'Diciembre',
+];
+
+export const DAY_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
+export function formatLongDate(date: Date): string {
+  return `${DAY_NAMES[date.getDay()]} ${date.getDate()} de ${MONTH_NAMES[date.getMonth()].toLowerCase()}`;
+}
+
+// El backend manda fecha y hora juntas, como "2026-11-17T08:05:12"
+export function formatClockTime(isoDateTime: string): string {
+  const [, time] = isoDateTime.split('T');
+  return time.slice(0, 5);
 }
