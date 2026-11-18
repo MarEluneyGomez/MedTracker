@@ -8,6 +8,7 @@ import com.medtracker.medtracker.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -25,6 +26,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -90,7 +93,7 @@ class ReminderServiceTest {
         when(accessPolicy.requireTreatment(principal, treatment.getId())).thenReturn(treatment);
         when(reminderRepository.findByTreatmentId(treatment.getId())).thenReturn(List.of());
         when(reminderRepository.save(incoming)).thenAnswer(inv -> inv.getArgument(0));
-        org.mockito.Mockito.doThrow(new IllegalStateException("db"))
+        doThrow(new IllegalStateException("db"))
                 .when(doseGenerationService).generateTodayForReminder(any());
 
         assertThat(service.register(principal, incoming)).isSameAs(incoming);
@@ -130,7 +133,7 @@ class ReminderServiceTest {
         when(accessPolicy.requireReminder(principal, current.getId())).thenReturn(current);
         when(reminderRepository.findByTreatmentId(treatment.getId())).thenReturn(List.of(current));
         when(reminderRepository.save(any(Reminder.class))).thenAnswer(inv -> inv.getArgument(0));
-        org.mockito.Mockito.doThrow(new IllegalStateException("db"))
+        doThrow(new IllegalStateException("db"))
                 .when(doseGenerationService).rescheduleTodayPending(any());
 
         assertThat(service.update(principal, current.getId(), changes(LocalTime.of(9, 0), null, "x")).getTime())
@@ -147,6 +150,46 @@ class ReminderServiceTest {
         service.update(principal, current.getId(), changes(LocalTime.of(9, 30), null, "Nuevo"));
 
         verify(doseGenerationService).rescheduleTodayPending(current);
+    }
+
+    @Test
+    void updateGeneratesTodaysDoseAfterReschedulingThePendingOne() {
+        Reminder current = reminder(LocalTime.of(8, 0), null);
+        when(accessPolicy.requireReminder(principal, current.getId())).thenReturn(current);
+        when(reminderRepository.findByTreatmentId(treatment.getId())).thenReturn(List.of(current));
+        when(reminderRepository.save(any(Reminder.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.update(principal, current.getId(), changes(LocalTime.of(9, 30), null, "Nuevo"));
+
+        InOrder order = inOrder(doseGenerationService);
+        order.verify(doseGenerationService).rescheduleTodayPending(current);
+        order.verify(doseGenerationService).generateTodayForReminder(current.getId());
+    }
+
+    @Test
+    void updateStillGeneratesTodaysDoseWhenReschedulingFails() {
+        Reminder current = reminder(LocalTime.of(8, 0), null);
+        when(accessPolicy.requireReminder(principal, current.getId())).thenReturn(current);
+        when(reminderRepository.findByTreatmentId(treatment.getId())).thenReturn(List.of(current));
+        when(reminderRepository.save(any(Reminder.class))).thenAnswer(inv -> inv.getArgument(0));
+        doThrow(new IllegalStateException("db")).when(doseGenerationService).rescheduleTodayPending(any());
+
+        assertThat(service.update(principal, current.getId(), changes(LocalTime.of(9, 0), null, "x")).getTime())
+                .isEqualTo(LocalTime.of(9, 0));
+        verify(doseGenerationService).generateTodayForReminder(current.getId());
+    }
+
+    @Test
+    void updateKeepsEditWhenGeneratingTodaysDoseFails() {
+        Reminder current = reminder(LocalTime.of(8, 0), null);
+        when(accessPolicy.requireReminder(principal, current.getId())).thenReturn(current);
+        when(reminderRepository.findByTreatmentId(treatment.getId())).thenReturn(List.of(current));
+        when(reminderRepository.save(any(Reminder.class))).thenAnswer(inv -> inv.getArgument(0));
+        doThrow(new IllegalStateException("db"))
+                .when(doseGenerationService).generateTodayForReminder(any());
+
+        assertThat(service.update(principal, current.getId(), changes(LocalTime.of(9, 0), null, "x")).getTime())
+                .isEqualTo(LocalTime.of(9, 0));
     }
 
     @Test
