@@ -70,6 +70,26 @@ public interface DoseRepository extends JpaRepository<Dose, UUID> {
                               @Param("confirmedAt") LocalDateTime confirmedAt,
                               @Param("now") LocalDateTime now);
 
+    // RN-04: pasa a SKIPPED las tomas PENDING cuyo horario es anterior a limit.
+    // Solo toca tomas vigentes de recordatorios, tratamientos y usuarios que no
+    // estén dados de baja, y deja confirmedAt como está (nulo). Los estados van
+    // como parámetros porque dose_status es un enum nativo de Postgres. Un UPDATE
+    // masivo no dispara @UpdateTimestamp, por eso se setea updatedAt. Devuelve
+    // las filas afectadas.
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update Dose d set d.status = :skipped, d.updatedAt = :now
+            where d.status = :pending and d.deletedAt is null and d.scheduledAt < :limit
+              and d.reminder.id in (
+                select r.id from Reminder r join r.treatment t join t.user u
+                where r.deletedAt is null and t.deletedAt is null and u.deletedAt is null)
+            """)
+    int skipPendingBefore(@Param("limit") LocalDateTime limit,
+                          @Param("now") LocalDateTime now,
+                          @Param("pending") Dose.DoseStatus pending,
+                          @Param("skipped") Dose.DoseStatus skipped);
+
     // Dosis del usuario dentro de [start, end), sin las de tratamientos o
     // recordatorios eliminados (no deben aparecer como pendientes en "Hoy")
     @Query("""

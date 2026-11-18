@@ -80,16 +80,27 @@ public class DoseService {
                     "Una toma solo puede pasar a CONFIRMED o SKIPPED");
         }
         Dose dose = accessPolicy.requireDose(principal, id);
-        if (dose.getStatus() != Dose.DoseStatus.PENDING) {
+        boolean confirming = newStatus == Dose.DoseStatus.CONFIRMED;
+        if (confirming && dose.getStatus() == Dose.DoseStatus.SKIPPED) {
+            // Una toma omitida (a mano o por el job) se puede confirmar dentro de la misma ventana que undo
+            if (dose.getScheduledAt().isBefore(undoWindowStart())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "La toma omitida ya no se puede confirmar");
+            }
+        } else if (dose.getStatus() != Dose.DoseStatus.PENDING) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "La toma ya fue " + dose.getStatus().name().toLowerCase(Locale.ROOT));
         }
         LocalDateTime now = LocalDateTime.now(clock);
-        LocalDateTime confirmedAt = newStatus == Dose.DoseStatus.CONFIRMED ? now : null;
-        // El cambio solo se aplica si la toma sigue PENDING en la base: si otro
-        // pedido se adelantó, no se pisa su resultado
-        int updated = doseRepository.updateStatusIfCurrent(id, List.of(Dose.DoseStatus.PENDING),
-                newStatus, confirmedAt, now);
+        LocalDateTime confirmedAt = confirming ? now : null;
+        // SKIPPED va en expected al confirmar porque el job de RN-04 (DoseAutoSkipScheduler)
+        // puede omitir la toma entre la lectura y el UPDATE
+        List<Dose.DoseStatus> expected = confirming
+                ? List.of(Dose.DoseStatus.PENDING, Dose.DoseStatus.SKIPPED)
+                : List.of(Dose.DoseStatus.PENDING);
+        // El cambio solo se aplica si la toma sigue en un estado esperado en la base:
+        // si otro pedido se adelantó, no se pisa su resultado
+        int updated = doseRepository.updateStatusIfCurrent(id, expected, newStatus, confirmedAt, now);
         if (updated == 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "La toma ya cambió de estado");
         }
@@ -104,8 +115,7 @@ public class DoseService {
         if (dose.getStatus() == Dose.DoseStatus.PENDING) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "La toma está pendiente: no hay nada que deshacer");
         }
-        LocalDateTime windowStart = LocalDate.now(clock).minusDays(UNDO_WINDOW_DAYS).atStartOfDay();
-        if (dose.getScheduledAt().isBefore(windowStart)) {
+        if (dose.getScheduledAt().isBefore(undoWindowStart())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "La toma ya no se puede deshacer");
         }
         int updated = doseRepository.updateStatusIfCurrent(id,
@@ -115,6 +125,11 @@ public class DoseService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "La toma ya cambió de estado");
         }
         return reload(id);
+    }
+
+    // Inicio de la ventana de ayer (zona configurada): desde ahí se puede deshacer o confirmar una omitida
+    private LocalDateTime undoWindowStart() {
+        return LocalDate.now(clock).minusDays(UNDO_WINDOW_DAYS).atStartOfDay();
     }
 
     // Relee la toma después de un UPDATE directo, que no actualiza la entidad en memoria
