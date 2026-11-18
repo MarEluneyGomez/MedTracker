@@ -10,6 +10,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.medtracker.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6E1FF",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -26,6 +27,12 @@
       "expo-font",
       "expo-status-bar",
       "expo-notifications"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "d7a0f73b-11fe-48cd-9061-2b74599ac0dd"
+      }
+    },
+    "owner": "mareluneygomez"
   }
 }

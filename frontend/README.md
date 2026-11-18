@@ -94,8 +94,7 @@ Cubre RF-06 con notificaciones locales: el celular avisa cada toma a su hora con
 - **Al tocar una notificación** se abre Hoy, donde está la toma para marcarla.
 - **Al cerrar sesión** se cancelan todas: son datos de salud y no deben sonar en el celular de otra persona.
 - **Permiso:** se pide la primera vez que se programan. Si la persona lo niega, la app funciona igual, sin avisos. En Android las notificaciones van en el canal "Recordatorios de medicación", con importancia alta para que suenen y aparezcan arriba de la pantalla.
-
-**Limitaciones de Expo Go en Android:** no puede crear el canal (la app sigue igual y Android usa un canal genérico) y se cierra al tocar una notificación. Para probar esas partes hace falta la app compilada.
+**Limitaciones de Expo Go en Android:** no puede crear el canal (la app sigue igual y Android usa un canal genérico) y se cierra al tocar una notificación. Por eso la app se prueba con un development build (ver "Ejecución").
 
 ## Sin conexión
 
@@ -164,6 +163,7 @@ frontend/
 ├── App.tsx                 # Componente raíz
 ├── index.ts                # Punto de entrada
 ├── app.json                # Configuración de Expo
+├── eas.json                # Perfiles de compilación con EAS Build
 ├── .prettierrc             # Reglas de formato del código
 ├── tsconfig.json
 └── package.json
@@ -171,14 +171,25 @@ frontend/
 
 ## Ejecución
 
-Requiere Node.js. Desde esta carpeta:
+Requiere Node.js. La app se prueba con un **development build**: un APK de MedTracker que se instala una vez en el celular y carga el código desde la PC, como Expo Go. Se usa en lugar de Expo Go porque las notificaciones no funcionan bien ahí (ver "Notificaciones").
+
+**Instalar la app en el celular** (una sola vez, y de nuevo solo cuando cambia la parte nativa: librerías con código nativo, permisos o plugins de `app.json`, o la versión de Expo). Se compila en la nube con EAS Build, con una cuenta de Expo:
+
+```bash
+npx eas-cli@latest login
+npx eas-cli@latest build --profile development --platform android
+```
+
+Al terminar, la página del build tiene el link y el QR para descargar el APK. Con la cuenta gratuita, entre la fila y la compilación tarda alrededor de una hora.
+
+**Levantar la app** desde esta carpeta:
 
 ```bash
 npm install
-npx expo start
+npx expo start --dev-client
 ```
 
-La terminal muestra un código QR: escanearlo con la app **Expo Go** (Android o iOS) abre la app en el celular, que tiene que estar en la misma red que la PC. También se puede abrir en un emulador de Android con la tecla `a`.
+Abrir MedTracker en el celular, que tiene que estar en la misma red que la PC, y elegir la PC en la lista de servidores o escanear el QR de la terminal. Los cambios en el código se ven al guardar, sin recompilar.
 
 Para agregar dependencias usar `npx expo install <paquete>` en vez de `npm install`, así se instala la versión compatible con el SDK de Expo.
 
