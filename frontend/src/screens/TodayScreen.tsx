@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import { ApiError } from '../services/api';
 import { changeDose, getTodayDoses, syncPendingDoseActions } from '../services/doses';
+import { syncDoseNotifications } from '../services/doseNotifications';
 import {
   applyPendingDoseActions,
   loadPendingDoseActions,
@@ -87,6 +88,9 @@ export default function TodayScreen() {
         }
         return next;
       });
+      if (user) {
+        syncDoseNotifications(user.id);
+      }
     } catch (e) {
       Alert.alert('No se pudo guardar', e instanceof ApiError ? e.message : 'Intentá de nuevo.');
       await load();

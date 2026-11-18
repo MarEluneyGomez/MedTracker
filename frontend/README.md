@@ -83,6 +83,20 @@ Cubre CU-07, RF-08 y RF-09. La pestaña Historial trae todas las tomas del usuar
 
 Cuentan las tomas ya marcadas, aunque se hayan marcado antes de hora, y las pendientes cuya hora ya pasó: una toma que todavía no toca no es un incumplimiento. El backend no devuelve las tomas de tratamientos o recordatorios eliminados, así que no aparecen en el historial; las de tratamientos completados sí. El cálculo se hace en la app (`src/utils/adherence.ts`), así que cambiar de período no vuelve a pedir datos.
 
+## Notificaciones
+
+Cubre RF-06 con notificaciones locales: el celular avisa cada toma a su hora con el texto del recordatorio ("Hora de tu medicación: Tomar 400 mg de Ibuprofeno"), sin depender de la conexión ni del servidor.
+
+- **Qué se programa:** la app calcula las tomas que vienen con las mismas reglas con las que el backend las genera (días de la semana, cada N días, fechas e horas de inicio y fin del tratamiento, tratamientos completados) en `src/utils/upcomingDoses.ts`. Cada una es una notificación de un solo disparo, sin repeticiones del sistema, así nunca suena un horario que ya no existe.
+- **Tomas ya marcadas:** las de hoy que ya están confirmadas u omitidas no suenan, incluidas las marcadas sin conexión.
+- **Límite:** iOS admite hasta 64 notificaciones programadas por app, así que se programan las 60 más próximas. Si hay más, un minuto después de la última llega "Abrí MedTracker para seguir recibiendo los avisos de tus tomas".
+- **Cuándo se recalculan:** al iniciar sesión o abrir la app, cada vez que vuelve a primer plano, al volver a la lista de Tratamientos (después de crear, editar o borrar tratamientos y horarios) y después de marcar una toma. Cada recálculo cancela todas y programa la lista nueva, de a uno por vez para que no se mezclen.
+- **Al tocar una notificación** se abre Hoy, donde está la toma para marcarla.
+- **Al cerrar sesión** se cancelan todas: son datos de salud y no deben sonar en el celular de otra persona.
+- **Permiso:** se pide la primera vez que se programan. Si la persona lo niega, la app funciona igual, sin avisos. En Android las notificaciones van en el canal "Recordatorios de medicación", con importancia alta para que suenen y aparezcan arriba de la pantalla.
+
+**Limitaciones de Expo Go en Android:** no puede crear el canal (la app sigue igual y Android usa un canal genérico) y se cierra al tocar una notificación. Para probar esas partes hace falta la app compilada.
+
 ## Sin conexión
 
 Cubre RNF-05 (ver los datos ya cargados sin conexión). Cada lectura que responde el backend con la sesión iniciada (tratamientos, horarios, tomas, historial) se guarda en el dispositivo con `AsyncStorage`, junto con la fecha y hora. Si después un pedido falla por falta de conexión o porque el servidor no responde en 7 segundos, la app muestra la última copia guardada y un aviso arriba de la pantalla: "Sin conexión. Estás viendo los datos guardados el 18/11 a las 10:15". Si se muestran varias copias, el aviso usa la más vieja. El aviso también aparece cuando falla por falta de conexión cualquier otro pedido con la sesión iniciada (por ejemplo, marcar una toma), con la hora de la última respuesta del servidor, que es lo más reciente que puede tener la pantalla. Apenas el servidor vuelve a responder, el aviso desaparece.
@@ -117,8 +131,10 @@ frontend/
 │   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, headerOptions y lista de pantallas (types.ts)
 │   ├── context/            # AuthContext: sesión compartida por toda la app
 │   ├── hooks/
+│   │   ├── useDoseNotificationsSync.ts # Recalcula las notificaciones al entrar y al volver a primer plano
 │   │   ├── useFlashScrollIndicators.ts # Muestra la barra de scroll al abrir una lista en iOS
-│   │   └── useOfflineDataSavedAt.ts # Fecha de los datos guardados que se muestran sin conexión
+│   │   ├── useOfflineDataSavedAt.ts # Fecha de los datos guardados que se muestran sin conexión
+│   │   └── useOpenTodayOnNotificationTap.ts # Abre Hoy al tocar una notificación
 │   ├── services/
 │   │   ├── api.ts          # Cliente HTTP: token en cada pedido, renovación de la sesión, copias sin conexión y errores (ApiError)
 │   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión
@@ -126,6 +142,8 @@ frontend/
 │   │   ├── connection.ts   # Si se están mostrando datos guardados y de cuándo
 │   │   ├── pendingDoseActions.ts # Acciones sobre tomas hechas sin conexión, en espera de mandarse
 │   │   ├── doses.ts        # Tomas: todas, las de hoy, confirmar, omitir y deshacer
+│   │   ├── notifications.ts # Permiso, canal de Android y programar o cancelar notificaciones
+│   │   ├── doseNotifications.ts # Qué notificaciones programar según las tomas que vienen
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
@@ -141,6 +159,7 @@ frontend/
 │       ├── frequency.ts    # Formato y lectura de la frecuencia
 │       ├── reminders.ts    # Cálculo de horarios y plan de cambios al guardarlos
 │       ├── text.ts         # Mayúscula inicial y búsqueda sin tildes
+│       ├── upcomingDoses.ts # Tomas que vienen, con las mismas reglas que el backend
 │       └── calendarLocale.ts # Calendario en español
 ├── App.tsx                 # Componente raíz
 ├── index.ts                # Punto de entrada

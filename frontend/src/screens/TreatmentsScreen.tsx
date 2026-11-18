@@ -13,6 +13,7 @@ import Screen from '../components/Screen';
 import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import { ApiError } from '../services/api';
+import { syncDoseNotifications } from '../services/doseNotifications';
 import { getMedications } from '../services/medications';
 import {
   completeTreatment,
@@ -67,6 +68,7 @@ export default function TreatmentsScreen() {
       }
       setTreatments(userTreatments);
       setMedications(byId);
+      syncDoseNotifications(user.id);
       setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudieron cargar los tratamientos.');
