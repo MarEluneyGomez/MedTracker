@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -25,6 +26,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class DoseGenerationService {
 
+    // Margen con el que una dosis de hoy todavía se considera vigente: una
+    // dosis solo se crea o se mueve a un horario si no pasó hace más de esto
+    // (cubre también al job de medianoche, que puede disparar con un leve retraso)
+    private static final Duration PAST_DOSE_MARGIN = Duration.ofMinutes(5);
+
     private final ReminderRepository reminderRepository;
     private final DoseRepository doseRepository;
     private final Clock clock;
@@ -32,31 +38,37 @@ public class DoseGenerationService {
     // Genera las dosis de hoy (en la zona horaria configurada)
     @Transactional
     public int generateForToday() {
-        return generateFor(LocalDate.now(clock));
+        LocalDateTime now = LocalDateTime.now(clock);
+        return generateFor(now.toLocalDate(), now);
     }
 
     // Genera las dosis PENDING del día indicado y devuelve cuántas creó
     @Transactional
     public int generateFor(LocalDate day) {
+        return generateFor(day, LocalDateTime.now(clock));
+    }
+
+    private int generateFor(LocalDate day, LocalDateTime now) {
         List<Reminder> eligible = reminderRepository.findEligibleForDay(
                 day.atStartOfDay(), day.plusDays(1).atStartOfDay());
 
         int created = 0;
         for (Reminder reminder : eligible) {
-            if (createDoseIfDue(reminder, day)) {
+            if (createDoseIfDue(reminder, day, now)) {
                 created++;
             }
         }
         return created;
     }
 
-    // Genera ya mismo la dosis de hoy de un recordatorio recién creado, sin
-    // esperar al job de medianoche. Devuelve cuántas creó (0 o 1).
+    // Genera ya mismo la dosis de hoy de un recordatorio recién creado o editado,
+    // sin esperar al job de medianoche. Devuelve cuántas creó (0 o 1).
     @Transactional
     public int generateTodayForReminder(UUID reminderId) {
+        LocalDateTime now = LocalDateTime.now(clock);
         return reminderRepository.findById(reminderId)
                 .filter(reminder -> reminder.isActive() && reminder.getDeletedAt() == null)
-                .map(reminder -> createDoseIfDue(reminder, LocalDate.now(clock)) ? 1 : 0)
+                .map(reminder -> createDoseIfDue(reminder, now.toLocalDate(), now) ? 1 : 0)
                 .orElse(0);
     }
 
@@ -65,10 +77,10 @@ public class DoseGenerationService {
     // horas, días o intervalo). Idempotente. Devuelve cuántas creó.
     @Transactional
     public int generateTodayForTreatment(UUID treatmentId) {
-        LocalDate today = LocalDate.now(clock);
+        LocalDateTime now = LocalDateTime.now(clock);
         int created = 0;
         for (Reminder reminder : reminderRepository.findByTreatmentIdAndDeletedAtIsNull(treatmentId)) {
-            if (reminder.isActive() && createDoseIfDue(reminder, today)) {
+            if (reminder.isActive() && createDoseIfDue(reminder, now.toLocalDate(), now)) {
                 created++;
             }
         }
@@ -76,11 +88,16 @@ public class DoseGenerationService {
     }
 
     // Al editar un recordatorio, la dosis PENDING de hoy pasa al nuevo horario.
-    // Las CONFIRMED o SKIPPED quedan intactas como historial.
+    // Las CONFIRMED o SKIPPED quedan intactas como historial. Si el nuevo
+    // horario de hoy ya pasó, la dosis no se mueve: sigue PENDING en el anterior.
     @Transactional
     public void rescheduleTodayPending(Reminder reminder) {
-        LocalDate day = LocalDate.now(clock);
+        LocalDateTime now = LocalDateTime.now(clock);
+        LocalDate day = now.toLocalDate();
         LocalDateTime newScheduledAt = day.atTime(reminder.getTime());
+        if (isPastToday(day, newScheduledAt, now)) {
+            return;
+        }
         List<Dose> pending = doseRepository.findByReminderAndStatusInPeriod(reminder.getId(),
                 Dose.DoseStatus.PENDING, day.atStartOfDay(), day.plusDays(1).atStartOfDay());
         for (Dose dose : pending) {
@@ -94,8 +111,10 @@ public class DoseGenerationService {
     }
 
     // Crea la dosis PENDING del recordatorio para el día si corresponde:
-    // tratamiento vigente ese día, día de la semana válido y sin dosis previa
-    private boolean createDoseIfDue(Reminder reminder, LocalDate day) {
+    // tratamiento vigente ese día, día de la semana válido, hora que no pasó
+    // (solo hoy) y sin dosis previa. Un recordatorio tiene como máximo una dosis
+    // por día: si ya tiene una vigente ese día, en cualquier estado, no crea otra.
+    private boolean createDoseIfDue(Reminder reminder, LocalDate day, LocalDateTime now) {
         // Los días se guardan como MON..SUN, igual que las 3 primeras letras del enum
         String dayCode = day.getDayOfWeek().name().substring(0, 3);
         if (!treatmentActiveOn(reminder.getTreatment(), day, reminder.getTime())
@@ -103,7 +122,15 @@ public class DoseGenerationService {
             return false;
         }
         LocalDateTime scheduledAt = day.atTime(reminder.getTime());
+        if (isPastToday(day, scheduledAt, now)) {
+            return false;
+        }
+        // Exacto: también cuenta las dosis con baja lógica, que el índice único no admite repetir
         if (doseRepository.existsByReminderIdAndScheduledAt(reminder.getId(), scheduledAt)) {
+            return false;
+        }
+        if (doseRepository.existsByReminderIdAndScheduledAtGreaterThanEqualAndScheduledAtLessThanAndDeletedAtIsNull(
+                reminder.getId(), day.atStartOfDay(), day.plusDays(1).atStartOfDay())) {
             return false;
         }
         doseRepository.save(Dose.builder()
@@ -111,6 +138,13 @@ public class DoseGenerationService {
                 .scheduledAt(scheduledAt)
                 .build());
         return true;
+    }
+
+    // Regla de "dosis pasada": solo rige para hoy. Una dosis de hoy con
+    // scheduledAt anterior a (ahora - margen) ya pasó y no se crea ni se mueve
+    // ahí. Otros días no se tocan.
+    private boolean isPastToday(LocalDate day, LocalDateTime scheduledAt, LocalDateTime now) {
+        return day.equals(now.toLocalDate()) && scheduledAt.isBefore(now.minus(PAST_DOSE_MARGIN));
     }
 
     // El día debe caer dentro de [startDate, endDate] del tratamiento (la hora de

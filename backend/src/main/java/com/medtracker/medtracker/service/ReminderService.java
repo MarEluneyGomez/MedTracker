@@ -171,6 +171,13 @@ public class ReminderService {
             // La edición ya quedó guardada; no se le informa un error al cliente
             log.error("No se pudo reprogramar la dosis de hoy del recordatorio {}", saved.getId(), e);
         }
+        // Si el nuevo patrón incluye hoy y no hay dosis, se genera (si su hora no pasó);
+        // va aparte para que un fallo del paso anterior no lo impida
+        try {
+            doseGenerationService.generateTodayForReminder(saved.getId());
+        } catch (RuntimeException e) {
+            log.error("No se pudo generar la dosis de hoy del recordatorio {}", saved.getId(), e);
+        }
         return saved;
     }
 
