@@ -12,7 +12,6 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -77,7 +76,7 @@ public class DoseService {
     public Dose changeStatus(AuthenticatedUser principal, UUID id, Dose.DoseStatus newStatus) {
         if (newStatus == Dose.DoseStatus.PENDING) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Una toma solo puede pasar a CONFIRMED o SKIPPED");
+                    "Una toma solo puede pasar a confirmada u omitida");
         }
         Dose dose = accessPolicy.requireDose(principal, id);
         boolean confirming = newStatus == Dose.DoseStatus.CONFIRMED;
@@ -89,7 +88,7 @@ public class DoseService {
             }
         } else if (dose.getStatus() != Dose.DoseStatus.PENDING) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "La toma ya fue " + dose.getStatus().name().toLowerCase(Locale.ROOT));
+                    "La toma ya fue " + statusInSpanish(dose.getStatus()));
         }
         LocalDateTime now = LocalDateTime.now(clock);
         LocalDateTime confirmedAt = confirming ? now : null;
@@ -125,6 +124,15 @@ public class DoseService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "La toma ya cambió de estado");
         }
         return reload(id);
+    }
+
+    // Estado en español para los mensajes al cliente (el enum y el JSON no cambian)
+    private static String statusInSpanish(Dose.DoseStatus status) {
+        return switch (status) {
+            case PENDING -> "pendiente";
+            case CONFIRMED -> "confirmada";
+            case SKIPPED -> "omitida";
+        };
     }
 
     // Inicio de la ventana de ayer (zona configurada): desde ahí se puede deshacer o confirmar una omitida

@@ -141,7 +141,7 @@ class DoseServiceTest {
         assertThatThrownBy(() -> service.changeStatus(principal, confirmed.getId(), Dose.DoseStatus.CONFIRMED))
                 .satisfies(e -> {
                     assertStatus(e, HttpStatus.CONFLICT);
-                    assertThat(((ResponseStatusException) e).getReason()).isEqualTo("La toma ya fue confirmed");
+                    assertThat(((ResponseStatusException) e).getReason()).isEqualTo("La toma ya fue confirmada");
                 });
         verifyNoStatusUpdate();
     }
@@ -154,7 +154,7 @@ class DoseServiceTest {
         assertThatThrownBy(() -> service.changeStatus(principal, skipped.getId(), Dose.DoseStatus.SKIPPED))
                 .satisfies(e -> {
                     assertStatus(e, HttpStatus.CONFLICT);
-                    assertThat(((ResponseStatusException) e).getReason()).isEqualTo("La toma ya fue skipped");
+                    assertThat(((ResponseStatusException) e).getReason()).isEqualTo("La toma ya fue omitida");
                 });
         verifyNoStatusUpdate();
     }
@@ -165,7 +165,10 @@ class DoseServiceTest {
         when(accessPolicy.requireDose(principal, confirmed.getId())).thenReturn(confirmed);
 
         assertThatThrownBy(() -> service.changeStatus(principal, confirmed.getId(), Dose.DoseStatus.SKIPPED))
-                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+                .satisfies(e -> {
+                    assertStatus(e, HttpStatus.CONFLICT);
+                    assertThat(((ResponseStatusException) e).getReason()).isEqualTo("La toma ya fue confirmada");
+                });
         verifyNoStatusUpdate();
     }
 
@@ -184,7 +187,11 @@ class DoseServiceTest {
         UUID id = UUID.randomUUID();
 
         assertThatThrownBy(() -> service.changeStatus(principal, id, Dose.DoseStatus.PENDING))
-                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+                .satisfies(e -> {
+                    assertStatus(e, HttpStatus.BAD_REQUEST);
+                    assertThat(((ResponseStatusException) e).getReason())
+                            .isEqualTo("Una toma solo puede pasar a confirmada u omitida");
+                });
         verifyNoStatusUpdate();
     }
 
