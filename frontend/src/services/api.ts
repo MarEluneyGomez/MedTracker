@@ -1,5 +1,5 @@
 import { readFromCache, saveToCache } from './cache';
-import { markOnline, markShowingSavedData } from './connection';
+import { markConnectionLost, markOnline, markShowingSavedData } from './connection';
 
 const ERROR_MESSAGES: Record<number, string> = {
   400: 'Los datos enviados no son válidos.',
@@ -61,7 +61,8 @@ export async function apiRequest<T>(
   body?: unknown,
   options: RequestOptions = {},
 ): Promise<T> {
-  const isCacheable = method === 'GET' && (options.authenticated ?? true);
+  const isAuthenticated = options.authenticated ?? true;
+  const isCacheable = method === 'GET' && isAuthenticated;
   try {
     const data = await requestFromServer<T>(method, path, body, options);
     if (isCacheable) {
@@ -70,7 +71,11 @@ export async function apiRequest<T>(
     }
     return data;
   } catch (e) {
-    const cached = isCacheable && isConnectionError(e) ? await readFromCache<T>(path) : null;
+    if (!isConnectionError(e) || !isAuthenticated) {
+      throw e;
+    }
+    markConnectionLost();
+    const cached = isCacheable ? await readFromCache<T>(path) : null;
     if (!cached) {
       throw e;
     }

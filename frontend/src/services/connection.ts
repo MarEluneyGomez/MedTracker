@@ -1,5 +1,6 @@
 // Fecha de los datos guardados que se están mostrando; null si hay conexión
 let offlineDataSavedAt: string | null = null;
+let lastServerResponseAt: string | null = null;
 const listeners = new Set<() => void>();
 
 export function getOfflineDataSavedAt(): string | null {
@@ -22,6 +23,7 @@ function update(savedAt: string | null) {
 }
 
 export function markOnline() {
+  lastServerResponseAt = new Date().toISOString();
   update(null);
 }
 
@@ -30,4 +32,9 @@ export function markShowingSavedData(savedAt: string) {
   const oldest =
     offlineDataSavedAt !== null && offlineDataSavedAt < savedAt ? offlineDataSavedAt : savedAt;
   update(oldest);
+}
+
+// Lo que está en pantalla llegó, como mucho, con la última respuesta del servidor
+export function markConnectionLost() {
+  markShowingSavedData(lastServerResponseAt ?? new Date().toISOString());
 }
