@@ -4,13 +4,17 @@ import { colors } from '../theme/colors';
 import { fieldError } from '../theme/typography';
 import {
   COMMON_FREQUENCIES,
+  MAX_TIMES_PER_DAY,
+  MIN_TIMES_PER_DAY,
   formatFrequency,
+  isSameFrequency,
   type Frequency,
   type FrequencyUnit,
 } from '../utils/frequency';
 import ChipSelector from './ChipSelector';
 import TextField from './TextField';
 
+const TIMES_PER_DAY = 'Varias veces por día';
 const OTHER = 'Otra';
 
 const UNIT_OPTIONS: { label: string; unit: FrequencyUnit }[] = [
@@ -19,34 +23,49 @@ const UNIT_OPTIONS: { label: string; unit: FrequencyUnit }[] = [
   { label: 'Semanas', unit: 'weeks' },
 ];
 
+const TIMES_OPTIONS = Array.from(
+  { length: MAX_TIMES_PER_DAY - MIN_TIMES_PER_DAY + 1 },
+  (_, index) => String(MIN_TIMES_PER_DAY + index),
+);
+
+type Mode = 'common' | 'timesPerDay' | 'custom';
+
 type FrequencyPickerProps = {
   value: Frequency | null;
   onChange: (frequency: Frequency | null) => void;
   error?: string;
 };
 
-function isCommonFrequency({ every, unit }: Frequency): boolean {
-  return COMMON_FREQUENCIES.some((common) => common.every === every && common.unit === unit);
+function initialMode(value: Frequency | null): Mode {
+  if (!value || COMMON_FREQUENCIES.some((common) => isSameFrequency(common, value))) {
+    return 'common';
+  }
+  return value.kind === 'timesPerDay' ? 'timesPerDay' : 'custom';
 }
 
 export default function FrequencyPicker({ value, onChange, error }: FrequencyPickerProps) {
-  const startsCustom = value !== null && !isCommonFrequency(value);
-  const [isCustom, setIsCustom] = useState(startsCustom);
+  const [mode, setMode] = useState<Mode>(initialMode(value));
+  const startsCustom = mode === 'custom' && value?.kind === 'interval';
   const [customEvery, setCustomEvery] = useState(startsCustom ? String(value.every) : '');
   const [customUnit, setCustomUnit] = useState<FrequencyUnit>(startsCustom ? value.unit : 'hours');
 
   function emitCustom(everyText: string, unit: FrequencyUnit) {
     const every = Number(everyText);
-    onChange(Number.isInteger(every) && every >= 1 ? { every, unit } : null);
+    onChange(Number.isInteger(every) && every >= 1 ? { kind: 'interval', every, unit } : null);
   }
 
   function handleChip(label: string) {
     if (label === OTHER) {
-      setIsCustom(true);
+      setMode('custom');
       emitCustom(customEvery, customUnit);
       return;
     }
-    setIsCustom(false);
+    if (label === TIMES_PER_DAY) {
+      setMode('timesPerDay');
+      onChange(value?.kind === 'timesPerDay' ? value : null);
+      return;
+    }
+    setMode('common');
     const preset = COMMON_FREQUENCIES.find((frequency) => formatFrequency(frequency) === label);
     onChange(preset ?? null);
   }
@@ -59,19 +78,32 @@ export default function FrequencyPicker({ value, onChange, error }: FrequencyPic
     }
   }
 
-  const labels = [...COMMON_FREQUENCIES.map(formatFrequency), OTHER];
-  const selectedLabel = isCustom ? OTHER : value ? formatFrequency(value) : null;
+  const labels = [...COMMON_FREQUENCIES.map(formatFrequency), TIMES_PER_DAY, OTHER];
+  const modeLabels: Record<Mode, string | null> = {
+    common: value ? formatFrequency(value) : null,
+    timesPerDay: TIMES_PER_DAY,
+    custom: OTHER,
+  };
   const unitLabel = UNIT_OPTIONS.find((o) => o.unit === customUnit)?.label ?? null;
+  const timesLabel = value?.kind === 'timesPerDay' ? String(value.times) : null;
 
   return (
     <View style={styles.container}>
       <ChipSelector
         label="¿Cada cuánto se toma?"
         options={labels}
-        value={selectedLabel}
+        value={modeLabels[mode]}
         onChange={handleChip}
       />
-      {isCustom ? (
+      {mode === 'timesPerDay' ? (
+        <ChipSelector
+          label="¿Cuántas veces por día?"
+          options={TIMES_OPTIONS}
+          value={timesLabel}
+          onChange={(times) => onChange({ kind: 'timesPerDay', times: Number(times) })}
+        />
+      ) : null}
+      {mode === 'custom' ? (
         <View style={styles.custom}>
           <TextField
             label="Cada"

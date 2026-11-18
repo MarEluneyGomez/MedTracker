@@ -38,6 +38,8 @@ export type Reminder = {
   treatmentId: string;
   time: string;
   daysOfWeek: WeekDay[] | null;
+  intervalDays: number | null;
+  startDate: string | null;
   message: string;
   active: boolean;
 };

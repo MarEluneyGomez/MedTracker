@@ -1,10 +1,12 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { Alert } from 'react-native';
-import { setAuthToken, setSessionExpiredHandler } from '../services/api';
+import { ApiError, UNAUTHORIZED, setAuthToken, setSessionRenewer } from '../services/api';
 import {
   clearSession,
   loadSession,
   login,
+  logout,
+  refreshSession,
   register,
   saveSession,
   type RegisterData,
@@ -29,8 +31,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     async function restore() {
       const saved = await loadSession();
-      // Las sesiones guardadas antes del JWT no tienen token: se descartan y se pide login
-      if (saved?.token) {
+      // Las sesiones guardadas antes de la sesión renovable no tienen refresh token: se pide login
+      if (saved?.refreshToken) {
         startSession(saved);
       } else {
         await clearSession();
@@ -41,16 +43,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    setSessionExpiredHandler(() => {
-      signOut();
-      Alert.alert('Tu sesión expiró', 'Volvé a iniciar sesión para seguir usando la app.');
-    });
-    return () => setSessionExpiredHandler(null);
+    setSessionRenewer(renewSession);
+    return () => setSessionRenewer(null);
   }, []);
 
   function startSession(session: Session) {
     setAuthToken(session.token);
     setUser(session.user);
+  }
+
+  async function renewSession(): Promise<string | null> {
+    const saved = await loadSession();
+    if (!saved) {
+      return null;
+    }
+    try {
+      const session = await refreshSession(saved.refreshToken);
+      await saveSession(session);
+      startSession(session);
+      return session.token;
+    } catch (e) {
+      // Sin conexión no se cierra la sesión: el pedido falla y se puede reintentar
+      if (!(e instanceof ApiError) || e.status !== UNAUTHORIZED) {
+        throw e;
+      }
+      await signOut();
+      Alert.alert('Tu sesión expiró', 'Volvé a iniciar sesión para seguir usando la app.');
+      return null;
+    }
   }
 
   async function signIn(email: string, password: string) {
@@ -67,7 +87,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signOut() {
     setAuthToken(null);
     setUser(null);
+    const saved = await loadSession();
     await clearSession();
+    // Si no se puede avisar al servidor, el refresh token vence solo
+    if (saved) {
+      logout(saved.refreshToken).catch(() => undefined);
+    }
   }
 
   return (

@@ -1,20 +1,8 @@
 import { LocaleConfig } from 'react-native-calendars';
+import { DAY_NAMES, MONTH_NAMES } from './dates';
 
 LocaleConfig.locales.es = {
-  monthNames: [
-    'Enero',
-    'Febrero',
-    'Marzo',
-    'Abril',
-    'Mayo',
-    'Junio',
-    'Julio',
-    'Agosto',
-    'Septiembre',
-    'Octubre',
-    'Noviembre',
-    'Diciembre',
-  ],
+  monthNames: MONTH_NAMES,
   monthNamesShort: [
     'Ene',
     'Feb',
@@ -29,7 +17,7 @@ LocaleConfig.locales.es = {
     'Nov',
     'Dic',
   ],
-  dayNames: ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'],
+  dayNames: DAY_NAMES,
   dayNamesShort: ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'],
   today: 'Hoy',
 };

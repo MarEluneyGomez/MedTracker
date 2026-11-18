@@ -96,12 +96,77 @@ class DoseServiceTest {
     }
 
     @Test
-    void changingASkippedDoseReturns409() {
+    void confirmingASkippedDoseOfTodaySetsConfirmedAt() {
+        Dose skipped = dose(Dose.DoseStatus.SKIPPED);
+        when(accessPolicy.requireDose(principal, skipped.getId())).thenReturn(skipped);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, skipped);
+
+        Dose result = service.changeStatus(principal, skipped.getId(), Dose.DoseStatus.CONFIRMED);
+
+        assertThat(result.getStatus()).isEqualTo(Dose.DoseStatus.CONFIRMED);
+        assertThat(result.getConfirmedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void confirmingASkippedDoseScheduledExactlyAtYesterdayStartWorks() {
+        Dose skipped = doseAt(Dose.DoseStatus.SKIPPED, LocalDate.of(2026, 10, 12).atStartOfDay());
+        when(accessPolicy.requireDose(principal, skipped.getId())).thenReturn(skipped);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, skipped);
+
+        Dose result = service.changeStatus(principal, skipped.getId(), Dose.DoseStatus.CONFIRMED);
+
+        assertThat(result.getStatus()).isEqualTo(Dose.DoseStatus.CONFIRMED);
+        assertThat(result.getConfirmedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void confirmingASkippedDoseOlderThanYesterdayIs409AndNothingIsWritten() {
+        Dose old = doseAt(Dose.DoseStatus.SKIPPED, LocalDate.of(2026, 10, 12).atStartOfDay().minusMinutes(1));
+        when(accessPolicy.requireDose(principal, old.getId())).thenReturn(old);
+
+        assertThatThrownBy(() -> service.changeStatus(principal, old.getId(), Dose.DoseStatus.CONFIRMED))
+                .satisfies(e -> {
+                    assertStatus(e, HttpStatus.CONFLICT);
+                    assertThat(((ResponseStatusException) e).getReason())
+                            .isEqualTo("La toma omitida ya no se puede confirmar");
+                });
+        verifyNoStatusUpdate();
+    }
+
+    @Test
+    void confirmingAConfirmedDoseIs409WithTheAlreadyConfirmedMessage() {
+        Dose confirmed = dose(Dose.DoseStatus.CONFIRMED);
+        when(accessPolicy.requireDose(principal, confirmed.getId())).thenReturn(confirmed);
+
+        assertThatThrownBy(() -> service.changeStatus(principal, confirmed.getId(), Dose.DoseStatus.CONFIRMED))
+                .satisfies(e -> {
+                    assertStatus(e, HttpStatus.CONFLICT);
+                    assertThat(((ResponseStatusException) e).getReason()).isEqualTo("La toma ya fue confirmed");
+                });
+        verifyNoStatusUpdate();
+    }
+
+    @Test
+    void skippingASkippedDoseIs409AndNothingIsWritten() {
         Dose skipped = dose(Dose.DoseStatus.SKIPPED);
         when(accessPolicy.requireDose(principal, skipped.getId())).thenReturn(skipped);
 
-        assertThatThrownBy(() -> service.changeStatus(principal, skipped.getId(), Dose.DoseStatus.CONFIRMED))
+        assertThatThrownBy(() -> service.changeStatus(principal, skipped.getId(), Dose.DoseStatus.SKIPPED))
+                .satisfies(e -> {
+                    assertStatus(e, HttpStatus.CONFLICT);
+                    assertThat(((ResponseStatusException) e).getReason()).isEqualTo("La toma ya fue skipped");
+                });
+        verifyNoStatusUpdate();
+    }
+
+    @Test
+    void skippingAConfirmedDoseIs409AndNothingIsWritten() {
+        Dose confirmed = dose(Dose.DoseStatus.CONFIRMED);
+        when(accessPolicy.requireDose(principal, confirmed.getId())).thenReturn(confirmed);
+
+        assertThatThrownBy(() -> service.changeStatus(principal, confirmed.getId(), Dose.DoseStatus.SKIPPED))
                 .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+        verifyNoStatusUpdate();
     }
 
     @Test
@@ -144,6 +209,71 @@ class DoseServiceTest {
         assertThatThrownBy(() -> service.changeStatus(principal, pending.getId(), Dose.DoseStatus.CONFIRMED))
                 .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
         verify(doseRepository, never()).findById(any());
+    }
+
+    @Test
+    void confirmingAPendingDoseOlderThanTheWindowStillWorks() {
+        Dose old = doseAt(Dose.DoseStatus.PENDING, NOW.minusDays(3));
+        when(accessPolicy.requireDose(principal, old.getId())).thenReturn(old);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, old);
+
+        Dose result = service.changeStatus(principal, old.getId(), Dose.DoseStatus.CONFIRMED);
+
+        assertThat(result.getStatus()).isEqualTo(Dose.DoseStatus.CONFIRMED);
+        assertThat(result.getConfirmedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void confirmingWhenTheJobSkipsTheDoseBetweenReadAndWriteStillConfirms() {
+        Dose readAsPending = dose(Dose.DoseStatus.PENDING);
+        // En la base la toma ya está omitida: el job la pasó a SKIPPED entre la lectura y el UPDATE
+        Dose inDatabase = Dose.builder().id(readAsPending.getId()).scheduledAt(NOW)
+                .status(Dose.DoseStatus.SKIPPED).build();
+        when(accessPolicy.requireDose(principal, readAsPending.getId())).thenReturn(readAsPending);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, inDatabase);
+
+        Dose result = service.changeStatus(principal, readAsPending.getId(), Dose.DoseStatus.CONFIRMED);
+
+        assertThat(result.getStatus()).isEqualTo(Dose.DoseStatus.CONFIRMED);
+        assertThat(result.getConfirmedAt()).isEqualTo(NOW);
+        verify(doseRepository).updateStatusIfCurrent(eq(readAsPending.getId()),
+                eq(List.of(Dose.DoseStatus.PENDING, Dose.DoseStatus.SKIPPED)),
+                eq(Dose.DoseStatus.CONFIRMED), eq(NOW), eq(NOW));
+    }
+
+    @Test
+    void losingTheRaceWhenSkippingIs409() {
+        Dose pending = dose(Dose.DoseStatus.PENDING);
+        when(accessPolicy.requireDose(principal, pending.getId())).thenReturn(pending);
+        when(doseRepository.updateStatusIfCurrent(any(), any(), any(), any(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> service.changeStatus(principal, pending.getId(), Dose.DoseStatus.SKIPPED))
+                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+        verify(doseRepository, never()).findById(any());
+    }
+
+    @Test
+    void losingTheRaceWhenConfirmingASkippedDoseIs409() {
+        Dose skipped = dose(Dose.DoseStatus.SKIPPED);
+        when(accessPolicy.requireDose(principal, skipped.getId())).thenReturn(skipped);
+        when(doseRepository.updateStatusIfCurrent(any(), any(), any(), any(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> service.changeStatus(principal, skipped.getId(), Dose.DoseStatus.CONFIRMED))
+                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+        verify(doseRepository, never()).findById(any());
+    }
+
+    @Test
+    void confirmWritesOnlyWhenTheDoseIsStillPendingOrSkipped() {
+        Dose pending = dose(Dose.DoseStatus.PENDING);
+        when(accessPolicy.requireDose(principal, pending.getId())).thenReturn(pending);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, pending);
+
+        service.changeStatus(principal, pending.getId(), Dose.DoseStatus.CONFIRMED);
+
+        verify(doseRepository).updateStatusIfCurrent(eq(pending.getId()),
+                eq(List.of(Dose.DoseStatus.PENDING, Dose.DoseStatus.SKIPPED)),
+                eq(Dose.DoseStatus.CONFIRMED), eq(NOW), eq(NOW));
     }
 
     @Test
