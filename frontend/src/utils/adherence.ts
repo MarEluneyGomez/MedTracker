@@ -33,9 +33,12 @@ const PERIOD_DAYS: Record<Exclude<Period, 'all'>, number> = { week: 7, month: 30
 const GOOD_ADHERENCE_PERCENT = 80;
 const FAIR_ADHERENCE_PERCENT = 50;
 
-// Solo cuentan las tomas cuya hora ya pasó.
+// Cuentan las tomas ya marcadas y las pendientes cuya hora ya pasó: una toma
+// que todavía no toca no es un incumplimiento
 export function dueDosesInPeriod(doses: Dose[], period: Period, now = new Date()): Dose[] {
-  const due = doses.filter((dose) => new Date(dose.scheduledAt) <= now);
+  const due = doses.filter(
+    (dose) => dose.status !== 'PENDING' || new Date(dose.scheduledAt) <= now,
+  );
   if (period === 'all') {
     return due;
   }
