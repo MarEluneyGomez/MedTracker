@@ -75,6 +75,8 @@ export default function DoseCard({
           />
           <ActionButton icon="close" label="No la tomé" disabled={busy} onPress={onSkip} />
         </View>
+      ) : dose.status === 'SKIPPED' ? (
+        <ActionButton icon="checkmark" label="La tomé" filled disabled={busy} onPress={onConfirm} />
       ) : (
         <ActionButton icon="arrow-undo" label="Deshacer" disabled={busy} onPress={onUndo} />
       )}
