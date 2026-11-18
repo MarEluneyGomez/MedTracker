@@ -27,7 +27,7 @@ export class ApiError extends Error {
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:8080';
 
-const REQUEST_TIMEOUT_MS = 15000;
+const REQUEST_TIMEOUT_MS = 7000;
 const NO_CONTENT = 204;
 export const UNAUTHORIZED = 401;
 const NO_CONNECTION = 0;

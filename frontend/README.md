@@ -22,7 +22,7 @@ Las dos pantallas usan el backend real, así que necesitan el backend corriendo 
 
 El token de acceso se manda en cada pedido como `Authorization: Bearer <token>` (lo agrega `src/services/api.ts`); sin él, todos los endpoints salvo el login, el registro y la renovación responden 401. Cuando vence, la app pide un par nuevo con `POST /auth/refresh` y reintenta el pedido sin que el usuario se entere. Si fallan varios pedidos a la vez, se renueva una sola vez, porque el backend toma un token de renovación usado dos veces como robado y cierra todas las sesiones. Solo si la renovación es rechazada (por ejemplo, tras 48 horas sin usar la app), la app cierra la sesión, avisa "Tu sesión expiró" y vuelve a la bienvenida. Sin conexión la sesión no se cierra.
 
-Los mensajes de error que se muestran son los que devuelve el backend (por ejemplo "Credenciales incorrectas"), que nunca incluyen detalles internos; si no manda ninguno, se usa un mensaje genérico según el código de respuesta. Si el servidor no responde en 15 segundos, se avisa que no se pudo conectar.
+Los mensajes de error que se muestran son los que devuelve el backend (por ejemplo "Credenciales incorrectas"), que nunca incluyen detalles internos; si no manda ninguno, se usa un mensaje genérico según el código de respuesta. Si el servidor no responde en 7 segundos, se avisa que no se pudo conectar.
 
 **Usuarios de prueba:** en la base de desarrollo hay un usuario por rol, todos con la contraseña `demo1234`:
 
@@ -85,11 +85,12 @@ Cuentan las tomas ya marcadas, aunque se hayan marcado antes de hora, y las pend
 
 ## Sin conexión
 
-Cubre RNF-05 (ver los datos ya cargados sin conexión). Cada lectura que responde el backend con la sesión iniciada (tratamientos, horarios, tomas, historial) se guarda en el dispositivo con `AsyncStorage`, junto con la fecha y hora. Si después un pedido falla por falta de conexión o porque el servidor no responde en 15 segundos, la app muestra la última copia guardada y un aviso arriba de la pantalla: "Sin conexión. Estás viendo los datos guardados el 18/11 a las 10:15". Si se muestran varias copias, el aviso usa la más vieja. Apenas el servidor vuelve a responder, el aviso desaparece.
+Cubre RNF-05 (ver los datos ya cargados sin conexión). Cada lectura que responde el backend con la sesión iniciada (tratamientos, horarios, tomas, historial) se guarda en el dispositivo con `AsyncStorage`, junto con la fecha y hora. Si después un pedido falla por falta de conexión o porque el servidor no responde en 7 segundos, la app muestra la última copia guardada y un aviso arriba de la pantalla: "Sin conexión. Estás viendo los datos guardados el 18/11 a las 10:15". Si se muestran varias copias, el aviso usa la más vieja. Apenas el servidor vuelve a responder, el aviso desaparece.
 
 - **Las acciones sobre tomas sí se pueden hacer sin conexión.** "La tomé", "No la tomé" y "Deshacer" se guardan en el dispositivo y la tarjeta cambia en el momento, con el aviso "Se va a guardar cuando vuelva la conexión" en Hoy y en el Historial.
   - Por toma se guarda solo la última acción.
   - Se mandan en orden cada vez que se abre Hoy o el Historial, y antes de cualquier acción nueva.
+  - Si la app ya está mostrando el aviso de sin conexión, la acción se guarda directamente, sin esperar a que falle el pedido.
   - Si el servidor rechaza una (por ejemplo, porque otra persona ya marcó esa toma), se descarta y al recargar se ve el estado real.
   - Se guarda la hora en que se tocó el botón, pero por ahora el backend registra la toma con la hora en que la recibe.
 - El resto de las acciones (editar un tratamiento, sus horarios, etc.) necesitan conexión y sin ella muestran "No se pudo conectar".

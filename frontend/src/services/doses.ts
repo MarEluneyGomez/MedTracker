@@ -1,6 +1,7 @@
 import type { Dose } from '../types/api';
 import { apiRequest, isConnectionError } from './api';
 import { toLocalDateTime } from '../utils/dates';
+import { getOfflineDataSavedAt } from './connection';
 import {
   applyDoseAction,
   loadPendingDoseActions,
@@ -42,6 +43,10 @@ export type DoseChange = {
 
 // Sin conexión la acción queda en espera y se devuelve la toma como va a quedar
 export async function changeDose(dose: Dose, action: DoseAction): Promise<DoseChange> {
+  // Si ya se sabe que no hay conexión, se guarda directo en lugar de esperar a que falle
+  if (getOfflineDataSavedAt() !== null) {
+    return keepForLater(dose, action);
+  }
   await syncPendingDoseActions();
   try {
     const updated = await SEND_ACTION[action](dose.id);
@@ -50,10 +55,14 @@ export async function changeDose(dose: Dose, action: DoseAction): Promise<DoseCh
     if (!isConnectionError(e)) {
       throw e;
     }
-    const pending = { doseId: dose.id, action, at: toLocalDateTime(new Date()) };
-    await queueDoseAction(pending);
-    return { dose: applyDoseAction(dose, pending), isPendingSync: true };
+    return keepForLater(dose, action);
   }
+}
+
+async function keepForLater(dose: Dose, action: DoseAction): Promise<DoseChange> {
+  const pending = { doseId: dose.id, action, at: toLocalDateTime(new Date()) };
+  await queueDoseAction(pending);
+  return { dose: applyDoseAction(dose, pending), isPendingSync: true };
 }
 
 // Se mandan en orden. Si sigue sin conexión, quedan para la próxima. Si el
