@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { StyleSheet } from 'react-native';
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
+import OfflineBanner from './OfflineBanner';
 
 type ScreenProps = {
   children: ReactNode;
@@ -14,6 +15,7 @@ export default function Screen({ children, hasHeader = false }: ScreenProps) {
   const edges: Edge[] = hasHeader ? ['left', 'right'] : ['top', 'left', 'right'];
   return (
     <SafeAreaView style={styles.container} edges={edges}>
+      <OfflineBanner />
       {children}
     </SafeAreaView>
   );

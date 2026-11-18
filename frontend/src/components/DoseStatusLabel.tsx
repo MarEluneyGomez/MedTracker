@@ -25,12 +25,25 @@ function statusOf(dose: Dose): Status {
   return { icon: 'time-outline', label: 'Pendiente', color: colors.primary };
 }
 
-export default function DoseStatusLabel({ dose }: { dose: Dose }) {
+type DoseStatusLabelProps = {
+  dose: Dose;
+  isPendingSync?: boolean;
+};
+
+export default function DoseStatusLabel({ dose, isPendingSync = false }: DoseStatusLabelProps) {
   const status = statusOf(dose);
   return (
-    <View style={styles.status}>
-      <Ionicons name={status.icon} size={22} color={status.color} />
-      <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
+    <View style={styles.container}>
+      <View style={styles.status}>
+        <Ionicons name={status.icon} size={22} color={status.color} />
+        <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
+      </View>
+      {isPendingSync ? (
+        <View style={styles.status}>
+          <Ionicons name="cloud-upload-outline" size={20} color={colors.textSecondary} />
+          <Text style={styles.pendingText}>Se va a guardar cuando vuelva la conexión</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -41,8 +54,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  container: {
+    gap: 4,
+  },
   statusText: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  pendingText: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.textSecondary,
   },
 });

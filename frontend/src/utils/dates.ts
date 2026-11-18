@@ -18,6 +18,15 @@ export function toDayString(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+export function formatDayAndTime(date: Date): string {
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)} a las ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+// Mismo formato que manda el backend, en hora local: "2026-11-18T08:05:12"
+export function toLocalDateTime(date: Date): string {
+  return `${toDayString(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 export function isToday(date: Date): boolean {
   return toDayString(date) === toDayString(new Date());
 }

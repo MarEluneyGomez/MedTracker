@@ -9,7 +9,8 @@ import Screen from '../components/Screen';
 import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import { ApiError } from '../services/api';
-import { getDoses } from '../services/doses';
+import { getDoses, syncPendingDoseActions } from '../services/doses';
+import { applyPendingDoseActions, loadPendingDoseActions } from '../services/pendingDoseActions';
 import { getMedications } from '../services/medications';
 import { getReminders } from '../services/reminders';
 import { getTreatmentsByUser } from '../services/treatments';
@@ -51,6 +52,7 @@ export default function HistoryScreen() {
   const { user } = useAuth();
   const [doses, setDoses] = useState<Dose[]>([]);
   const [details, setDetails] = useState<Record<string, DoseDetails>>({});
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [period, setPeriod] = useState<Period>('week');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -62,13 +64,16 @@ export default function HistoryScreen() {
       return;
     }
     try {
+      await syncPendingDoseActions();
       const [allDoses, reminders, treatments, medications] = await Promise.all([
         getDoses(),
         getReminders(),
         getTreatmentsByUser(user.id),
         getMedications(),
       ]);
-      setDoses(allDoses);
+      const pending = await loadPendingDoseActions();
+      setDoses(applyPendingDoseActions(allDoses, pending));
+      setPendingIds(new Set(pending.map((action) => action.doseId)));
       setDetails(buildDoseDetails(reminders, treatments, medications));
       setError(null);
     } catch (e) {
@@ -174,7 +179,7 @@ export default function HistoryScreen() {
               <Text style={styles.doseName}>
                 {details[item.reminderId]?.medicationName ?? 'Medicamento'}
               </Text>
-              <DoseStatusLabel dose={item} />
+              <DoseStatusLabel dose={item} isPendingSync={pendingIds.has(item.id)} />
             </View>
           </View>
         )}

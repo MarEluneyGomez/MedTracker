@@ -7,7 +7,12 @@ import Screen from '../components/Screen';
 import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import { ApiError } from '../services/api';
-import { confirmDose, getTodayDoses, skipDose, undoDose } from '../services/doses';
+import { changeDose, getTodayDoses, syncPendingDoseActions } from '../services/doses';
+import {
+  applyPendingDoseActions,
+  loadPendingDoseActions,
+  type DoseAction,
+} from '../services/pendingDoseActions';
 import { getMedications } from '../services/medications';
 import { getReminders } from '../services/reminders';
 import { getTreatmentsByUser } from '../services/treatments';
@@ -24,6 +29,7 @@ export default function TodayScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const listRef = useFlashScrollIndicators<FlatList<Dose>>(!loading);
 
   async function load() {
@@ -31,13 +37,16 @@ export default function TodayScreen() {
       return;
     }
     try {
+      await syncPendingDoseActions();
       const [todayDoses, reminders, treatments, medications] = await Promise.all([
         getTodayDoses(user.id),
         getReminders(),
         getTreatmentsByUser(user.id),
         getMedications(),
       ]);
-      setDoses(todayDoses);
+      const pending = await loadPendingDoseActions();
+      setDoses(applyPendingDoseActions(todayDoses, pending));
+      setPendingIds(new Set(pending.map((action) => action.doseId)));
       setDetails(buildDoseDetails(reminders, treatments, medications));
       setError(null);
     } catch (e) {
@@ -64,11 +73,20 @@ export default function TodayScreen() {
     load();
   }
 
-  async function changeDose(id: string, action: (id: string) => Promise<Dose>) {
-    setBusyId(id);
+  async function handleDoseAction(dose: Dose, action: DoseAction) {
+    setBusyId(dose.id);
     try {
-      const updated = await action(id);
-      setDoses((current) => current.map((dose) => (dose.id === updated.id ? updated : dose)));
+      const change = await changeDose(dose, action);
+      setDoses((current) => current.map((item) => (item.id === dose.id ? change.dose : item)));
+      setPendingIds((current) => {
+        const next = new Set(current);
+        if (change.isPendingSync) {
+          next.add(dose.id);
+        } else {
+          next.delete(dose.id);
+        }
+        return next;
+      });
     } catch (e) {
       Alert.alert('No se pudo guardar', e instanceof ApiError ? e.message : 'Intentá de nuevo.');
       await load();
@@ -140,9 +158,10 @@ export default function TodayScreen() {
               medicationName={doseDetails?.medicationName ?? 'Medicamento'}
               dosage={doseDetails?.dosage ?? ''}
               busy={busyId === item.id}
-              onConfirm={() => changeDose(item.id, confirmDose)}
-              onSkip={() => changeDose(item.id, skipDose)}
-              onUndo={() => changeDose(item.id, undoDose)}
+              isPendingSync={pendingIds.has(item.id)}
+              onConfirm={() => handleDoseAction(item, 'confirm')}
+              onSkip={() => handleDoseAction(item, 'skip')}
+              onUndo={() => handleDoseAction(item, 'undo')}
             />
           );
         }}

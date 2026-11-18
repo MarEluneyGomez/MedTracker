@@ -16,6 +16,7 @@ type DoseCardProps = {
   onConfirm: () => void;
   onSkip: () => void;
   onUndo: () => void;
+  isPendingSync: boolean;
 };
 
 export default function DoseCard({
@@ -26,6 +27,7 @@ export default function DoseCard({
   onConfirm,
   onSkip,
   onUndo,
+  isPendingSync,
 }: DoseCardProps) {
   const isPending = dose.status === 'PENDING';
 
@@ -39,7 +41,7 @@ export default function DoseCard({
         </View>
       </View>
 
-      <DoseStatusLabel dose={dose} />
+      <DoseStatusLabel dose={dose} isPendingSync={isPendingSync} />
 
       {isPending ? (
         <View style={styles.actions}>

@@ -41,6 +41,17 @@ export default function TreatmentsScreen() {
   const listRef = useFlashScrollIndicators<FlatList<Treatment>>(!loading);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  function hasEnded(treatment: Treatment): boolean {
+    return treatment.endDate !== null && new Date(treatment.endDate) < new Date();
+  }
+
+  function treatmentState(treatment: Treatment): string {
+    if (treatment.completed) {
+      return 'Completado';
+    }
+    return hasEnded(treatment) ? 'Finalizado' : 'En curso';
+  }
+
   async function load() {
     if (!user) {
       return;
@@ -189,6 +200,9 @@ export default function TreatmentsScreen() {
               <Text style={styles.cardDetail}>
                 {item.dosage}, {item.frequency}
               </Text>
+              {hasEnded(item) ? (
+                <Text style={styles.cardEnded}>Terminó el {formatDate(item.endDate ?? '')}</Text>
+              ) : null}
               <Text style={styles.toggleText}>{expanded ? 'Ocultar detalle' : 'Ver detalle'}</Text>
               {expanded ? (
                 <View style={styles.details}>
@@ -198,7 +212,7 @@ export default function TreatmentsScreen() {
                     label="Fin"
                     value={item.endDate ? formatDate(item.endDate) : 'Sin fecha de fin'}
                   />
-                  <DetailRow label="Estado" value={item.completed ? 'Completado' : 'En curso'} />
+                  <DetailRow label="Estado" value={treatmentState(item)} />
                   <View style={styles.actions}>
                     {!item.completed ? (
                       <>
@@ -292,6 +306,12 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 15,
     color: colors.textSecondary,
+  },
+  cardEnded: {
+    marginTop: 4,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.warning,
   },
   details: {
     marginTop: 12,
