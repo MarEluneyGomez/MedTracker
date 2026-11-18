@@ -32,6 +32,10 @@ const NO_CONTENT = 204;
 export const UNAUTHORIZED = 401;
 const NO_CONNECTION = 0;
 
+export function isConnectionError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === NO_CONNECTION;
+}
+
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 type RequestOptions = {
@@ -66,8 +70,7 @@ export async function apiRequest<T>(
     }
     return data;
   } catch (e) {
-    const isConnectionError = e instanceof ApiError && e.status === NO_CONNECTION;
-    const cached = isCacheable && isConnectionError ? await readFromCache<T>(path) : null;
+    const cached = isCacheable && isConnectionError(e) ? await readFromCache<T>(path) : null;
     if (!cached) {
       throw e;
     }

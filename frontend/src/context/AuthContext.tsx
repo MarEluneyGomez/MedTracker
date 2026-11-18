@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { Alert } from 'react-native';
 import { ApiError, UNAUTHORIZED, setAuthToken, setSessionRenewer } from '../services/api';
 import { clearCache } from '../services/cache';
+import { clearPendingDoseActions } from '../services/pendingDoseActions';
 import { markOnline } from '../services/connection';
 import {
   clearSession,
@@ -92,6 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const saved = await loadSession();
     await clearSession();
     await clearCache();
+    await clearPendingDoseActions();
     markOnline();
 
     // Si no se puede avisar al servidor, el refresh token vence solo

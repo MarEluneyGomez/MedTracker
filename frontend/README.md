@@ -43,6 +43,7 @@ La pestaña Tratamientos del paciente cubre CU-03 (agregar tratamiento) y CU-08 
 - **Editar** (`PUT /treatments/{id}`): usa el mismo formulario con los datos cargados. El medicamento no se puede cambiar: para otro medicamento se crea otro tratamiento.
 - **Marcar como completado** (`PUT /treatments/{id}/complete`) y **Eliminar** (`DELETE /treatments/{id}`, porque también desactiva sus recordatorios), los dos con confirmación.
 - **Reabrir tratamiento** (`PUT /treatments/{id}/reopen`): aparece en los completados, por si se marcaron por error. El backend genera en el momento las tomas de hoy.
+- **Estado:** "En curso", "Completado" (marcado a mano) o "Finalizado" (pasó su fecha de fin). Un tratamiento finalizado lo indica en la tarjeta ("Terminó el 25/10/2026") y deja de generar tomas; para continuarlo se edita su fecha de fin.
 
 La dosis y la frecuencia se eligen con opciones (cantidad y unidad; "Cada 8 horas", "Cada 1 día", "Varias veces por día" de 2 a 6, u otra a medida) y se guardan como texto con un formato fijo, por ejemplo "2 comprimidos", "Cada 8 horas" o "3 veces por día". Así se pueden volver a leer al editar y calcular los horarios. Las fechas se eligen con un calendario propio (`react-native-calendars`) que sigue la estética de la app; la fecha de fin es opcional y se guarda al final del día, para que el último día también cuente.
 
@@ -80,15 +81,20 @@ Cubre CU-07, RF-08 y RF-09. La pestaña Historial trae todas las tomas del usuar
 - **Adherencia por tratamiento**.
 - **Detalle por día**, del más reciente al más viejo, con el estado de cada toma.
 
-Solo cuentan las tomas cuya hora ya pasó: las que todavía no tocan no son un incumplimiento. El backend no devuelve las tomas de tratamientos o recordatorios eliminados, así que no aparecen en el historial; las de tratamientos completados sí. El cálculo se hace en la app (`src/utils/adherence.ts`), así que cambiar de período no vuelve a pedir datos.
+Cuentan las tomas ya marcadas, aunque se hayan marcado antes de hora, y las pendientes cuya hora ya pasó: una toma que todavía no toca no es un incumplimiento. El backend no devuelve las tomas de tratamientos o recordatorios eliminados, así que no aparecen en el historial; las de tratamientos completados sí. El cálculo se hace en la app (`src/utils/adherence.ts`), así que cambiar de período no vuelve a pedir datos.
 
 ## Sin conexión
 
 Cubre RNF-05 (ver los datos ya cargados sin conexión). Cada lectura que responde el backend con la sesión iniciada (tratamientos, horarios, tomas, historial) se guarda en el dispositivo con `AsyncStorage`, junto con la fecha y hora. Si después un pedido falla por falta de conexión o porque el servidor no responde en 15 segundos, la app muestra la última copia guardada y un aviso arriba de la pantalla: "Sin conexión. Estás viendo los datos guardados el 18/11 a las 10:15". Si se muestran varias copias, el aviso usa la más vieja. Apenas el servidor vuelve a responder, el aviso desaparece.
 
-- Solo se guardan lecturas: confirmar una toma o editar un tratamiento sin conexión muestra "No se pudo conectar".
+- **Las acciones sobre tomas sí se pueden hacer sin conexión.** "La tomé", "No la tomé" y "Deshacer" se guardan en el dispositivo y la tarjeta cambia en el momento, con el aviso "Se va a guardar cuando vuelva la conexión" en Hoy y en el Historial.
+  - Por toma se guarda solo la última acción.
+  - Se mandan en orden cada vez que se abre Hoy o el Historial, y antes de cualquier acción nueva.
+  - Si el servidor rechaza una (por ejemplo, porque otra persona ya marcó esa toma), se descarta y al recargar se ve el estado real.
+  - Se guarda la hora en que se tocó el botón, pero por ahora el backend registra la toma con la hora en que la recibe.
+- El resto de las acciones (editar un tratamiento, sus horarios, etc.) necesitan conexión y sin ella muestran "No se pudo conectar".
 - Una pantalla que no se abrió con conexión no tiene copia, así que sin conexión muestra el error de siempre.
-- Al cerrar sesión (o cuando vence) se borran todas las copias: son datos de salud y no deben quedar en el dispositivo ni mezclarse con los de otra persona.
+- Al cerrar sesión (o cuando vence) se borran todas las copias y las acciones que no se llegaron a mandar: son datos de salud y no deben quedar en el dispositivo ni mezclarse con los de otra persona.
 - Todo pasa en `src/services/api.ts`, así que las pantallas no necesitan cambios para funcionar sin conexión.
 
 ## Estructura
@@ -117,6 +123,7 @@ frontend/
 │   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión
 │   │   ├── cache.ts        # Copias de las lecturas en el dispositivo (AsyncStorage)
 │   │   ├── connection.ts   # Si se están mostrando datos guardados y de cuándo
+│   │   ├── pendingDoseActions.ts # Acciones sobre tomas hechas sin conexión, en espera de mandarse
 │   │   ├── doses.ts        # Tomas: todas, las de hoy, confirmar, omitir y deshacer
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
