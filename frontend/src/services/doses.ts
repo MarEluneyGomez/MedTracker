@@ -1,6 +1,10 @@
 import type { Dose } from '../types/api';
 import { apiRequest } from './api';
 
+export function getDoses(): Promise<Dose[]> {
+  return apiRequest<Dose[]>('GET', '/doses');
+}
+
 export function getTodayDoses(userId: string): Promise<Dose[]> {
   return apiRequest<Dose[]>('GET', `/doses/user/${userId}`);
 }

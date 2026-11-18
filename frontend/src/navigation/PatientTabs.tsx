@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import AppointmentsScreen from '../screens/AppointmentsScreen';
+import HistoryScreen from '../screens/HistoryScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import TodayScreen from '../screens/TodayScreen';
 import { colors } from '../theme/colors';
@@ -35,6 +36,17 @@ export default function PatientTabs() {
           title: 'Tratamientos',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="medkit-outline" color={color} size={size} />
+          ),
+        }}
+      />
+
+      <Tab.Screen
+        name="History"
+        component={HistoryScreen}
+        options={{
+          title: 'Historial',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="stats-chart-outline" color={color} size={size} />
           ),
         }}
       />
