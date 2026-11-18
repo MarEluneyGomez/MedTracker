@@ -45,6 +45,8 @@ export async function replaceScheduledReminders(reminders: ScheduledReminder[]):
         type: Notifications.SchedulableTriggerInputTypes.DATE,
         date: reminder.date,
         channelId: REMINDER_CHANNEL_ID,
+        // Android no las demora para ahorrar batería: un aviso tarde puede hacer saltear una toma
+        delivery: 'alarmClock',
       },
     });
   }

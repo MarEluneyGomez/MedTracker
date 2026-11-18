@@ -94,6 +94,8 @@ Cubre RF-06 con notificaciones locales: el celular avisa cada toma a su hora con
 - **Al tocar una notificación** se abre Hoy, donde está la toma para marcarla.
 - **Al cerrar sesión** se cancelan todas: son datos de salud y no deben sonar en el celular de otra persona.
 - **Permiso:** se pide la primera vez que se programan. Si la persona lo niega, la app funciona igual, sin avisos. En Android las notificaciones van en el canal "Recordatorios de medicación", con importancia alta para que suenen y aparezcan arriba de la pantalla.
+- **A horario exacto en Android:** sin el permiso de alarmas exactas, Android trata los avisos como aproximados y puede entregarlos hasta una hora tarde, y algunas marcas los demoran más para ahorrar batería. Por eso la app declara `USE_EXACT_ALARM` (Android 13 o superior, se concede al instalar) y `SCHEDULE_EXACT_ALARM` (Android 12) y programa cada aviso como alarma (`delivery: 'alarmClock'`), que el sistema no posterga. Probado en un Xiaomi: llega a horario con la app cerrada y el teléfono bloqueado.
+
 **Limitaciones de Expo Go en Android:** no puede crear el canal (la app sigue igual y Android usa un canal genérico) y se cierra al tocar una notificación. Por eso la app se prueba con un development build (ver "Ejecución").
 
 ## Sin conexión
