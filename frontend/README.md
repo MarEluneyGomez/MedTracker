@@ -92,7 +92,7 @@ Cubre RNF-05 (ver los datos ya cargados sin conexión). Cada lectura que respond
   - Se mandan en orden cada vez que se abre Hoy o el Historial, y antes de cualquier acción nueva.
   - Si la app ya está mostrando el aviso de sin conexión, la acción se guarda directamente, sin esperar a que falle el pedido.
   - Si el servidor rechaza una (por ejemplo, porque otra persona ya marcó esa toma), se descarta y al recargar se ve el estado real.
-  - Se guarda la hora en que se tocó el botón, pero por ahora el backend registra la toma con la hora en que la recibe.
+  - "La tomé" guarda la hora en que se tocó el botón y la manda al sincronizar (`confirmedAt`), así la toma queda registrada con la hora real y no con la de la sincronización. Si el reloj del celular está adelantado y el backend rechaza esa hora, se confirma con la hora del servidor.
 - El resto de las acciones (editar un tratamiento, sus horarios, etc.) necesitan conexión y sin ella muestran "No se pudo conectar".
 - Una pantalla que no se abrió con conexión no tiene copia, así que sin conexión muestra el error de siempre.
 - Al cerrar sesión (o cuando vence) se borran todas las copias y las acciones que no se llegaron a mandar: son datos de salud y no deben quedar en el dispositivo ni mezclarse con los de otra persona.

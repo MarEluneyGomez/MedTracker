@@ -1,5 +1,5 @@
 import type { Dose } from '../types/api';
-import { apiRequest, isConnectionError } from './api';
+import { ApiError, apiRequest, isConnectionError } from './api';
 import { toLocalDateTime } from '../utils/dates';
 import { getOfflineDataSavedAt } from './connection';
 import {
@@ -7,8 +7,11 @@ import {
   loadPendingDoseActions,
   queueDoseAction,
   removePendingDoseAction,
+  type PendingDoseAction,
   type DoseAction,
 } from './pendingDoseActions';
+
+const BAD_REQUEST = 400;
 
 export function getDoses(): Promise<Dose[]> {
   return apiRequest<Dose[]>('GET', '/doses');
@@ -18,8 +21,8 @@ export function getTodayDoses(userId: string): Promise<Dose[]> {
   return apiRequest<Dose[]>('GET', `/doses/user/${userId}`);
 }
 
-export function confirmDose(id: string): Promise<Dose> {
-  return apiRequest<Dose>('PUT', `/doses/${id}/confirm`);
+export function confirmDose(id: string, confirmedAt?: string): Promise<Dose> {
+  return apiRequest<Dose>('PUT', `/doses/${id}/confirm`, confirmedAt ? { confirmedAt } : undefined);
 }
 
 export function skipDose(id: string): Promise<Dose> {
@@ -71,12 +74,31 @@ async function keepForLater(dose: Dose, action: DoseAction): Promise<DoseChange>
 export async function syncPendingDoseActions(): Promise<void> {
   for (const pending of await loadPendingDoseActions()) {
     try {
-      await SEND_ACTION[pending.action](pending.doseId);
+      await sendPending(pending);
     } catch (e) {
       if (isConnectionError(e)) {
         return;
       }
     }
     await removePendingDoseAction(pending.doseId);
+  }
+}
+
+function sendPending(pending: PendingDoseAction): Promise<Dose> {
+  if (pending.action === 'confirm') {
+    return confirmAtTimeTaken(pending.doseId, pending.at);
+  }
+  return SEND_ACTION[pending.action](pending.doseId);
+}
+
+// Si el reloj del celular está adelantado, el backend rechaza la hora: se confirma con la del servidor
+async function confirmAtTimeTaken(id: string, at: string): Promise<Dose> {
+  try {
+    return await confirmDose(id, at);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === BAD_REQUEST) {
+      return confirmDose(id);
+    }
+    throw e;
   }
 }
