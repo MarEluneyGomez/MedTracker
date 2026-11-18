@@ -295,6 +295,197 @@ class DoseServiceTest {
                 eq(Dose.DoseStatus.SKIPPED), isNull(), eq(NOW));
     }
 
+    private static final String FUTURE_CONFIRMATION_MESSAGE =
+            "La hora de confirmación no puede ser posterior a la hora actual (se admiten hasta 5 minutos de diferencia)";
+
+    @Test
+    void confirmingWithAPastTimeStoresThatTimeAndNowAsUpdatedAt() {
+        Dose pending = dose(Dose.DoseStatus.PENDING);
+        LocalDateTime requested = NOW.minusHours(2);
+        when(accessPolicy.requireDose(principal, pending.getId())).thenReturn(pending);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, pending);
+
+        Dose result = service.changeStatus(principal, pending.getId(), Dose.DoseStatus.CONFIRMED, requested);
+
+        assertThat(result.getStatus()).isEqualTo(Dose.DoseStatus.CONFIRMED);
+        assertThat(result.getConfirmedAt()).isEqualTo(requested);
+        verify(doseRepository).updateStatusIfCurrent(eq(pending.getId()),
+                eq(List.of(Dose.DoseStatus.PENDING, Dose.DoseStatus.SKIPPED)),
+                eq(Dose.DoseStatus.CONFIRMED), eq(requested), eq(NOW));
+    }
+
+    @Test
+    void confirmingWithATimeBeforeTheScheduledTimeIsAllowed() {
+        Dose pending = dose(Dose.DoseStatus.PENDING);
+        LocalDateTime requested = pending.getScheduledAt().minusMinutes(30);
+        when(accessPolicy.requireDose(principal, pending.getId())).thenReturn(pending);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, pending);
+
+        Dose result = service.changeStatus(principal, pending.getId(), Dose.DoseStatus.CONFIRMED, requested);
+
+        assertThat(result.getConfirmedAt()).isEqualTo(requested);
+    }
+
+    @Test
+    void confirmingWithANullTimeUsesNow() {
+        Dose pending = dose(Dose.DoseStatus.PENDING);
+        when(accessPolicy.requireDose(principal, pending.getId())).thenReturn(pending);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, pending);
+
+        Dose result = service.changeStatus(principal, pending.getId(), Dose.DoseStatus.CONFIRMED, null);
+
+        assertThat(result.getConfirmedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void confirmingExactlyFiveMinutesAheadIsAccepted() {
+        Dose pending = dose(Dose.DoseStatus.PENDING);
+        LocalDateTime requested = NOW.plusMinutes(5);
+        when(accessPolicy.requireDose(principal, pending.getId())).thenReturn(pending);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, pending);
+
+        Dose result = service.changeStatus(principal, pending.getId(), Dose.DoseStatus.CONFIRMED, requested);
+
+        assertThat(result.getConfirmedAt()).isEqualTo(requested);
+    }
+
+    @Test
+    void confirmingMoreThanFiveMinutesAheadIs400AndNothingIsWritten() {
+        Dose pending = dose(Dose.DoseStatus.PENDING);
+        LocalDateTime requested = NOW.plusMinutes(5).plusSeconds(1);
+
+        assertThatThrownBy(() -> service.changeStatus(principal, pending.getId(), Dose.DoseStatus.CONFIRMED, requested))
+                .satisfies(e -> {
+                    assertStatus(e, HttpStatus.BAD_REQUEST);
+                    assertThat(((ResponseStatusException) e).getReason()).isEqualTo(FUTURE_CONFIRMATION_MESSAGE);
+                });
+        verifyNoStatusUpdate();
+    }
+
+    @Test
+    void aFutureTimeIsRejectedBeforeLookingUpTheDose() {
+        UUID id = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.changeStatus(principal, id, Dose.DoseStatus.CONFIRMED, NOW.plusDays(1)))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        verify(accessPolicy, never()).requireDose(any(), any());
+    }
+
+    @Test
+    void confirmingASkippedDoseOfTodayWithATimeStoresThatTime() {
+        Dose skipped = dose(Dose.DoseStatus.SKIPPED);
+        LocalDateTime requested = NOW.minusHours(1);
+        when(accessPolicy.requireDose(principal, skipped.getId())).thenReturn(skipped);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, skipped);
+
+        Dose result = service.changeStatus(principal, skipped.getId(), Dose.DoseStatus.CONFIRMED, requested);
+
+        assertThat(result.getStatus()).isEqualTo(Dose.DoseStatus.CONFIRMED);
+        assertThat(result.getConfirmedAt()).isEqualTo(requested);
+    }
+
+    @Test
+    void confirmingASkippedDoseFromYesterdayStartWithATimeStoresThatTime() {
+        LocalDateTime yesterdayStart = LocalDate.of(2026, 10, 12).atStartOfDay();
+        Dose skipped = doseAt(Dose.DoseStatus.SKIPPED, yesterdayStart);
+        LocalDateTime requested = yesterdayStart.plusHours(8);
+        when(accessPolicy.requireDose(principal, skipped.getId())).thenReturn(skipped);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, skipped);
+
+        Dose result = service.changeStatus(principal, skipped.getId(), Dose.DoseStatus.CONFIRMED, requested);
+
+        assertThat(result.getStatus()).isEqualTo(Dose.DoseStatus.CONFIRMED);
+        assertThat(result.getConfirmedAt()).isEqualTo(requested);
+    }
+
+    @Test
+    void confirmingASkippedDoseOlderThanYesterdayWithATimeIsStill409() {
+        Dose old = doseAt(Dose.DoseStatus.SKIPPED, LocalDate.of(2026, 10, 12).atStartOfDay().minusMinutes(1));
+        when(accessPolicy.requireDose(principal, old.getId())).thenReturn(old);
+
+        assertThatThrownBy(() -> service.changeStatus(principal, old.getId(), Dose.DoseStatus.CONFIRMED,
+                NOW.minusDays(2)))
+                .satisfies(e -> {
+                    assertStatus(e, HttpStatus.CONFLICT);
+                    assertThat(((ResponseStatusException) e).getReason())
+                            .isEqualTo("La toma omitida ya no se puede confirmar");
+                });
+        verifyNoStatusUpdate();
+    }
+
+    @Test
+    void confirmingAConfirmedDoseWithATimeIsStill409() {
+        Dose confirmed = dose(Dose.DoseStatus.CONFIRMED);
+        when(accessPolicy.requireDose(principal, confirmed.getId())).thenReturn(confirmed);
+
+        assertThatThrownBy(() -> service.changeStatus(principal, confirmed.getId(), Dose.DoseStatus.CONFIRMED,
+                NOW.minusHours(1)))
+                .satisfies(e -> {
+                    assertStatus(e, HttpStatus.CONFLICT);
+                    assertThat(((ResponseStatusException) e).getReason()).isEqualTo("La toma ya fue confirmada");
+                });
+        verifyNoStatusUpdate();
+    }
+
+    @Test
+    void confirmingAMissingOrForeignDoseWithAValidTimeIsStill404() {
+        UUID id = UUID.randomUUID();
+        when(accessPolicy.requireDose(principal, id)).thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND));
+
+        assertThatThrownBy(() -> service.changeStatus(principal, id, Dose.DoseStatus.CONFIRMED, NOW.minusHours(1)))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        verifyNoStatusUpdate();
+    }
+
+    @Test
+    void losingTheRaceWhenConfirmingWithATimeIsStill409() {
+        Dose pending = dose(Dose.DoseStatus.PENDING);
+        when(accessPolicy.requireDose(principal, pending.getId())).thenReturn(pending);
+        LocalDateTime requested = NOW.minusHours(1);
+        when(doseRepository.updateStatusIfCurrent(eq(pending.getId()),
+                eq(List.of(Dose.DoseStatus.PENDING, Dose.DoseStatus.SKIPPED)),
+                eq(Dose.DoseStatus.CONFIRMED), eq(requested), eq(NOW))).thenReturn(0);
+
+        assertThatThrownBy(() -> service.changeStatus(principal, pending.getId(), Dose.DoseStatus.CONFIRMED,
+                requested))
+                .satisfies(e -> {
+                    assertStatus(e, HttpStatus.CONFLICT);
+                    assertThat(((ResponseStatusException) e).getReason()).isEqualTo("La toma ya cambió de estado");
+                });
+        verify(doseRepository).updateStatusIfCurrent(eq(pending.getId()),
+                eq(List.of(Dose.DoseStatus.PENDING, Dose.DoseStatus.SKIPPED)),
+                eq(Dose.DoseStatus.CONFIRMED), eq(requested), eq(NOW));
+        verify(doseRepository, never()).findById(any());
+    }
+
+    @Test
+    void skippingIgnoresTheTimeAndKeepsConfirmedAtEmpty() {
+        Dose pending = dose(Dose.DoseStatus.PENDING);
+        when(accessPolicy.requireDose(principal, pending.getId())).thenReturn(pending);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, pending);
+
+        // Ni siquiera una hora futura se valida al omitir: se descarta
+        Dose result = service.changeStatus(principal, pending.getId(), Dose.DoseStatus.SKIPPED, NOW.plusDays(1));
+
+        assertThat(result.getStatus()).isEqualTo(Dose.DoseStatus.SKIPPED);
+        assertThat(result.getConfirmedAt()).isNull();
+        verify(doseRepository).updateStatusIfCurrent(eq(pending.getId()), eq(List.of(Dose.DoseStatus.PENDING)),
+                eq(Dose.DoseStatus.SKIPPED), isNull(), eq(NOW));
+    }
+
+    @Test
+    void undoStillClearsConfirmedAtByPassingNull() {
+        Dose confirmed = doseAt(Dose.DoseStatus.CONFIRMED, NOW);
+        when(accessPolicy.requireDose(principal, confirmed.getId())).thenReturn(confirmed);
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, confirmed);
+
+        service.undo(principal, confirmed.getId());
+
+        verify(doseRepository).updateStatusIfCurrent(eq(confirmed.getId()),
+                eq(List.of(Dose.DoseStatus.CONFIRMED, Dose.DoseStatus.SKIPPED)),
+                eq(Dose.DoseStatus.PENDING), isNull(), eq(NOW));
+    }
+
     private void verifyNoStatusUpdate() {
         verify(doseRepository, never()).updateStatusIfCurrent(any(), any(), any(), any(), any());
     }

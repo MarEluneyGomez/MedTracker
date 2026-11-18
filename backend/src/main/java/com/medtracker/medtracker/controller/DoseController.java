@@ -1,5 +1,6 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.DoseConfirmRequestDTO;
 import com.medtracker.medtracker.dto.DoseCreateRequestDTO;
 import com.medtracker.medtracker.dto.DoseDTO;
 import com.medtracker.medtracker.model.Dose;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -101,8 +103,10 @@ public class DoseController {
     // Confirmar una toma (RF-07): pasa a estado CONFIRMED
     @PutMapping("/{id}/confirm")
     public ResponseEntity<DoseDTO> confirm(@AuthenticationPrincipal AuthenticatedUser principal,
-                                           @PathVariable UUID id) {
-        return ResponseEntity.ok(new DoseDTO(doseService.changeStatus(principal, id, Dose.DoseStatus.CONFIRMED)));
+                                           @PathVariable UUID id,
+                                           @RequestBody(required = false) DoseConfirmRequestDTO request) {
+        LocalDateTime at = request == null ? null : request.getConfirmedAt();
+        return ResponseEntity.ok(new DoseDTO(doseService.changeStatus(principal, id, Dose.DoseStatus.CONFIRMED, at)));
     }
 
     // Marcar una toma como omitida (RF-07): pasa a estado SKIPPED
