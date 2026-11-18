@@ -12,34 +12,9 @@ import { getMedications } from '../services/medications';
 import { getReminders } from '../services/reminders';
 import { getTreatmentsByUser } from '../services/treatments';
 import { colors } from '../theme/colors';
-import type { Dose, Medication, Reminder, Treatment } from '../types/api';
+import type { Dose } from '../types/api';
 import { formatLongDate } from '../utils/dates';
-
-type DoseDetails = {
-  medicationName: string;
-  dosage: string;
-};
-
-// La toma solo trae su recordatorio: el medicamento y la dosis salen del tratamiento
-function buildDetails(
-  reminders: Reminder[],
-  treatments: Treatment[],
-  medications: Medication[],
-): Record<string, DoseDetails> {
-  const treatmentsById = new Map(treatments.map((treatment) => [treatment.id, treatment]));
-  const medicationsById = new Map(medications.map((medication) => [medication.id, medication]));
-  const details: Record<string, DoseDetails> = {};
-  for (const reminder of reminders) {
-    const treatment = treatmentsById.get(reminder.treatmentId);
-    if (treatment) {
-      details[reminder.id] = {
-        medicationName: medicationsById.get(treatment.medicationId)?.name ?? 'Medicamento',
-        dosage: treatment.dosage,
-      };
-    }
-  }
-  return details;
-}
+import { buildDoseDetails, type DoseDetails } from '../utils/doseDetails';
 
 export default function TodayScreen() {
   const { user } = useAuth();
@@ -63,7 +38,7 @@ export default function TodayScreen() {
         getMedications(),
       ]);
       setDoses(todayDoses);
-      setDetails(buildDetails(reminders, treatments, medications));
+      setDetails(buildDoseDetails(reminders, treatments, medications));
       setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudieron cargar las tomas de hoy.');

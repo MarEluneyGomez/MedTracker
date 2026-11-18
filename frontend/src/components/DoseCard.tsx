@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors } from '../theme/colors';
 import type { Dose } from '../types/api';
 import { formatClockTime } from '../utils/dates';
+import DoseStatusLabel from './DoseStatusLabel';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -17,26 +18,6 @@ type DoseCardProps = {
   onUndo: () => void;
 };
 
-type Status = {
-  icon: IconName;
-  label: string;
-  color: string;
-};
-
-function statusOf(dose: Dose): Status {
-  if (dose.status === 'CONFIRMED') {
-    const label = dose.confirmedAt ? `Tomada a las ${formatClockTime(dose.confirmedAt)}` : 'Tomada';
-    return { icon: 'checkmark-circle', label, color: colors.success };
-  }
-  if (dose.status === 'SKIPPED') {
-    return { icon: 'close-circle', label: 'No tomada', color: colors.textSecondary };
-  }
-  if (new Date(dose.scheduledAt) < new Date()) {
-    return { icon: 'alert-circle', label: 'Atrasada', color: colors.warning };
-  }
-  return { icon: 'time-outline', label: 'Pendiente', color: colors.primary };
-}
-
 export default function DoseCard({
   dose,
   medicationName,
@@ -46,7 +27,6 @@ export default function DoseCard({
   onSkip,
   onUndo,
 }: DoseCardProps) {
-  const status = statusOf(dose);
   const isPending = dose.status === 'PENDING';
 
   return (
@@ -59,10 +39,7 @@ export default function DoseCard({
         </View>
       </View>
 
-      <View style={styles.status}>
-        <Ionicons name={status.icon} size={22} color={status.color} />
-        <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
-      </View>
+      <DoseStatusLabel dose={dose} />
 
       {isPending ? (
         <View style={styles.actions}>
@@ -75,6 +52,8 @@ export default function DoseCard({
           />
           <ActionButton icon="close" label="No la tomé" disabled={busy} onPress={onSkip} />
         </View>
+      ) : dose.status === 'SKIPPED' ? (
+        <ActionButton icon="checkmark" label="La tomé" filled disabled={busy} onPress={onConfirm} />
       ) : (
         <ActionButton icon="arrow-undo" label="Deshacer" disabled={busy} onPress={onUndo} />
       )}
@@ -145,15 +124,6 @@ const styles = StyleSheet.create({
   dosage: {
     fontSize: 17,
     color: colors.textSecondary,
-  },
-  status: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  statusText: {
-    fontSize: 16,
-    fontWeight: '600',
   },
   actions: {
     flexDirection: 'row',

@@ -4,11 +4,11 @@ App móvil del sistema de seguimiento de medicación, construida con **React Nat
 
 ## Estado actual
 
-Base de la app armada (Expo SDK 58): cliente de API, sesión de usuario, navegación según el rol, las pantallas de inicio de sesión y registro, la gestión de tratamientos y horarios del paciente, y la pantalla "Hoy" con las tomas del día. El resto de las pantallas de cada sección son provisorias. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
+Base de la app armada (Expo SDK 58): cliente de API, sesión de usuario, navegación según el rol, las pantallas de inicio de sesión y registro, la gestión de tratamientos y horarios del paciente, la pantalla "Hoy" con las tomas del día y el historial con la adherencia. El resto de las pantallas de cada sección son provisorias. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
 
 Al abrir la app sin sesión se ve la pantalla de bienvenida, con las opciones de iniciar sesión (CU-02) o crear una cuenta (CU-01). Al iniciar sesión se ven las pestañas que corresponden al rol:
 
-- **Paciente:** Hoy, Tratamientos, Citas y Perfil.
+- **Paciente:** Hoy, Tratamientos, Historial, Citas y Perfil.
 - **Tutor:** Pacientes y Perfil.
 - **Médico:** Citas y Perfil.
 
@@ -67,9 +67,20 @@ Endpoints: `GET /reminders`, `GET /reminders/treatment/{treatmentId}`, `GET /rem
 Cubre CU-06 (confirmar toma) y RF-07. La pestaña Hoy muestra las tomas del día ordenadas por hora (`GET /doses/user/{userId}`, sin fecha: el backend usa el día de hoy de su zona horaria), con un resumen ("Tomaste 2 de 5") y una barra de progreso. Cada toma muestra la hora, el medicamento, la dosis y su estado con ícono y texto:
 
 - **Pendiente** o **Atrasada** (si la hora ya pasó): botones "La tomé" (`PUT /doses/{id}/confirm`) y "No la tomé" (`PUT /doses/{id}/skip`).
-- **Tomada a las HH:MM** o **No tomada**: botón "Deshacer" (`PUT /doses/{id}/undo`), que el backend permite para las tomas de hoy y de ayer.
+- **Tomada a las HH:MM**: botón "Deshacer" (`PUT /doses/{id}/undo`), que el backend permite para las tomas de hoy y de ayer.
+- **No tomada**: botón "La tomé". El backend marca como omitidas las tomas pendientes que pasaron hace más de 2 horas (RN-04) y permite confirmar una omitida de hoy o de ayer, así que quien se la tomó tarde la registra con un toque.
 
-Ninguna acción pide confirmación porque todas se pueden deshacer. La toma solo trae su recordatorio, así que el medicamento y la dosis se buscan cruzando recordatorios, tratamientos y medicamentos, que se piden en paralelo. Al confirmar, omitir o deshacer se actualiza solo esa toma con la respuesta del backend, sin recargar la pantalla.
+Ninguna acción pide confirmación porque todas se pueden revertir. La toma solo trae su recordatorio, así que el medicamento y la dosis se buscan cruzando recordatorios, tratamientos y medicamentos, que se piden en paralelo. Al confirmar, omitir o deshacer se actualiza solo esa toma con la respuesta del backend, sin recargar la pantalla.
+
+## Historial y adherencia
+
+Cubre CU-07, RF-08 y RF-09. La pestaña Historial trae todas las tomas del usuario (`GET /doses`) y permite elegir el período: 7 días (hoy y los 6 anteriores), 30 días o todo. Para el período elegido muestra:
+
+- **Adherencia general** según RN-05 (tomas confirmadas sobre tomas generadas), con el porcentaje, "Tomaste X de Y tomas", una barra y un nivel con ícono y texto: buena desde el 80 %, umbral habitual en salud; regular entre 50 % y 79 %; baja debajo de 50 %.
+- **Adherencia por tratamiento**.
+- **Detalle por día**, del más reciente al más viejo, con el estado de cada toma.
+
+Solo cuentan las tomas cuya hora ya pasó: las que todavía no tocan no son un incumplimiento. El backend no devuelve las tomas de tratamientos o recordatorios eliminados, así que no aparecen en el historial; las de tratamientos completados sí. El cálculo se hace en la app (`src/utils/adherence.ts`), así que cambiar de período no vuelve a pedir datos.
 
 ## Estructura
 
@@ -77,14 +88,15 @@ Ninguna acción pide confirmación porque todas se pueden deshacer. La toma solo
 frontend/
 ├── assets/                 # Íconos y splash de la app
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, pestañas de cada rol, perfil)
+│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, pestañas de cada rol, perfil)
 │   ├── components/         # Componentes reutilizables
 │   │   ├── AppButton, Screen, TextField, Logo
 │   │   ├── Chip, RoleSelector, ChipSelector, DaySelector # Selección entre opciones
 │   │   ├── DateField, TimeField # Campos de fecha y hora
 │   │   ├── MedicationPicker, DosagePicker, FrequencyPicker # Partes del formulario de tratamiento
 │   │   ├── SchedulePicker, ScheduleSaveBar # Horarios según la frecuencia
-│   │   └── DoseCard # Una toma del día con su estado y acciones
+│   │   ├── DoseCard # Una toma del día con su estado y acciones
+│   │   └── DoseStatusLabel # Estado de una toma con ícono y texto (Hoy e Historial)
 │   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, headerOptions y lista de pantallas (types.ts)
 │   ├── context/            # AuthContext: sesión compartida por toda la app
 │   ├── hooks/
@@ -92,7 +104,7 @@ frontend/
 │   ├── services/
 │   │   ├── api.ts          # Cliente HTTP: token en cada pedido, renovación de la sesión y errores (ApiError)
 │   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión
-│   │   ├── doses.ts        # Tomas del día: confirmar, omitir y deshacer
+│   │   ├── doses.ts        # Tomas: todas, las de hoy, confirmar, omitir y deshacer
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
@@ -101,7 +113,9 @@ frontend/
 │   │   ├── colors.ts       # Paleta de colores
 │   │   └── typography.ts   # Estilos de texto compartidos (etiquetas y errores de campos)
 │   └── utils/
+│       ├── adherence.ts    # Período, porcentaje de adherencia (RN-05) y agrupación por día
 │       ├── dates.ts        # Conversión y formato de fechas y horas, nombres de días y meses
+│       ├── doseDetails.ts  # Medicamento y dosis de cada toma, a partir de su recordatorio
 │       ├── dosage.ts       # Formato y lectura de la dosis
 │       ├── frequency.ts    # Formato y lectura de la frecuencia
 │       ├── reminders.ts    # Cálculo de horarios y plan de cambios al guardarlos
