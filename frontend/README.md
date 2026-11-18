@@ -82,6 +82,15 @@ Cubre CU-07, RF-08 y RF-09. La pestaña Historial trae todas las tomas del usuar
 
 Solo cuentan las tomas cuya hora ya pasó: las que todavía no tocan no son un incumplimiento. El backend no devuelve las tomas de tratamientos o recordatorios eliminados, así que no aparecen en el historial; las de tratamientos completados sí. El cálculo se hace en la app (`src/utils/adherence.ts`), así que cambiar de período no vuelve a pedir datos.
 
+## Sin conexión
+
+Cubre RNF-05 (ver los datos ya cargados sin conexión). Cada lectura que responde el backend con la sesión iniciada (tratamientos, horarios, tomas, historial) se guarda en el dispositivo con `AsyncStorage`, junto con la fecha y hora. Si después un pedido falla por falta de conexión o porque el servidor no responde en 15 segundos, la app muestra la última copia guardada y un aviso arriba de la pantalla: "Sin conexión. Estás viendo los datos guardados el 18/11 a las 10:15". Si se muestran varias copias, el aviso usa la más vieja. Apenas el servidor vuelve a responder, el aviso desaparece.
+
+- Solo se guardan lecturas: confirmar una toma o editar un tratamiento sin conexión muestra "No se pudo conectar".
+- Una pantalla que no se abrió con conexión no tiene copia, así que sin conexión muestra el error de siempre.
+- Al cerrar sesión (o cuando vence) se borran todas las copias: son datos de salud y no deben quedar en el dispositivo ni mezclarse con los de otra persona.
+- Todo pasa en `src/services/api.ts`, así que las pantallas no necesitan cambios para funcionar sin conexión.
+
 ## Estructura
 
 ```
@@ -96,14 +105,18 @@ frontend/
 │   │   ├── MedicationPicker, DosagePicker, FrequencyPicker # Partes del formulario de tratamiento
 │   │   ├── SchedulePicker, ScheduleSaveBar # Horarios según la frecuencia
 │   │   ├── DoseCard # Una toma del día con su estado y acciones
-│   │   └── DoseStatusLabel # Estado de una toma con ícono y texto (Hoy e Historial)
+│   │   ├── DoseStatusLabel # Estado de una toma con ícono y texto (Hoy e Historial)
+│   │   └── OfflineBanner # Aviso de que se muestran datos guardados (dentro de Screen)
 │   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, headerOptions y lista de pantallas (types.ts)
 │   ├── context/            # AuthContext: sesión compartida por toda la app
 │   ├── hooks/
-│   │   └── useFlashScrollIndicators.ts # Muestra la barra de scroll al abrir una lista en iOS
+│   │   ├── useFlashScrollIndicators.ts # Muestra la barra de scroll al abrir una lista en iOS
+│   │   └── useOfflineDataSavedAt.ts # Fecha de los datos guardados que se muestran sin conexión
 │   ├── services/
-│   │   ├── api.ts          # Cliente HTTP: token en cada pedido, renovación de la sesión y errores (ApiError)
+│   │   ├── api.ts          # Cliente HTTP: token en cada pedido, renovación de la sesión, copias sin conexión y errores (ApiError)
 │   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión
+│   │   ├── cache.ts        # Copias de las lecturas en el dispositivo (AsyncStorage)
+│   │   ├── connection.ts   # Si se están mostrando datos guardados y de cuándo
 │   │   ├── doses.ts        # Tomas: todas, las de hoy, confirmar, omitir y deshacer
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios

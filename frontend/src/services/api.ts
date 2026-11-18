@@ -1,3 +1,6 @@
+import { readFromCache, saveToCache } from './cache';
+import { markOnline, markShowingSavedData } from './connection';
+
 const ERROR_MESSAGES: Record<number, string> = {
   400: 'Los datos enviados no son válidos.',
   401: 'Tu sesión expiró. Volvé a iniciar sesión.',
@@ -27,6 +30,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:8080';
 const REQUEST_TIMEOUT_MS = 15000;
 const NO_CONTENT = 204;
 export const UNAUTHORIZED = 401;
+const NO_CONNECTION = 0;
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
@@ -51,7 +55,32 @@ export async function apiRequest<T>(
   method: HttpMethod,
   path: string,
   body?: unknown,
-  { authenticated = true }: RequestOptions = {},
+  options: RequestOptions = {},
+): Promise<T> {
+  const isCacheable = method === 'GET' && (options.authenticated ?? true);
+  try {
+    const data = await requestFromServer<T>(method, path, body, options);
+    if (isCacheable) {
+      // Si no se puede guardar la copia, la app sigue igual: solo no habrá datos sin conexión
+      saveToCache(path, data).catch(() => undefined);
+    }
+    return data;
+  } catch (e) {
+    const isConnectionError = e instanceof ApiError && e.status === NO_CONNECTION;
+    const cached = isCacheable && isConnectionError ? await readFromCache<T>(path) : null;
+    if (!cached) {
+      throw e;
+    }
+    markShowingSavedData(cached.savedAt);
+    return cached.data;
+  }
+}
+
+async function requestFromServer<T>(
+  method: HttpMethod,
+  path: string,
+  body: unknown,
+  { authenticated = true }: RequestOptions,
 ): Promise<T> {
   const token = authenticated ? authToken : null;
   let response = await send(method, path, body, token);
@@ -91,9 +120,11 @@ async function send(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(`${API_URL}${path}`, { ...options, signal: controller.signal });
+    const response = await fetch(`${API_URL}${path}`, { ...options, signal: controller.signal });
+    markOnline();
+    return response;
   } catch {
-    throw new ApiError(0, 'No se pudo conectar con el servidor. Revisá tu conexión.');
+    throw new ApiError(NO_CONNECTION, 'No se pudo conectar con el servidor. Revisá tu conexión.');
   } finally {
     clearTimeout(timeout);
   }
