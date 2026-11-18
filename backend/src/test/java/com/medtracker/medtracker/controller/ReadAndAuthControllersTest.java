@@ -1,5 +1,7 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.model.Dose;
+import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.security.JwtService;
@@ -19,11 +21,13 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -35,6 +39,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -204,6 +209,65 @@ class ReadAndAuthControllersTest {
         mockMvcWithDevTools.perform(post("/doses/generate-daily"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.generated").value(3));
+    }
+
+    // La toma que devuelve el service mockeado al confirmar; solo importa para armar el DoseDTO
+    private Dose confirmedDose(UUID id, LocalDateTime confirmedAt) {
+        return Dose.builder().id(id).reminder(Reminder.builder().id(UUID.randomUUID()).build())
+                .scheduledAt(LocalDateTime.of(2026, 11, 18, 8, 0)).status(Dose.DoseStatus.CONFIRMED)
+                .confirmedAt(confirmedAt).build();
+    }
+
+    // Ejecuta PUT /doses/{id}/confirm con el body dado y espera 200; el service debe recibir expected
+    private void assertConfirmPassesToService(String body, LocalDateTime expected) throws Exception {
+        UUID id = UUID.randomUUID();
+        when(doseService.changeStatus(eq(principal), eq(id), eq(Dose.DoseStatus.CONFIRMED), eq(expected)))
+                .thenReturn(confirmedDose(id, expected));
+        MockHttpServletRequestBuilder request = put("/doses/" + id + "/confirm");
+        if (body != null) {
+            request.contentType(MediaType.APPLICATION_JSON).content(body);
+        }
+
+        mockMvc.perform(request).andExpect(status().isOk());
+
+        verify(doseService).changeStatus(principal, id, Dose.DoseStatus.CONFIRMED, expected);
+    }
+
+    @Test
+    void confirmWithoutBodyPassesANullTimeToTheService() throws Exception {
+        assertConfirmPassesToService(null, null);
+    }
+
+    @Test
+    void confirmWithAnEmptyObjectPassesANullTimeToTheService() throws Exception {
+        assertConfirmPassesToService("{}", null);
+    }
+
+    @Test
+    void confirmWithANullTimePassesANullTimeToTheService() throws Exception {
+        assertConfirmPassesToService("{\"confirmedAt\":null}", null);
+    }
+
+    @Test
+    void confirmWithATimePassesItToTheService() throws Exception {
+        assertConfirmPassesToService("{\"confirmedAt\":\"2026-11-18T08:05:00\"}",
+                LocalDateTime.of(2026, 11, 18, 8, 5));
+    }
+
+    @Test
+    void confirmIgnoresExtraFieldsInTheBody() throws Exception {
+        assertConfirmPassesToService(
+                "{\"confirmedAt\":\"2026-11-18T08:05:00\",\"status\":\"SKIPPED\",\"extra\":123}",
+                LocalDateTime.of(2026, 11, 18, 8, 5));
+    }
+
+    @Test
+    void confirmWithABodyButNoContentTypeIs415() throws Exception {
+        // Cambio de comportamiento: antes un body sin Content-Type se ignoraba
+        mockMvc.perform(put("/doses/" + UUID.randomUUID() + "/confirm")
+                        .content("{\"confirmedAt\":\"2026-11-18T08:05:00\"}"))
+                .andExpect(status().isUnsupportedMediaType());
+        verify(doseService, never()).changeStatus(any(), any(), any(), any());
     }
 
     @Test

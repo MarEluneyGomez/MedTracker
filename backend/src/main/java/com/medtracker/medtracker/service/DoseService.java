@@ -21,6 +21,9 @@ public class DoseService {
     // Días hacia atrás (además de hoy) en que una toma todavía se puede deshacer
     static final int UNDO_WINDOW_DAYS = 1;
 
+    // Minutos hacia el futuro que se toleran en la hora de confirmación enviada por el cliente
+    static final int CONFIRM_FUTURE_TOLERANCE_MINUTES = 5;
+
     private final DoseRepository doseRepository;
     private final AccessPolicy accessPolicy;
     private final Clock clock;
@@ -74,9 +77,23 @@ public class DoseService {
 
     // Cambiar estado de la dosis (RN-03: una toma ya confirmada/omitida no puede volver a cambiar de estado)
     public Dose changeStatus(AuthenticatedUser principal, UUID id, Dose.DoseStatus newStatus) {
+        return changeStatus(principal, id, newStatus, null);
+    }
+
+    // Igual que el anterior; al confirmar, requestedConfirmedAt (opcional, hora local de la zona
+    // configurada) reemplaza a "ahora" como confirmedAt. Al omitir se ignora.
+    public Dose changeStatus(AuthenticatedUser principal, UUID id, Dose.DoseStatus newStatus,
+                             LocalDateTime requestedConfirmedAt) {
+        LocalDateTime now = LocalDateTime.now(clock);
         if (newStatus == Dose.DoseStatus.PENDING) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Una toma solo puede pasar a confirmada u omitida");
+        }
+        if (newStatus == Dose.DoseStatus.CONFIRMED && requestedConfirmedAt != null
+                && requestedConfirmedAt.isAfter(now.plusMinutes(CONFIRM_FUTURE_TOLERANCE_MINUTES))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "La hora de confirmación no puede ser posterior a la hora actual (se admiten hasta "
+                            + CONFIRM_FUTURE_TOLERANCE_MINUTES + " minutos de diferencia)");
         }
         Dose dose = accessPolicy.requireDose(principal, id);
         boolean confirming = newStatus == Dose.DoseStatus.CONFIRMED;
@@ -90,8 +107,7 @@ public class DoseService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "La toma ya fue " + statusInSpanish(dose.getStatus()));
         }
-        LocalDateTime now = LocalDateTime.now(clock);
-        LocalDateTime confirmedAt = confirming ? now : null;
+        LocalDateTime confirmedAt = confirming ? (requestedConfirmedAt != null ? requestedConfirmedAt : now) : null;
         // SKIPPED va en expected al confirmar porque el job de RN-04 (DoseAutoSkipScheduler)
         // puede omitir la toma entre la lectura y el UPDATE
         List<Dose.DoseStatus> expected = confirming

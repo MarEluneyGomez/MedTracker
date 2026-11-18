@@ -1,5 +1,6 @@
 package com.medtracker.medtracker.security;
 
+import com.jayway.jsonpath.JsonPath;
 import com.medtracker.medtracker.DoseRepositoryStubs;
 import com.medtracker.medtracker.config.GlobalExceptionHandler;
 import com.medtracker.medtracker.config.SecurityConfig;
@@ -56,6 +57,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.junit.jupiter.web.SpringJUnitWebConfig;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -63,8 +65,12 @@ import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -699,6 +705,140 @@ class RequestValidationIntegrationTest {
                 .andExpect(jsonPath("$.confirmedAt").doesNotExist());
         mockMvc.perform(as(a, put("/doses/" + UUID.randomUUID() + "/confirm")))
                 .andExpect(status().isNotFound());
+    }
+
+    // Hora local sin zona, truncada a segundos, en el formato del body (el reloj de este test es UTC)
+    private static String isoSeconds(LocalDateTime time) {
+        return time.truncatedTo(ChronoUnit.SECONDS).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+    }
+
+    private Dose existingDose(Dose.DoseStatus status) {
+        return existingDose(status, LocalDateTime.now(ZoneOffset.UTC).minusHours(3));
+    }
+
+    private Dose existingDose(Dose.DoseStatus status, LocalDateTime scheduledAt) {
+        Dose dose = Dose.builder().id(UUID.randomUUID()).reminder(reminderA).status(status)
+                .scheduledAt(scheduledAt).build();
+        when(doseRepository.findByIdAndDeletedAtIsNull(dose.getId())).thenReturn(Optional.of(dose));
+        DoseRepositoryStubs.statefulStatusUpdates(doseRepository, dose);
+        return dose;
+    }
+
+    @Test
+    void confirmWithAValidPastTimeStoresThatTime() throws Exception {
+        Dose pending = existingDose(Dose.DoseStatus.PENDING);
+        String requested = isoSeconds(LocalDateTime.now(ZoneOffset.UTC).minusHours(2));
+
+        mockMvc.perform(as(a, json(put("/doses/" + pending.getId() + "/confirm"),
+                        "{\"confirmedAt\":\"" + requested + "\"}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CONFIRMED"))
+                .andExpect(jsonPath("$.confirmedAt").value(requested));
+    }
+
+    @Test
+    void confirmWithAnEmptyObjectUsesTheCurrentTime() throws Exception {
+        Dose pending = existingDose(Dose.DoseStatus.PENDING);
+        LocalDateTime before = LocalDateTime.now(ZoneOffset.UTC).minusSeconds(2);
+
+        MvcResult result = mockMvc.perform(as(a, json(put("/doses/" + pending.getId() + "/confirm"), "{}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CONFIRMED"))
+                .andReturn();
+
+        assertConfirmedAtBetween(result, before, LocalDateTime.now(ZoneOffset.UTC).plusSeconds(2));
+    }
+
+    // confirmedAt de la respuesta, ya parseado, debe caer entre before y after (ambos en UTC, como el reloj del test)
+    private void assertConfirmedAtBetween(MvcResult result, LocalDateTime before, LocalDateTime after)
+            throws Exception {
+        String confirmedAt = JsonPath.read(result.getResponse().getContentAsString(), "$.confirmedAt");
+        assertThat(LocalDateTime.parse(confirmedAt)).isAfterOrEqualTo(before).isBeforeOrEqualTo(after);
+    }
+
+    @Test
+    void confirmWithoutBodyAndWithoutContentTypeUsesTheCurrentTime() throws Exception {
+        Dose pending = existingDose(Dose.DoseStatus.PENDING);
+        LocalDateTime before = LocalDateTime.now(ZoneOffset.UTC).minusSeconds(2);
+
+        MvcResult result = mockMvc.perform(as(a, put("/doses/" + pending.getId() + "/confirm")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CONFIRMED"))
+                .andReturn();
+
+        assertConfirmedAtBetween(result, before, LocalDateTime.now(ZoneOffset.UTC).plusSeconds(2));
+    }
+
+    @Test
+    void confirmWithAFutureTimeOnAMissingDoseIs400NotTheLookup404() throws Exception {
+        UUID missingId = UUID.randomUUID();
+        String future = isoSeconds(LocalDateTime.now(ZoneOffset.UTC).plusHours(1));
+
+        // La hora futura se valida antes de buscar la toma (antes de requireDose)
+        assertInvalid(mockMvc.perform(as(a, json(put("/doses/" + missingId + "/confirm"),
+                        "{\"confirmedAt\":\"" + future + "\"}"))),
+                "/doses/" + missingId + "/confirm",
+                "La hora de confirmación no puede ser posterior a la hora actual "
+                        + "(se admiten hasta 5 minutos de diferencia)");
+    }
+
+    @Test
+    void confirmWithATimeFromTheDayBeforeTheScheduledDayIsStoredAsIs() throws Exception {
+        LocalDateTime scheduledAt = LocalDate.now(ZoneOffset.UTC).atTime(8, 0);
+        Dose pending = existingDose(Dose.DoseStatus.PENDING, scheduledAt);
+        String requested = isoSeconds(scheduledAt.toLocalDate().minusDays(1).atTime(23, 59));
+
+        // No hay cota inferior: se guarda aunque sea de un día anterior al de scheduledAt
+        mockMvc.perform(as(a, json(put("/doses/" + pending.getId() + "/confirm"),
+                        "{\"confirmedAt\":\"" + requested + "\"}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CONFIRMED"))
+                .andExpect(jsonPath("$.confirmedAt").value(requested));
+    }
+
+    @Test
+    void confirmWithATimeOneHourAheadIs400() throws Exception {
+        Dose pending = existingDose(Dose.DoseStatus.PENDING);
+        String future = isoSeconds(LocalDateTime.now(ZoneOffset.UTC).plusHours(1));
+
+        assertInvalid(mockMvc.perform(as(a, json(put("/doses/" + pending.getId() + "/confirm"),
+                        "{\"confirmedAt\":\"" + future + "\"}"))),
+                "/doses/" + pending.getId() + "/confirm",
+                "La hora de confirmación no puede ser posterior a la hora actual "
+                        + "(se admiten hasta 5 minutos de diferencia)");
+    }
+
+    @Test
+    void confirmWithAnInvalidTimeFormatIs400WithTheGenericMessage() throws Exception {
+        Dose pending = existingDose(Dose.DoseStatus.PENDING);
+
+        assertInvalid(mockMvc.perform(as(a, json(put("/doses/" + pending.getId() + "/confirm"),
+                        "{\"confirmedAt\":\"ayer\"}"))),
+                "/doses/" + pending.getId() + "/confirm", "El cuerpo de la solicitud no es válido");
+        assertInvalid(mockMvc.perform(as(a, json(put("/doses/" + pending.getId() + "/confirm"), "{no es json"))),
+                "/doses/" + pending.getId() + "/confirm", "El cuerpo de la solicitud no es válido");
+    }
+
+    @Test
+    void confirmWithATimeWithTheZSuffixIs400WithTheGenericMessage() throws Exception {
+        Dose pending = existingDose(Dose.DoseStatus.PENDING);
+        String requested = isoSeconds(LocalDateTime.now(ZoneOffset.UTC).minusHours(2));
+
+        assertInvalid(mockMvc.perform(as(a, json(put("/doses/" + pending.getId() + "/confirm"),
+                        "{\"confirmedAt\":\"" + requested + "Z\"}"))),
+                "/doses/" + pending.getId() + "/confirm", "El cuerpo de la solicitud no es válido");
+    }
+
+    @Test
+    void confirmWithATimeStillGives404ForAMissingDoseAnd409ForAResolvedOne() throws Exception {
+        Dose confirmed = existingDose(Dose.DoseStatus.CONFIRMED);
+        String requested = isoSeconds(LocalDateTime.now(ZoneOffset.UTC).minusHours(1));
+        String body = "{\"confirmedAt\":\"" + requested + "\"}";
+
+        mockMvc.perform(as(a, json(put("/doses/" + UUID.randomUUID() + "/confirm"), body)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(as(a, json(put("/doses/" + confirmed.getId() + "/confirm"), body)))
+                .andExpect(status().isConflict());
     }
 
     // ------------------------------------------------- getWithRole sin enumeración
