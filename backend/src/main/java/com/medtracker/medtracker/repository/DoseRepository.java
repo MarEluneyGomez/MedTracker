@@ -41,6 +41,10 @@ public interface DoseRepository extends JpaRepository<Dose, UUID> {
     // Para no duplicar la dosis de un recordatorio en un mismo horario
     boolean existsByReminderIdAndScheduledAt(UUID reminderId, LocalDateTime scheduledAt);
 
+    // Si el recordatorio tiene alguna dosis vigente (cualquier estado) dentro de [start, end)
+    boolean existsByReminderIdAndScheduledAtGreaterThanEqualAndScheduledAtLessThanAndDeletedAtIsNull(
+            UUID reminderId, LocalDateTime start, LocalDateTime end);
+
     // Dosis vigentes de un recordatorio en un estado dentro de [start, end)
     @Query("""
             select d from Dose d
