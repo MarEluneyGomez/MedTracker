@@ -1,5 +1,6 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.DoseAdherenceDTO;
 import com.medtracker.medtracker.model.Dose;
 import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.model.User;
@@ -200,6 +201,38 @@ class ReadAndAuthControllersTest {
     void dosesByUserWithMalformedDateIs400() throws Exception {
         mockMvc.perform(get("/doses/user/" + UUID.randomUUID()).param("date", "14-10-2026"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void historyPassesRangeAndTreatmentToTheService() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID treatmentId = UUID.randomUUID();
+        when(doseService.getHistory(principal, userId, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31),
+                treatmentId)).thenReturn(List.of());
+
+        mockMvc.perform(get("/doses/user/" + userId + "/history").param("from", "2026-10-01")
+                        .param("to", "2026-10-31").param("treatmentId", treatmentId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+        verify(doseService).getHistory(principal, userId, LocalDate.of(2026, 10, 1),
+                LocalDate.of(2026, 10, 31), treatmentId);
+    }
+
+    @Test
+    void adherencePassesRangeAndTreatmentToTheService() throws Exception {
+        UUID userId = UUID.randomUUID();
+        UUID treatmentId = UUID.randomUUID();
+        when(doseService.getAdherence(principal, userId, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31),
+                treatmentId)).thenReturn(DoseAdherenceDTO.builder().from(LocalDate.of(2026, 10, 1))
+                .to(LocalDate.of(2026, 10, 31)).treatmentId(treatmentId).build());
+
+        mockMvc.perform(get("/doses/user/" + userId + "/adherence").param("from", "2026-10-01")
+                        .param("to", "2026-10-31").param("treatmentId", treatmentId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.from").value("2026-10-01"))
+                .andExpect(jsonPath("$.treatmentId").value(treatmentId.toString()));
+        verify(doseService).getAdherence(principal, userId, LocalDate.of(2026, 10, 1),
+                LocalDate.of(2026, 10, 31), treatmentId);
     }
 
     @Test

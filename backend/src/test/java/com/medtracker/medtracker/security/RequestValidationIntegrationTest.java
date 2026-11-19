@@ -841,6 +841,22 @@ class RequestValidationIntegrationTest {
                 .andExpect(status().isConflict());
     }
 
+    @Test
+    void historyWithoutTheToParamIs400WithTheMissingParamMessage() throws Exception {
+        String path = "/doses/user/" + a.getId() + "/history";
+
+        assertInvalid(mockMvc.perform(as(a, get(path).param("from", "2026-10-01"))),
+                path, "Falta el parámetro obligatorio 'to'");
+    }
+
+    @Test
+    void adherenceWithARangeOverTheLimitIs400WithTheServiceMessage() throws Exception {
+        String path = "/doses/user/" + a.getId() + "/adherence";
+
+        assertInvalid(mockMvc.perform(as(a, get(path).param("from", "2026-01-01").param("to", "2026-06-01"))),
+                path, "El rango no puede superar los 92 días");
+    }
+
     // ------------------------------------------------- getWithRole sin enumeración
 
     @Test

@@ -1,10 +1,13 @@
 package com.medtracker.medtracker.service;
 
 import com.medtracker.medtracker.DoseRepositoryStubs;
+import com.medtracker.medtracker.dto.DoseAdherenceDTO;
 import com.medtracker.medtracker.model.Dose;
 import com.medtracker.medtracker.model.Reminder;
+import com.medtracker.medtracker.model.Treatment;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.DoseRepository;
+import com.medtracker.medtracker.repository.TreatmentRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +34,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,6 +46,8 @@ class DoseServiceTest {
     private DoseRepository doseRepository;
     @Mock
     private AccessPolicy accessPolicy;
+    @Mock
+    private TreatmentRepository treatmentRepository;
 
     private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), User.Role.PATIENT);
     private DoseService service;
@@ -49,7 +55,7 @@ class DoseServiceTest {
     @BeforeEach
     void setUp() {
         service = new DoseService(doseRepository, accessPolicy,
-                Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC));
+                Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC), treatmentRepository);
     }
 
     private Dose dose(Dose.DoseStatus status) {
@@ -567,7 +573,7 @@ class DoseServiceTest {
         // 00:30 del día 14 en Buenos Aires: "ayer" es el 13, aunque en UTC todavía sea el 13
         java.time.ZoneId zone = java.time.ZoneId.of("America/Argentina/Buenos_Aires");
         Clock zoned = Clock.fixed(LocalDateTime.of(2026, 10, 14, 0, 30).atZone(zone).toInstant(), zone);
-        DoseService zonedService = new DoseService(doseRepository, accessPolicy, zoned);
+        DoseService zonedService = new DoseService(doseRepository, accessPolicy, zoned, treatmentRepository);
         Dose twoDaysAgo = doseAt(Dose.DoseStatus.CONFIRMED, LocalDateTime.of(2026, 10, 12, 23, 0));
         when(accessPolicy.requireDose(principal, twoDaysAgo.getId())).thenReturn(twoDaysAgo);
 
@@ -691,6 +697,178 @@ class DoseServiceTest {
                 LocalDate.of(2026, 10, 15).atStartOfDay())).thenReturn(List.of(dose(Dose.DoseStatus.PENDING)));
 
         assertThat(service.findByUserAndDate(principal, principal.id(), LocalDate.of(2026, 10, 14))).hasSize(1);
+    }
+
+    private static final LocalDate FROM = LocalDate.of(2026, 10, 1);
+    private static final LocalDate TO = LocalDate.of(2026, 10, 31);
+
+    private void stubHistory(List<Dose> doses) {
+        when(doseRepository.findHistory(eq(principal.id()), any(), any(), eq(Dose.DoseStatus.PENDING)))
+                .thenReturn(doses);
+    }
+
+    private Treatment treatmentOf(UUID treatmentId, UUID ownerId) {
+        return Treatment.builder().id(treatmentId).user(User.builder().id(ownerId).build()).build();
+    }
+
+    @Test
+    void adherenceCountsEachStateAndKeepsUpcomingOutOfTheTotal() {
+        stubHistory(List.of(
+                doseAt(Dose.DoseStatus.CONFIRMED, NOW.minusDays(1)),
+                doseAt(Dose.DoseStatus.CONFIRMED, NOW.minusHours(5)),
+                doseAt(Dose.DoseStatus.SKIPPED, NOW.minusHours(6)),
+                doseAt(Dose.DoseStatus.PENDING, NOW),
+                doseAt(Dose.DoseStatus.PENDING, NOW.plusMinutes(1))));
+
+        DoseAdherenceDTO result = service.getAdherence(principal, principal.id(), FROM, TO, null);
+
+        assertThat(result.getTotal()).isEqualTo(4);
+        assertThat(result.getConfirmed()).isEqualTo(2);
+        assertThat(result.getSkipped()).isEqualTo(1);
+        assertThat(result.getOverduePending()).isEqualTo(1);
+        assertThat(result.getUpcoming()).isEqualTo(1);
+        assertThat(result.getPercentage()).isEqualTo(50);
+        assertThat(result.getFrom()).isEqualTo(FROM);
+        assertThat(result.getTo()).isEqualTo(TO);
+        assertThat(result.getTreatmentId()).isNull();
+    }
+
+    @Test
+    void adherenceWithoutDosesIsAllZerosAndNullPercentage() {
+        stubHistory(List.of());
+
+        DoseAdherenceDTO result = service.getAdherence(principal, principal.id(), FROM, TO, null);
+
+        assertThat(result.getTotal()).isZero();
+        assertThat(result.getConfirmed()).isZero();
+        assertThat(result.getSkipped()).isZero();
+        assertThat(result.getOverduePending()).isZero();
+        assertThat(result.getUpcoming()).isZero();
+        assertThat(result.getPercentage()).isNull();
+    }
+
+    @Test
+    void adherencePercentageRoundsHalfUp() {
+        // 1 de 8 = 12,5 % -> 13
+        List<Dose> doses = new java.util.ArrayList<>();
+        doses.add(doseAt(Dose.DoseStatus.CONFIRMED, NOW.minusDays(1)));
+        for (int i = 0; i < 7; i++) {
+            doses.add(doseAt(Dose.DoseStatus.SKIPPED, NOW.minusDays(1)));
+        }
+        stubHistory(doses);
+
+        assertThat(service.getAdherence(principal, principal.id(), FROM, TO, null).getPercentage())
+                .isEqualTo(13);
+    }
+
+    @Test
+    void historyRangeEndingBeforeItStartsIs400() {
+        assertThatThrownBy(() -> service.getHistory(principal, principal.id(), TO, FROM, null))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        verify(doseRepository, never()).findHistory(any(), any(), any(), any());
+    }
+
+    @Test
+    void historyRangeOf93DaysIs400() {
+        assertThatThrownBy(() -> service.getHistory(principal, principal.id(), FROM, FROM.plusDays(93), null))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        verify(doseRepository, never()).findHistory(any(), any(), any(), any());
+    }
+
+    @Test
+    void historyRangeOf92DaysIsAccepted() {
+        stubHistory(List.of());
+
+        assertThat(service.getHistory(principal, principal.id(), FROM, FROM.plusDays(92), null)).isEmpty();
+    }
+
+    @Test
+    void historyQueriesFromStartOfFromUntilStartOfDayAfterTo() {
+        stubHistory(List.of());
+
+        service.getHistory(principal, principal.id(), FROM, TO, null);
+
+        verify(doseRepository).findHistory(principal.id(), LocalDateTime.of(2026, 10, 1, 0, 0),
+                LocalDateTime.of(2026, 11, 1, 0, 0), Dose.DoseStatus.PENDING);
+    }
+
+    @Test
+    void historyWithoutTreatmentDoesNotLookUpTreatments() {
+        stubHistory(List.of());
+
+        service.getHistory(principal, principal.id(), FROM, TO, null);
+
+        verify(doseRepository).findHistory(any(), any(), any(), any());
+        verify(doseRepository, never()).findHistoryByTreatment(any(), any(), any(), any(), any());
+        verifyNoInteractions(treatmentRepository);
+    }
+
+    @Test
+    void historyWithAnOwnTreatmentUsesTheTreatmentQuery() {
+        UUID treatmentId = UUID.randomUUID();
+        when(treatmentRepository.findByIdAndDeletedAtIsNull(treatmentId))
+                .thenReturn(Optional.of(treatmentOf(treatmentId, principal.id())));
+        when(doseRepository.findHistoryByTreatment(principal.id(), treatmentId,
+                LocalDateTime.of(2026, 10, 1, 0, 0), LocalDateTime.of(2026, 11, 1, 0, 0),
+                Dose.DoseStatus.PENDING)).thenReturn(List.of());
+
+        assertThat(service.getHistory(principal, principal.id(), FROM, TO, treatmentId)).isEmpty();
+        verify(doseRepository, never()).findHistory(any(), any(), any(), any());
+    }
+
+    @Test
+    void historyWithATreatmentOfAnotherUserIs404() {
+        UUID treatmentId = UUID.randomUUID();
+        when(treatmentRepository.findByIdAndDeletedAtIsNull(treatmentId))
+                .thenReturn(Optional.of(treatmentOf(treatmentId, UUID.randomUUID())));
+
+        assertThatThrownBy(() -> service.getHistory(principal, principal.id(), FROM, TO, treatmentId))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        verifyNoInteractions(doseRepository);
+    }
+
+    @Test
+    void historyAndAdherenceWithAMissingOrDeletedTreatmentAre404() {
+        UUID treatmentId = UUID.randomUUID();
+        when(treatmentRepository.findByIdAndDeletedAtIsNull(treatmentId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getHistory(principal, principal.id(), FROM, TO, treatmentId))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        assertThatThrownBy(() -> service.getAdherence(principal, principal.id(), FROM, TO, treatmentId))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        verifyNoInteractions(doseRepository);
+    }
+
+    @Test
+    void adherencePercentageWithAnOddTotalRoundsToTheNearestInteger() {
+        // 2 de 3 = 66,67 % -> 67
+        stubHistory(List.of(
+                doseAt(Dose.DoseStatus.CONFIRMED, NOW.minusDays(1)),
+                doseAt(Dose.DoseStatus.CONFIRMED, NOW.minusDays(2)),
+                doseAt(Dose.DoseStatus.SKIPPED, NOW.minusDays(3))));
+        assertThat(service.getAdherence(principal, principal.id(), FROM, TO, null).getPercentage())
+                .isEqualTo(67);
+
+        // 1 de 3 = 33,33 % -> 33
+        stubHistory(List.of(
+                doseAt(Dose.DoseStatus.CONFIRMED, NOW.minusDays(1)),
+                doseAt(Dose.DoseStatus.SKIPPED, NOW.minusDays(2)),
+                doseAt(Dose.DoseStatus.SKIPPED, NOW.minusDays(3))));
+        assertThat(service.getAdherence(principal, principal.id(), FROM, TO, null).getPercentage())
+                .isEqualTo(33);
+    }
+
+    @Test
+    void historyOfSomeoneElseIs403AndTouchesNoRepository() {
+        UUID other = UUID.randomUUID();
+        doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN))
+                .when(accessPolicy).requireCanManagePatient(principal, other);
+
+        assertThatThrownBy(() -> service.getHistory(principal, other, FROM, TO, UUID.randomUUID()))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+        assertThatThrownBy(() -> service.getAdherence(principal, other, FROM, TO, null))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+        verifyNoInteractions(doseRepository, treatmentRepository);
     }
 
     @Test

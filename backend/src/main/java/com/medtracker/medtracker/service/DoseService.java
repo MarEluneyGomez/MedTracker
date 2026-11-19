@@ -1,7 +1,10 @@
 package com.medtracker.medtracker.service;
 
+import com.medtracker.medtracker.dto.DoseAdherenceDTO;
+import com.medtracker.medtracker.dto.DoseDTO;
 import com.medtracker.medtracker.model.Dose;
 import com.medtracker.medtracker.repository.DoseRepository;
+import com.medtracker.medtracker.repository.TreatmentRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -11,6 +14,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -24,9 +28,13 @@ public class DoseService {
     // Minutos hacia el futuro que se toleran en la hora de confirmación enviada por el cliente
     static final int CONFIRM_FUTURE_TOLERANCE_MINUTES = 5;
 
+    // Días máximos entre from y to en el historial y la adherencia
+    static final int MAX_RANGE_DAYS = 92;
+
     private final DoseRepository doseRepository;
     private final AccessPolicy accessPolicy;
     private final Clock clock;
+    private final TreatmentRepository treatmentRepository;
 
     // Registrar una nueva dosis: el recordatorio debe ser del usuario o de un
     // paciente que cuida (RN-01)
@@ -73,6 +81,73 @@ public class DoseService {
         accessPolicy.requireCanManagePatient(principal, userId);
         LocalDate day = date != null ? date : LocalDate.now(clock);
         return doseRepository.findByUserAndPeriod(userId, day.atStartOfDay(), day.plusDays(1).atStartOfDay());
+    }
+
+    // Historial de tomas del usuario entre from y to (ambos inclusive), más
+    // reciente primero. 403 si no es el propio usuario ni un paciente que cuida.
+    public List<DoseDTO> getHistory(AuthenticatedUser principal, UUID userId, LocalDate from, LocalDate to,
+                                    UUID treatmentId) {
+        return findHistory(principal, userId, from, to, treatmentId).stream()
+                .map(DoseDTO::new)
+                .toList();
+    }
+
+    // Adherencia (RF-09): total = confirmadas + omitidas + pendientes vencidas;
+    // las pendientes futuras van aparte (upcoming) y no cuentan en el total.
+    public DoseAdherenceDTO getAdherence(AuthenticatedUser principal, UUID userId, LocalDate from, LocalDate to,
+                                         UUID treatmentId) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        int confirmed = 0;
+        int skipped = 0;
+        int overduePending = 0;
+        int upcoming = 0;
+        for (Dose dose : findHistory(principal, userId, from, to, treatmentId)) {
+            switch (dose.getStatus()) {
+                case CONFIRMED -> confirmed++;
+                case SKIPPED -> skipped++;
+                case PENDING -> {
+                    if (dose.getScheduledAt().isAfter(now)) {
+                        upcoming++;
+                    } else {
+                        overduePending++;
+                    }
+                }
+            }
+        }
+        int total = confirmed + skipped + overduePending;
+        // Redondeo HALF_UP con enteros
+        Integer percentage = total == 0 ? null : (int) ((confirmed * 100L + total / 2) / total);
+        return DoseAdherenceDTO.builder()
+                .from(from).to(to).treatmentId(treatmentId)
+                .total(total).confirmed(confirmed).skipped(skipped)
+                .overduePending(overduePending).upcoming(upcoming)
+                .percentage(percentage)
+                .build();
+    }
+
+    // Chequeos en orden: 403 (usuario), 400 (rango), 404 (tratamiento ajeno o eliminado)
+    private List<Dose> findHistory(AuthenticatedUser principal, UUID userId, LocalDate from, LocalDate to,
+                                   UUID treatmentId) {
+        accessPolicy.requireCanManagePatient(principal, userId);
+        if (to.isBefore(from)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "La fecha 'to' no puede ser anterior a la fecha 'from'");
+        }
+        if (ChronoUnit.DAYS.between(from, to) > MAX_RANGE_DAYS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "El rango no puede superar los " + MAX_RANGE_DAYS + " días");
+        }
+        if (treatmentId != null) {
+            treatmentRepository.findByIdAndDeletedAtIsNull(treatmentId)
+                    .filter(treatment -> userId.equals(treatment.getUser().getId()))
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                            "Tratamiento no encontrado: " + treatmentId));
+        }
+        LocalDateTime start = from.atStartOfDay();
+        LocalDateTime end = to.plusDays(1).atStartOfDay();
+        return treatmentId == null
+                ? doseRepository.findHistory(userId, start, end, Dose.DoseStatus.PENDING)
+                : doseRepository.findHistoryByTreatment(userId, treatmentId, start, end, Dose.DoseStatus.PENDING);
     }
 
     // Cambiar estado de la dosis (RN-03: una toma ya confirmada/omitida no puede volver a cambiar de estado)

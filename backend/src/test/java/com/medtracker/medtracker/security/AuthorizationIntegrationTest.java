@@ -430,6 +430,45 @@ class AuthorizationIntegrationTest {
     }
 
     @Test
+    void historyAndAdherenceOfAnotherUserAreForbidden() throws Exception {
+        for (String endpoint : List.of("history", "adherence")) {
+            mockMvc.perform(as(b, get("/doses/user/" + a.getId() + "/" + endpoint)
+                            .param("from", "2026-10-01").param("to", "2026-10-31")))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
+    void historyAndAdherenceWithATreatmentOfAnotherPatientAre404() throws Exception {
+        // b consulta lo suyo, pero el tratamiento es de a
+        for (String endpoint : List.of("history", "adherence")) {
+            mockMvc.perform(as(b, get("/doses/user/" + b.getId() + "/" + endpoint)
+                            .param("from", "2026-10-01").param("to", "2026-10-31")
+                            .param("treatmentId", treatmentA.getId().toString())))
+                    .andExpect(status().isNotFound());
+        }
+    }
+
+    @Test
+    void aCaregiverOfTwoPatientsCannotUseThePatientsTreatmentForTheOtherOne() throws Exception {
+        // El cuidador ya está vinculado a a (setUp); se lo vincula también a b
+        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), b.getId()))
+                .thenReturn(true);
+
+        for (String endpoint : List.of("history", "adherence")) {
+            mockMvc.perform(as(caregiver, get("/doses/user/" + b.getId() + "/" + endpoint)
+                            .param("from", "2026-10-01").param("to", "2026-10-31")
+                            .param("treatmentId", treatmentA.getId().toString())))
+                    .andExpect(status().isNotFound());
+        }
+        // Control: con el paciente dueño del tratamiento responde 200
+        mockMvc.perform(as(caregiver, get("/doses/user/" + a.getId() + "/history")
+                        .param("from", "2026-10-01").param("to", "2026-10-31")
+                        .param("treatmentId", treatmentA.getId().toString())))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void theOwnerCanConfirmADose() throws Exception {
         mockMvc.perform(as(a, put("/doses/" + doseA.getId() + "/confirm"))).andExpect(status().isOk());
     }
