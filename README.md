@@ -55,10 +55,10 @@ seguimiento-de-medicacion/
 │   │   ├── navigation/         # Navegación según la sesión y el rol
 │   │   ├── context/            # Estado compartido (sesión del usuario)
 │   │   ├── hooks/              # Hooks reutilizables
-│   │   ├── services/           # Llamadas a la API
+│   │   ├── services/           # Llamadas a la API, datos sin conexión y notificaciones locales
 │   │   ├── types/              # Tipos de los datos que devuelve el backend
 │   │   ├── theme/              # Paleta de colores y estilos de texto compartidos
-│   │   └── utils/              # Fechas, dosis, frecuencia, horarios, texto y calendario en español
+│   │   └── utils/              # Fechas, dosis, frecuencia, horarios, tomas que vienen, texto y calendario en español
 │   ├── App.tsx                 # Componente raíz
 │   ├── index.ts                # Punto de entrada
 │   ├── app.json                # Configuración de Expo

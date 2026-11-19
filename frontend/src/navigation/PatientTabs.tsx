@@ -6,10 +6,14 @@ import ProfileScreen from '../screens/ProfileScreen';
 import TodayScreen from '../screens/TodayScreen';
 import { colors } from '../theme/colors';
 import TreatmentsStack from './TreatmentsStack';
+import { useDoseNotificationsSync } from '../hooks/useDoseNotificationsSync';
+import { useOpenTodayOnNotificationTap } from '../hooks/useOpenTodayOnNotificationTap';
 
 const Tab = createBottomTabNavigator();
 
 export default function PatientTabs() {
+  useDoseNotificationsSync();
+  useOpenTodayOnNotificationTap();
   return (
     <Tab.Navigator
       screenOptions={{

@@ -22,7 +22,7 @@ Las dos pantallas usan el backend real, así que necesitan el backend corriendo 
 
 El token de acceso se manda en cada pedido como `Authorization: Bearer <token>` (lo agrega `src/services/api.ts`); sin él, todos los endpoints salvo el login, el registro y la renovación responden 401. Cuando vence, la app pide un par nuevo con `POST /auth/refresh` y reintenta el pedido sin que el usuario se entere. Si fallan varios pedidos a la vez, se renueva una sola vez, porque el backend toma un token de renovación usado dos veces como robado y cierra todas las sesiones. Solo si la renovación es rechazada (por ejemplo, tras 48 horas sin usar la app), la app cierra la sesión, avisa "Tu sesión expiró" y vuelve a la bienvenida. Sin conexión la sesión no se cierra.
 
-Los mensajes de error que se muestran son los que devuelve el backend (por ejemplo "Credenciales incorrectas"), que nunca incluyen detalles internos; si no manda ninguno, se usa un mensaje genérico según el código de respuesta. Si el servidor no responde en 15 segundos, se avisa que no se pudo conectar.
+Los mensajes de error que se muestran son los que devuelve el backend (por ejemplo "Credenciales incorrectas"), que nunca incluyen detalles internos; si no manda ninguno, se usa un mensaje genérico según el código de respuesta. Si el servidor no responde en 7 segundos, se avisa que no se pudo conectar.
 
 **Usuarios de prueba:** en la base de desarrollo hay un usuario por rol, todos con la contraseña `demo1234`:
 
@@ -83,15 +83,31 @@ Cubre CU-07, RF-08 y RF-09. La pestaña Historial trae todas las tomas del usuar
 
 Cuentan las tomas ya marcadas, aunque se hayan marcado antes de hora, y las pendientes cuya hora ya pasó: una toma que todavía no toca no es un incumplimiento. El backend no devuelve las tomas de tratamientos o recordatorios eliminados, así que no aparecen en el historial; las de tratamientos completados sí. El cálculo se hace en la app (`src/utils/adherence.ts`), así que cambiar de período no vuelve a pedir datos.
 
+## Notificaciones
+
+Cubre RF-06 con notificaciones locales: el celular avisa cada toma a su hora con el texto del recordatorio ("Hora de tu medicación: Tomar 400 mg de Ibuprofeno"), sin depender de la conexión ni del servidor.
+
+- **Qué se programa:** la app calcula las tomas que vienen con las mismas reglas con las que el backend las genera (días de la semana, cada N días, fechas e horas de inicio y fin del tratamiento, tratamientos completados) en `src/utils/upcomingDoses.ts`. Cada una es una notificación de un solo disparo, sin repeticiones del sistema, así nunca suena un horario que ya no existe.
+- **Tomas ya marcadas:** las de hoy que ya están confirmadas u omitidas no suenan, incluidas las marcadas sin conexión.
+- **Límite:** iOS admite hasta 64 notificaciones programadas por app, así que se programan las 60 más próximas. Si hay más, un minuto después de la última llega "Abrí MedTracker para seguir recibiendo los avisos de tus tomas".
+- **Cuándo se recalculan:** al iniciar sesión o abrir la app, cada vez que vuelve a primer plano, al volver a la lista de Tratamientos (después de crear, editar o borrar tratamientos y horarios) y después de marcar una toma. Cada recálculo cancela todas y programa la lista nueva, de a uno por vez para que no se mezclen.
+- **Al tocar una notificación** se abre Hoy, donde está la toma para marcarla.
+- **Al cerrar sesión** se cancelan todas: son datos de salud y no deben sonar en el celular de otra persona.
+- **Permiso:** se pide la primera vez que se programan. Si la persona lo niega, la app funciona igual, sin avisos. En Android las notificaciones van en el canal "Recordatorios de medicación", con importancia alta para que suenen y aparezcan arriba de la pantalla.
+- **A horario exacto en Android:** sin el permiso de alarmas exactas, Android trata los avisos como aproximados y puede entregarlos hasta una hora tarde, y algunas marcas los demoran más para ahorrar batería. Por eso la app declara `USE_EXACT_ALARM` (Android 13 o superior, se concede al instalar) y `SCHEDULE_EXACT_ALARM` (Android 12) y programa cada aviso como alarma (`delivery: 'alarmClock'`), que el sistema no posterga. Probado en un Xiaomi: llega a horario con la app cerrada y el teléfono bloqueado.
+
+**Limitaciones de Expo Go en Android:** no puede crear el canal (la app sigue igual y Android usa un canal genérico) y se cierra al tocar una notificación. Por eso la app se prueba con un development build (ver "Ejecución").
+
 ## Sin conexión
 
-Cubre RNF-05 (ver los datos ya cargados sin conexión). Cada lectura que responde el backend con la sesión iniciada (tratamientos, horarios, tomas, historial) se guarda en el dispositivo con `AsyncStorage`, junto con la fecha y hora. Si después un pedido falla por falta de conexión o porque el servidor no responde en 15 segundos, la app muestra la última copia guardada y un aviso arriba de la pantalla: "Sin conexión. Estás viendo los datos guardados el 18/11 a las 10:15". Si se muestran varias copias, el aviso usa la más vieja. Apenas el servidor vuelve a responder, el aviso desaparece.
+Cubre RNF-05 (ver los datos ya cargados sin conexión). Cada lectura que responde el backend con la sesión iniciada (tratamientos, horarios, tomas, historial) se guarda en el dispositivo con `AsyncStorage`, junto con la fecha y hora. Si después un pedido falla por falta de conexión o porque el servidor no responde en 7 segundos, la app muestra la última copia guardada y un aviso arriba de la pantalla: "Sin conexión. Estás viendo los datos guardados el 18/11 a las 10:15". Si se muestran varias copias, el aviso usa la más vieja. El aviso también aparece cuando falla por falta de conexión cualquier otro pedido con la sesión iniciada (por ejemplo, marcar una toma), con la hora de la última respuesta del servidor, que es lo más reciente que puede tener la pantalla. Apenas el servidor vuelve a responder, el aviso desaparece.
 
 - **Las acciones sobre tomas sí se pueden hacer sin conexión.** "La tomé", "No la tomé" y "Deshacer" se guardan en el dispositivo y la tarjeta cambia en el momento, con el aviso "Se va a guardar cuando vuelva la conexión" en Hoy y en el Historial.
   - Por toma se guarda solo la última acción.
   - Se mandan en orden cada vez que se abre Hoy o el Historial, y antes de cualquier acción nueva.
+  - Si la app ya está mostrando el aviso de sin conexión, la acción se guarda directamente, sin esperar a que falle el pedido.
   - Si el servidor rechaza una (por ejemplo, porque otra persona ya marcó esa toma), se descarta y al recargar se ve el estado real.
-  - Se guarda la hora en que se tocó el botón, pero por ahora el backend registra la toma con la hora en que la recibe.
+  - "La tomé" guarda la hora en que se tocó el botón y la manda al sincronizar (`confirmedAt`), así la toma queda registrada con la hora real y no con la de la sincronización. Si el reloj del celular está adelantado y el backend rechaza esa hora, se confirma con la hora del servidor.
 - El resto de las acciones (editar un tratamiento, sus horarios, etc.) necesitan conexión y sin ella muestran "No se pudo conectar".
 - Una pantalla que no se abrió con conexión no tiene copia, así que sin conexión muestra el error de siempre.
 - Al cerrar sesión (o cuando vence) se borran todas las copias y las acciones que no se llegaron a mandar: son datos de salud y no deben quedar en el dispositivo ni mezclarse con los de otra persona.
@@ -116,8 +132,10 @@ frontend/
 │   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, headerOptions y lista de pantallas (types.ts)
 │   ├── context/            # AuthContext: sesión compartida por toda la app
 │   ├── hooks/
+│   │   ├── useDoseNotificationsSync.ts # Recalcula las notificaciones al entrar y al volver a primer plano
 │   │   ├── useFlashScrollIndicators.ts # Muestra la barra de scroll al abrir una lista en iOS
-│   │   └── useOfflineDataSavedAt.ts # Fecha de los datos guardados que se muestran sin conexión
+│   │   ├── useOfflineDataSavedAt.ts # Fecha de los datos guardados que se muestran sin conexión
+│   │   └── useOpenTodayOnNotificationTap.ts # Abre Hoy al tocar una notificación
 │   ├── services/
 │   │   ├── api.ts          # Cliente HTTP: token en cada pedido, renovación de la sesión, copias sin conexión y errores (ApiError)
 │   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión
@@ -125,6 +143,8 @@ frontend/
 │   │   ├── connection.ts   # Si se están mostrando datos guardados y de cuándo
 │   │   ├── pendingDoseActions.ts # Acciones sobre tomas hechas sin conexión, en espera de mandarse
 │   │   ├── doses.ts        # Tomas: todas, las de hoy, confirmar, omitir y deshacer
+│   │   ├── notifications.ts # Permiso, canal de Android y programar o cancelar notificaciones
+│   │   ├── doseNotifications.ts # Qué notificaciones programar según las tomas que vienen
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
@@ -140,10 +160,12 @@ frontend/
 │       ├── frequency.ts    # Formato y lectura de la frecuencia
 │       ├── reminders.ts    # Cálculo de horarios y plan de cambios al guardarlos
 │       ├── text.ts         # Mayúscula inicial y búsqueda sin tildes
+│       ├── upcomingDoses.ts # Tomas que vienen, con las mismas reglas que el backend
 │       └── calendarLocale.ts # Calendario en español
 ├── App.tsx                 # Componente raíz
 ├── index.ts                # Punto de entrada
 ├── app.json                # Configuración de Expo
+├── eas.json                # Perfiles de compilación con EAS Build
 ├── .prettierrc             # Reglas de formato del código
 ├── tsconfig.json
 └── package.json
@@ -151,14 +173,25 @@ frontend/
 
 ## Ejecución
 
-Requiere Node.js. Desde esta carpeta:
+Requiere Node.js. La app se prueba con un **development build**: un APK de MedTracker que se instala una vez en el celular y carga el código desde la PC, como Expo Go. Se usa en lugar de Expo Go porque las notificaciones no funcionan bien ahí (ver "Notificaciones").
+
+**Instalar la app en el celular** (una sola vez, y de nuevo solo cuando cambia la parte nativa: librerías con código nativo, permisos o plugins de `app.json`, o la versión de Expo). Se compila en la nube con EAS Build, con una cuenta de Expo:
+
+```bash
+npx eas-cli@latest login
+npx eas-cli@latest build --profile development --platform android
+```
+
+Al terminar, la página del build tiene el link y el QR para descargar el APK. Con la cuenta gratuita, entre la fila y la compilación tarda alrededor de una hora.
+
+**Levantar la app** desde esta carpeta:
 
 ```bash
 npm install
-npx expo start
+npx expo start --dev-client
 ```
 
-La terminal muestra un código QR: escanearlo con la app **Expo Go** (Android o iOS) abre la app en el celular, que tiene que estar en la misma red que la PC. También se puede abrir en un emulador de Android con la tecla `a`.
+Abrir MedTracker en el celular, que tiene que estar en la misma red que la PC, y elegir la PC en la lista de servidores o escanear el QR de la terminal. Los cambios en el código se ven al guardar, sin recompilar.
 
 Para agregar dependencias usar `npx expo install <paquete>` en vez de `npm install`, así se instala la versión compatible con el SDK de Expo.
 
