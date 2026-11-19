@@ -107,4 +107,35 @@ public interface DoseRepository extends JpaRepository<Dose, UUID> {
     List<Dose> findByUserAndPeriod(@Param("userId") UUID userId,
                                    @Param("rangeStart") LocalDateTime rangeStart,
                                    @Param("rangeEnd") LocalDateTime rangeEnd);
+
+    // Historial del usuario en [from, to), más reciente primero. Las tomas de
+    // tratamientos o recordatorios eliminados entran solo si ya no están
+    // pendientes (confirmadas u omitidas); sus pendientes quedan fuera.
+    @Query("""
+            select d from Dose d join d.reminder r join r.treatment t join t.user u
+            where u.id = :userId
+              and d.deletedAt is null and u.deletedAt is null
+              and (d.status <> :pending or (r.deletedAt is null and t.deletedAt is null))
+              and d.scheduledAt >= :from and d.scheduledAt < :to
+            order by d.scheduledAt desc
+            """)
+    List<Dose> findHistory(@Param("userId") UUID userId,
+                           @Param("from") LocalDateTime from,
+                           @Param("to") LocalDateTime to,
+                           @Param("pending") Dose.DoseStatus pending);
+
+    // Igual que findHistory, limitado a un tratamiento
+    @Query("""
+            select d from Dose d join d.reminder r join r.treatment t join t.user u
+            where u.id = :userId and t.id = :treatmentId
+              and d.deletedAt is null and u.deletedAt is null
+              and (d.status <> :pending or (r.deletedAt is null and t.deletedAt is null))
+              and d.scheduledAt >= :from and d.scheduledAt < :to
+            order by d.scheduledAt desc
+            """)
+    List<Dose> findHistoryByTreatment(@Param("userId") UUID userId,
+                                      @Param("treatmentId") UUID treatmentId,
+                                      @Param("from") LocalDateTime from,
+                                      @Param("to") LocalDateTime to,
+                                      @Param("pending") Dose.DoseStatus pending);
 }

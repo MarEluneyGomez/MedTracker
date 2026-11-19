@@ -1,5 +1,6 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.DoseAdherenceDTO;
 import com.medtracker.medtracker.dto.DoseConfirmRequestDTO;
 import com.medtracker.medtracker.dto.DoseCreateRequestDTO;
 import com.medtracker.medtracker.dto.DoseDTO;
@@ -98,6 +99,29 @@ public class DoseController {
                 .map(DoseDTO::new)
                 .collect(Collectors.toList());
         return ResponseEntity.ok(list);
+    }
+
+    // Historial de tomas entre from y to (YYYY-MM-DD, ambos inclusive), con
+    // treatmentId opcional (RF-08)
+    @GetMapping("/user/{userId}/history")
+    public ResponseEntity<List<DoseDTO>> history(
+            @AuthenticationPrincipal AuthenticatedUser principal,
+            @PathVariable UUID userId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) UUID treatmentId) {
+        return ResponseEntity.ok(doseService.getHistory(principal, userId, from, to, treatmentId));
+    }
+
+    // Adherencia entre from y to (YYYY-MM-DD, ambos inclusive), con treatmentId opcional (RF-09)
+    @GetMapping("/user/{userId}/adherence")
+    public ResponseEntity<DoseAdherenceDTO> adherence(
+            @AuthenticationPrincipal AuthenticatedUser principal,
+            @PathVariable UUID userId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) UUID treatmentId) {
+        return ResponseEntity.ok(doseService.getAdherence(principal, userId, from, to, treatmentId));
     }
 
     // Confirmar una toma (RF-07): pasa a estado CONFIRMED
