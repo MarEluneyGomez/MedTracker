@@ -140,14 +140,14 @@ public interface DoseRepository extends JpaRepository<Dose, UUID> {
                                       @Param("to") LocalDateTime to,
                                       @Param("pending") Dose.DoseStatus pending);
 
-    // Tomas PENDING vigentes (toma, recordatorio activo, tratamiento y usuario
-    // sin baja) de usuarios con fcmToken, programadas en (from, to] y sin
+    // Tomas PENDING vigentes (toma, recordatorio activo, tratamiento sin baja y
+    // no completado, y usuario sin baja) de usuarios con fcmToken, programadas en (from, to] y sin
     // notificación todavía, las más antiguas primero. Son dos consultas porque
     // no se pasa una colección vacía como parámetro: esta es para todos.
     @Query("""
             select d from Dose d join fetch d.reminder r join fetch r.treatment t join fetch t.user u
             where d.status = :pending and d.deletedAt is null and r.deletedAt is null and r.active = true
-              and t.deletedAt is null and u.deletedAt is null
+              and t.deletedAt is null and t.completed = false and u.deletedAt is null
               and u.fcmToken is not null and length(trim(u.fcmToken)) > 0
               and d.scheduledAt > :from and d.scheduledAt <= :to
               and not exists (select n.id from Notification n where n.dose.id = d.id)
@@ -162,7 +162,7 @@ public interface DoseRepository extends JpaRepository<Dose, UUID> {
     @Query("""
             select d from Dose d join fetch d.reminder r join fetch r.treatment t join fetch t.user u
             where d.status = :pending and d.deletedAt is null and r.deletedAt is null and r.active = true
-              and t.deletedAt is null and u.deletedAt is null
+              and t.deletedAt is null and t.completed = false and u.deletedAt is null
               and u.fcmToken is not null and length(trim(u.fcmToken)) > 0
               and d.scheduledAt > :from and d.scheduledAt <= :to
               and not exists (select n.id from Notification n where n.dose.id = d.id)

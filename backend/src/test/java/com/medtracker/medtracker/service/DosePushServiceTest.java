@@ -90,7 +90,7 @@ class DosePushServiceTest {
         User userCopy = User.builder().id(user.getId()).role(user.getRole()).fcmToken(user.getFcmToken())
                 .deletedAt(user.getDeletedAt()).build();
         Treatment treatmentCopy = Treatment.builder().id(treatment.getId()).user(userCopy)
-                .deletedAt(treatment.getDeletedAt()).build();
+                .deletedAt(treatment.getDeletedAt()).completed(treatment.isCompleted()).build();
         Reminder reminderCopy = Reminder.builder().id(reminder.getId()).treatment(treatmentCopy)
                 .message(reminder.getMessage()).active(reminder.isActive()).deletedAt(reminder.getDeletedAt()).build();
         return Dose.builder().id(source.getId()).reminder(reminderCopy).scheduledAt(source.getScheduledAt())
@@ -386,6 +386,7 @@ class DosePushServiceTest {
                 dose -> dose.getReminder().setActive(false),
                 dose -> dose.getReminder().setDeletedAt(NOW.minusMinutes(1)),
                 dose -> dose.getReminder().getTreatment().setDeletedAt(NOW.minusMinutes(1)),
+                dose -> dose.getReminder().getTreatment().setCompleted(true),
                 dose -> dose.getReminder().getTreatment().getUser().setDeletedAt(NOW.minusMinutes(1)),
                 dose -> dose.getReminder().getTreatment().getUser().setFcmToken("   "));
         Dose[] snapshots = new Dose[changes.size()];
@@ -396,6 +397,53 @@ class DosePushServiceTest {
             stubReread(reread);
         }
         stubCandidates(snapshots);
+
+        DosePushService.PushRunResult result = defaultService().sendDuePushes();
+
+        assertThat(result).isEqualTo(new DosePushService.PushRunResult(0, 0, 0, 0));
+        verify(notificationRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(pushSender);
+    }
+
+    // El tratamiento se completó después de la consulta de candidatos: la toma
+    // PENDING no se reserva ni se envía
+    @Test
+    void aCompletedTreatmentOnRereadIsNotReservedNorSent() {
+        Dose snapshot = dose("token-1", "Tomar");
+        Dose reread = copyOf(snapshot);
+        reread.getReminder().getTreatment().setCompleted(true);
+        stubCandidates(snapshot);
+        stubReread(reread);
+
+        DosePushService.PushRunResult result = defaultService().sendDuePushes();
+
+        assertThat(result).isEqualTo(new DosePushService.PushRunResult(0, 0, 0, 0));
+        verify(notificationRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(pushSender);
+    }
+
+    @Test
+    void aTreatmentThatIsNotCompletedStillReservesAndSends() {
+        Dose dose = dose("token-1", "Tomar");
+        Dose reread = copyOf(dose);
+        reread.getReminder().getTreatment().setCompleted(false);
+        stubCandidates(dose);
+        stubReread(reread);
+        stubSaveAssignsIds();
+        when(pushSender.send(any())).thenReturn(PushResult.SENT);
+
+        DosePushService.PushRunResult result = defaultService().sendDuePushes();
+
+        assertThat(result).isEqualTo(new DosePushService.PushRunResult(1, 0, 0, 0));
+        verify(notificationRepository).saveAndFlush(any(Notification.class));
+    }
+
+    @Test
+    void itDoesNotReserveWhenTheCandidateItselfComesWithACompletedTreatment() {
+        Dose dose = dose("token-1", "Tomar");
+        dose.getReminder().getTreatment().setCompleted(true);
+        stubCandidates(dose);
+        stubReread(dose);
 
         DosePushService.PushRunResult result = defaultService().sendDuePushes();
 

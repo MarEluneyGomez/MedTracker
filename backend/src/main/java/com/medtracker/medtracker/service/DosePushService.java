@@ -197,8 +197,8 @@ public class DosePushService {
 
     // Relee de la base la toma y toda su cadena (la transacción nueva trae
     // entidades frescas) y verifica que siga vigente: toma pendiente y sin
-    // eliminar, recordatorio activo y sin eliminar, tratamiento sin eliminar,
-    // usuario sin baja y con token no vacío, y con vigencia del push todavía
+    // eliminar, recordatorio activo y sin eliminar, tratamiento sin eliminar y no
+    // completado, usuario sin baja y con token no vacío, y con vigencia del push todavía
     // positiva. Si algo falla devuelve null y no reserva nada. Después, si la
     // toma no tiene notificación, inserta la del dueño.
     private Reservation reserve(UUID doseId, LocalDateTime now) {
@@ -211,7 +211,7 @@ public class DosePushService {
             return null;
         }
         Treatment treatment = reminder.getTreatment();
-        if (treatment == null || treatment.getDeletedAt() != null) {
+        if (treatment == null || treatment.getDeletedAt() != null || treatment.isCompleted()) {
             return null;
         }
         User owner = treatment.getUser();
