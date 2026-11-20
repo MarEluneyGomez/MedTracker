@@ -5,23 +5,29 @@ import com.medtracker.medtracker.repository.UserRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -37,8 +43,13 @@ class UserServiceTest {
     private LoginAttemptService loginAttemptService;
     @Mock
     private AccessPolicy accessPolicy;
+    // Reloj real y fijo: Mockito lo inyecta en UserService como los mocks
+    @Spy
+    private Clock clock = Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC);
     @InjectMocks
     private UserService userService;
+
+    private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 13, 12, 0);
 
     private User user() {
         return User.builder().name("Ana").email("ana@mail.com").passwordHash("hash").role(User.Role.PATIENT).build();
@@ -121,6 +132,104 @@ class UserServiceTest {
 
         assertThat(current.getFcmToken()).isEqualTo("token-2");
         verify(userRepository).save(current);
+    }
+
+    @Test
+    void updateFcmTokenWithADifferentTokenSavesFirstAndThenClearsItFromOtherUsers() {
+        User current = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT).fcmToken("token-1").build();
+        when(userRepository.findById(current.getId())).thenReturn(Optional.of(current));
+
+        userService.updateFcmToken(new AuthenticatedUser(current.getId(), User.Role.PATIENT), "  token-2 ");
+
+        // El UPDATE masivo vacía el contexto de persistencia: va después del guardado
+        InOrder order = inOrder(userRepository);
+        order.verify(userRepository).save(current);
+        order.verify(userRepository).clearFcmTokenFromOthers(current.getId(), "token-2", NOW);
+    }
+
+    @Test
+    void updateFcmTokenWithTheSameTokenDoesNotSaveButStillClearsItFromOtherUsers() {
+        User current = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT).fcmToken("token-1").build();
+        when(userRepository.findById(current.getId())).thenReturn(Optional.of(current));
+
+        userService.updateFcmToken(new AuthenticatedUser(current.getId(), User.Role.PATIENT), "  token-1 ");
+
+        verify(userRepository, never()).save(any(User.class));
+        verify(userRepository).clearFcmTokenFromOthers(current.getId(), "token-1", NOW);
+    }
+
+    @Test
+    void updateFcmTokenThatFailsValidationOrFindsNoUserDoesNotClearOtherUsers() {
+        UUID unknown = UUID.randomUUID();
+        when(userRepository.findById(unknown)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.updateFcmToken(
+                new AuthenticatedUser(UUID.randomUUID(), User.Role.PATIENT), "\u0001"))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        assertThatThrownBy(() -> userService.updateFcmToken(
+                new AuthenticatedUser(unknown, User.Role.PATIENT), "token-x"))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+
+        verify(userRepository, never()).clearFcmTokenFromOthers(any(), any(), any());
+    }
+
+    @Test
+    void registerTrimsTheFcmTokenAndClearsItFromOtherUsers() {
+        UUID newId = UUID.randomUUID();
+        User incoming = user();
+        incoming.setFcmToken("  abc ");
+        when(userRepository.existsByEmail("ana@mail.com")).thenReturn(false);
+        when(passwordEncoder.encode("hash")).thenReturn("encoded");
+        when(userRepository.save(incoming)).thenAnswer(inv -> {
+            User saved = inv.getArgument(0);
+            saved.setId(newId);
+            return saved;
+        });
+
+        User saved = userService.register(incoming);
+
+        assertThat(saved.getFcmToken()).isEqualTo("abc");
+        InOrder order = inOrder(userRepository);
+        order.verify(userRepository).save(incoming);
+        order.verify(userRepository).clearFcmTokenFromOthers(newId, "abc", NOW);
+    }
+
+    @Test
+    void registerStillReturnsTheSavedUserWhenClearingTheTokenFromOthersFails() {
+        User incoming = user();
+        incoming.setFcmToken("  abc ");
+        when(userRepository.existsByEmail("ana@mail.com")).thenReturn(false);
+        when(passwordEncoder.encode("hash")).thenReturn("encoded");
+        when(userRepository.save(incoming)).thenAnswer(inv -> inv.getArgument(0));
+        when(userRepository.clearFcmTokenFromOthers(any(), any(), any()))
+                .thenThrow(new IllegalStateException("detalle que no debe loguearse"));
+
+        User[] saved = new User[1];
+        assertThatCode(() -> saved[0] = userService.register(incoming)).doesNotThrowAnyException();
+
+        assertThat(saved[0]).isSameAs(incoming);
+        assertThat(saved[0].getFcmToken()).isEqualTo("abc");
+    }
+
+    @Test
+    void registerWithAnEmptyOrBlankFcmTokenSavesNullAndClearsNothing() {
+        givenRegistrationIsPossible();
+
+        for (String blank : new String[] {"", "   "}) {
+            User incoming = user();
+            incoming.setFcmToken(blank);
+
+            assertThat(userService.register(incoming).getFcmToken()).isNull();
+        }
+        verify(userRepository, never()).clearFcmTokenFromOthers(any(), any(), any());
+    }
+
+    @Test
+    void registerWithoutFcmTokenClearsNothing() {
+        givenRegistrationIsPossible();
+
+        assertThat(userService.register(user()).getFcmToken()).isNull();
+        verify(userRepository, never()).clearFcmTokenFromOthers(any(), any(), any());
     }
 
     @Test
