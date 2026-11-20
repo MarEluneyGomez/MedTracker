@@ -35,6 +35,11 @@ public class Notification {
     @JoinColumn(name = "reminder_id")
     private Reminder reminder;
 
+    // Toma que originó la notificación; nula en las anteriores a este campo
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "dose_id")
+    private Dose dose;
+
     // Mensaje de la notificación
     @Column(nullable = false)
     private String message;

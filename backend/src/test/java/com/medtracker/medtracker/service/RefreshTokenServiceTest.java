@@ -275,6 +275,65 @@ class RefreshTokenServiceTest {
         verify(refreshTokenRepository).revokeByHash(sha256("cualquiera"), NOW);
     }
 
+    private static final LocalDateTime NOW_LOCAL = LocalDateTime.of(2026, 10, 28, 12, 0);
+
+    @Test
+    void logoutOfAnActiveTokenRevokesItAndClearsTheOwnersFcmToken() throws Exception {
+        UUID ownerId = UUID.randomUUID();
+        when(refreshTokenRepository.findByTokenHash(sha256("vigente"))).thenReturn(Optional.of(stored(ownerId, null)));
+        when(refreshTokenRepository.revokeByHash(sha256("vigente"), NOW)).thenReturn(1);
+
+        service.revoke("vigente");
+
+        verify(refreshTokenRepository).revokeByHash(sha256("vigente"), NOW);
+        verify(userRepository).clearFcmToken(ownerId, NOW_LOCAL);
+    }
+
+    @Test
+    void logoutOfAnUnknownTokenDoesNotTouchTheFcmToken() throws Exception {
+        when(refreshTokenRepository.findByTokenHash(sha256("desconocido"))).thenReturn(Optional.empty());
+
+        service.revoke("desconocido");
+
+        verify(refreshTokenRepository).revokeByHash(sha256("desconocido"), NOW);
+        verify(userRepository, never()).clearFcmToken(any(), any());
+    }
+
+    @Test
+    void logoutOfAnAlreadyRevokedTokenDoesNotTouchTheFcmToken() throws Exception {
+        when(refreshTokenRepository.findByTokenHash(sha256("revocado")))
+                .thenReturn(Optional.of(stored(UUID.randomUUID(), NOW.minusSeconds(10))));
+
+        service.revoke("revocado");
+
+        verify(userRepository, never()).clearFcmToken(any(), any());
+    }
+
+    @Test
+    void logoutOfAnExpiredTokenDoesNotTouchTheFcmToken() throws Exception {
+        RefreshToken expired = stored(UUID.randomUUID(), null);
+        expired.setExpiresAt(NOW.minusSeconds(1));
+        when(refreshTokenRepository.findByTokenHash(sha256("vencido"))).thenReturn(Optional.of(expired));
+        // revokeByHash no mira el vencimiento: la revocación afecta la fila igual
+        when(refreshTokenRepository.revokeByHash(sha256("vencido"), NOW)).thenReturn(1);
+
+        service.revoke("vencido");
+
+        verify(refreshTokenRepository).revokeByHash(sha256("vencido"), NOW);
+        verify(userRepository, never()).clearFcmToken(any(), any());
+    }
+
+    @Test
+    void logoutThatLosesTheRaceAndRevokesNothingDoesNotTouchTheFcmToken() throws Exception {
+        when(refreshTokenRepository.findByTokenHash(sha256("carrera")))
+                .thenReturn(Optional.of(stored(UUID.randomUUID(), null)));
+        when(refreshTokenRepository.revokeByHash(sha256("carrera"), NOW)).thenReturn(0);
+
+        service.revoke("carrera");
+
+        verify(userRepository, never()).clearFcmToken(any(), any());
+    }
+
     @Test
     void deleteExpiredKeepsTheTokensExpiredForLessThanAWeek() {
         when(refreshTokenRepository.deleteExpired(NOW.minusSeconds(7 * 24 * 3600))).thenReturn(3);

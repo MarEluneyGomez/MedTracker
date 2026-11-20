@@ -1,6 +1,7 @@
 package com.medtracker.medtracker.repository;
 
 import com.medtracker.medtracker.model.Dose;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -138,4 +139,39 @@ public interface DoseRepository extends JpaRepository<Dose, UUID> {
                                       @Param("from") LocalDateTime from,
                                       @Param("to") LocalDateTime to,
                                       @Param("pending") Dose.DoseStatus pending);
+
+    // Tomas PENDING vigentes (toma, recordatorio activo, tratamiento y usuario
+    // sin baja) de usuarios con fcmToken, programadas en (from, to] y sin
+    // notificación todavía, las más antiguas primero. Son dos consultas porque
+    // no se pasa una colección vacía como parámetro: esta es para todos.
+    @Query("""
+            select d from Dose d join fetch d.reminder r join fetch r.treatment t join fetch t.user u
+            where d.status = :pending and d.deletedAt is null and r.deletedAt is null and r.active = true
+              and t.deletedAt is null and u.deletedAt is null
+              and u.fcmToken is not null and length(trim(u.fcmToken)) > 0
+              and d.scheduledAt > :from and d.scheduledAt <= :to
+              and not exists (select n.id from Notification n where n.dose.id = d.id)
+            order by d.scheduledAt asc, d.id asc
+            """)
+    List<Dose> findPushCandidates(@Param("from") LocalDateTime from,
+                                  @Param("to") LocalDateTime to,
+                                  @Param("pending") Dose.DoseStatus pending,
+                                  Pageable pageable);
+
+    // Igual que findPushCandidates, limitada a los usuarios indicados (no vacíos)
+    @Query("""
+            select d from Dose d join fetch d.reminder r join fetch r.treatment t join fetch t.user u
+            where d.status = :pending and d.deletedAt is null and r.deletedAt is null and r.active = true
+              and t.deletedAt is null and u.deletedAt is null
+              and u.fcmToken is not null and length(trim(u.fcmToken)) > 0
+              and d.scheduledAt > :from and d.scheduledAt <= :to
+              and not exists (select n.id from Notification n where n.dose.id = d.id)
+              and u.id in :userIds
+            order by d.scheduledAt asc, d.id asc
+            """)
+    List<Dose> findPushCandidatesForUsers(@Param("from") LocalDateTime from,
+                                          @Param("to") LocalDateTime to,
+                                          @Param("pending") Dose.DoseStatus pending,
+                                          @Param("userIds") Collection<UUID> userIds,
+                                          Pageable pageable);
 }

@@ -34,7 +34,7 @@ El sistema permite a un usuario (paciente) registrar los medicamentos que debe t
 | Frontend / App móvil | React Native |
 | Backend / API | Spring Boot (Java) |
 | Base de datos | PostgreSQL (hosteado en Neon) |
-| Notificaciones push | Firebase Cloud Messaging (FCM) |
+| Notificaciones push | Firebase Cloud Messaging (FCM) (en esta etapa el cliente de envío es simulado) |
 | Autenticación | JWT propio, manejado en el backend (Spring Boot) |
 | Control de versiones | Git / GitHub |
 | Gestión de dependencias backend | Maven |
@@ -122,11 +122,11 @@ Cada módulo tiene su capa completa: `model` (entidad JPA) → `repository` (JPA
 |---|---|
 | `POST /auth/login` | Body `{email, password}`. 200 con el JWT (`accessToken`, `tokenType`, `expiresIn`), el usuario y el refresh token (`refreshToken`, `refreshExpiresIn` en segundos), 401 si las credenciales son inválidas (mismo mensaje para email inexistente), 429 si está bloqueado por intentos fallidos. |
 | `POST /auth/refresh` | Público. Body `{refreshToken}`. 200 con la misma forma que el login: un access token nuevo y un refresh token nuevo (el recibido queda revocado: cada uso lo rota y le da otra ventana de 48 h). El usuario y su rol se leen de la base. 401 genérico ("Sesión inválida o vencida. Iniciá sesión de nuevo") si el token es desconocido, vencido, ya usado o el usuario fue dado de baja; reusar un token ya rotado revoca además todas las sesiones del usuario. 400 si falta el campo; 429 tras 5 intentos inválidos desde una IP (15 min). |
-| `POST /auth/logout` | Público. Body `{refreshToken}`. Revoca ese refresh token. 204 siempre, también si el token no existe o ya estaba revocado. |
+| `POST /auth/logout` | Público. Body `{refreshToken}`. Revoca ese refresh token. 204 siempre, también si el token no existe o ya estaba revocado. Si el token estaba vigente (ni revocado ni vencido) y este logout lo revocó, el usuario queda con `fcmToken` en `null`; con un token desconocido, ya revocado o vencido no se toca. |
 | `GET /users?role=DOCTOR` | Lista los médicos vigentes con `id` y `name` solamente, para elegir uno al agendar una cita. Cualquier otro `role`, o sin `role`, devuelve solo al propio usuario y a sus vinculados (`id`, `name`, `email` y `role`; sin `fcmToken`). |
 | `GET /users/{id}` | El propio perfil completo; un vinculado o la contraparte de una cita vigente y no cancelada, en versión reducida (`id`, `name`, `email` y `role`; sin `fcmToken`). Cualquier otro usuario: 404. Solo el listado de médicos (`GET /users?role=DOCTOR`) va sin `email`. |
-| `POST /users/register` | Solo roles `PATIENT` o `CAREGIVER`; sin `role` queda `PATIENT`. `DOCTOR` responde 400 (ver [Alta de médicos](#alta-de-médicos)). La contraseña se manda en `passwordHash` (también se acepta `password`) y tiene una política mínima: ver [Validación de entradas](#validación-de-entradas). |
-| `PUT /users/me/fcm-token` | Body `{fcmToken}`. Guarda el token de notificaciones push del usuario del token y reemplaza el anterior (el token de FCM rota). 204 sin body. 400 si falta, está vacío, tiene solo espacios o solo caracteres de control, o supera los 255 caracteres (el límite se mide sobre el valor enviado, antes de quitar los espacios; se guarda sin espacios ni caracteres de control en los extremos); 401 sin token; 404 si el usuario no existe o fue dado de baja entre la autenticación y el guardado (caso raro: normalmente el filtro JWT ya responde 401). Si el token es igual al que ya tiene, no se vuelve a guardar. El usuario sale siempre del token, nunca de un id que mande el cliente, y cualquier otro campo del body se ignora. El valor se trata como texto opaco (no se valida el formato) y solo se devuelve en el perfil propio. **Cambio de contrato para el frontend:** la app debe llamarlo cuando cambie el token del dispositivo, porque hasta ahora solo se podía mandar al registrarse. |
+| `POST /users/register` | Solo roles `PATIENT` o `CAREGIVER`; sin `role` queda `PATIENT`. `DOCTOR` responde 400 (ver [Alta de médicos](#alta-de-médicos)). La contraseña se manda en `passwordHash` (también se acepta `password`) y tiene una política mínima: ver [Validación de entradas](#validación-de-entradas). Si se manda `fcmToken`, se guarda sin espacios en los extremos (vacío o solo espacios queda sin token) y se le quita a cualquier otro usuario que lo tuviera. |
+| `PUT /users/me/fcm-token` | Body `{fcmToken}`. Guarda el token de notificaciones push del usuario del token y reemplaza el anterior (el token de FCM rota). 204 sin body. 400 si falta, está vacío, tiene solo espacios o solo caracteres de control, o supera los 255 caracteres (el límite se mide sobre el valor enviado, antes de quitar los espacios; se guarda sin espacios ni caracteres de control en los extremos); 401 sin token; 404 si el usuario no existe o fue dado de baja entre la autenticación y el guardado (caso raro: normalmente el filtro JWT ya responde 401). Si el token es igual al que ya tiene, no se vuelve a guardar. Al guardarlo (o confirmarlo) se le quita a cualquier otro usuario que tuviera el mismo token (comparado sin espacios en los extremos). El usuario sale siempre del token, nunca de un id que mande el cliente, y cualquier otro campo del body se ignora. El valor se trata como texto opaco (no se valida el formato) y solo se devuelve en el perfil propio. **Cambio de contrato para el frontend:** la app debe llamarlo cuando cambie el token del dispositivo, porque hasta ahora solo se podía mandar al registrarse. |
 | `GET /treatments/user/{userId}` | Tratamientos vigentes (sin eliminados) del usuario. 403 si `userId` no es el propio ni el de un paciente vigente (no dado de baja) que el usuario cuida; ver la tabla de permisos de [Autorización por dueño](#autorización-por-dueño-rn-01-rn-09). |
 | `PUT /treatments/{id}` | Edita `dosage`, `frequency`, `startDate` y `endDate` (CU-08). 400 si `endDate` < `startDate`; 404 si no existe o está eliminado. |
 | `DELETE /treatments/{id}` | Eliminación lógica + desactiva sus recordatorios (RN-06); conserva las dosis ya generadas. 204. |
@@ -183,7 +183,7 @@ La identidad sale siempre del token. Un recurso ajeno, inexistente o eliminado l
 | Historial médico (`/medical-histories`) | El propio paciente y un médico con una cita vigente (`deleted_at` nulo) y **no cancelada** (`status` distinto de `CANCELLED`) con ese paciente; ambos leen y crean. El cuidador no tiene acceso, aunque tenga vínculo activo. `GET /medical-histories/{id}` de un historial ajeno, inexistente o eliminado responde 404; `GET /medical-histories/patient/{id}` y `POST /medical-histories/register` que nombran a un paciente sin acceso responden 403. `GET /medical-histories` devuelve solo los historiales visibles, del más reciente al más antiguo (`record_date` descendente). `diagnosis` y `record_date` son obligatorios y `diagnosis` admite hasta 255 caracteres (si no, 400). |
 | Notificaciones (`/notifications`) | Solo su destinatario (`user_id`), incluso con vínculo de cuidador: el cuidador y el médico ven únicamente las propias. Una notificación ajena, inexistente o eliminada responde 404; `GET /notifications/user/{id}` con otro usuario responde 403; `GET /notifications` devuelve solo las propias. `PUT /notifications/{id}/read` solo sobre las propias. |
 
-**Notificaciones creadas solo por el sistema.** `POST /notifications/register` se quitó: una notificación es un evento del sistema (CU-05), no algo que el cliente deba poder fabricar a nombre de otro usuario. Hoy ningún proceso del backend las crea (el envío con FCM del CU-05 aún no está implementado); cuando exista, las generará internamente. **Cambio de contrato para el frontend:** ya no puede crear notificaciones; solo listarlas, leerlas y marcarlas como leídas.
+**Notificaciones creadas solo por el sistema.** `POST /notifications/register` se quitó: una notificación es un evento del sistema (CU-05), no algo que el cliente deba poder fabricar a nombre de otro usuario. Las crea el job de push de recordatorios (CU-05; ver [Push de recordatorios](#push-de-recordatorios-rf-06-cu-05)), una por toma y solo cuando el proveedor acepta el envío. `NotificationDTO` no cambia: no expone `doseId`. **Cambio de contrato para el frontend:** ya no puede crear notificaciones; solo listarlas, leerlas y marcarlas como leídas.
 
 **Limitaciones conocidas del historial médico.**
 
@@ -270,6 +270,32 @@ Un job (`DoseAutoSkipScheduler`) corre cada 5 minutos y pasa a `SKIPPED` las tom
 - **Tomas con un `scheduledAt` ya vencido al crearse** (hoy solo por `POST /doses/register`, que sigue permitiendo cargar tomas anteriores; la generación automática ya no las crea, ver Pendientes): quedan `PENDING` hasta el siguiente ciclo del job y luego pasan a `SKIPPED`, aunque el usuario nunca haya podido tomarlas. Para la adherencia (RN-05) cuentan como no confirmadas.
 - **Cambio para el frontend:** `PUT /doses/{id}/confirm` ahora acepta una toma `SKIPPED` de hoy o ayer. Con el job activo, una toma `PENDING` anterior a ayer ya no se puede confirmar: el job la pasa a `SKIPPED` y, fuera de la ventana, el `confirm` da 409. Y deshacer una toma que sigue vencida no sirve: el job la vuelve a omitir (ver `PUT /doses/{id}/undo`).
 
+#### Push de recordatorios (RF-06, CU-05)
+
+Un job (`DosePushScheduler`) envía un push al paciente dueño del tratamiento (nunca a cuidadores ni a médicos) cuando una toma sigue `PENDING` pasada una demora desde su horario. Si la toma ya fue confirmada u omitida, no se envía nada. **El job está apagado por defecto.**
+
+| Propiedad | Variable de entorno | Por defecto | Qué hace |
+|---|---|---|---|
+| `medtracker.push.enabled` | `MEDTRACKER_PUSH_ENABLED` | `false` | Con `true` se registra el job; sin la propiedad o con `false` no existe. |
+| `medtracker.push.interval` | `MEDTRACKER_PUSH_INTERVAL` | `PT1M` | Intervalo entre ejecuciones, como duración ISO-8601. |
+| `medtracker.push.delay-minutes` | `MEDTRACKER_PUSH_DELAY_MINUTES` | `15` | Minutos después del horario de la toma en que se manda el push (0 = a la hora de la toma). Debe ser mayor o igual que 0 y menor que `medtracker.dose.skip-after-minutes`. |
+| `medtracker.push.catch-up-minutes` | `MEDTRACKER_PUSH_CATCH_UP_MINUTES` | `30` | Ventana de recuperación, mínimo 1: no se mandan pushes de tomas más viejas que demora + ventana (por ejemplo, tras una caída o al encender el job). |
+| `medtracker.push.allowed-user-ids` | `MEDTRACKER_PUSH_ALLOWED_USER_IDS` | vacío | Lista de UUID separados por coma que limita el envío a esos usuarios; vacío = todos. Pensado para pruebas contra una base compartida. |
+| `medtracker.push.provider` | `MEDTRACKER_PUSH_PROVIDER` | `log` | Cliente de envío. Hoy solo existe `log` (simulado). |
+
+- **Arranque:** con una demora negativa o no menor que `skip-after-minutes` (si no, el auto-skip omitiría la toma antes del push), una ventana menor que 1 o un UUID inválido en `allowed-user-ids`, la app no arranca, aunque el job esté apagado. Un `provider` distinto de `log` también deja la app sin arrancar, porque todavía no hay otro cliente.
+- **Cliente simulado:** con `provider=log` no se entrega nada al dispositivo; el cliente real de Firebase se agrega en una PR siguiente. Si mientras tanto se enciende el job, se crean notificaciones sin que llegue ningún push.
+- **Qué toma es elegible:** `PENDING`, vigente junto con su recordatorio (activo), su tratamiento y su usuario (sin baja); el usuario tiene un `fcm_token` no vacío; `scheduledAt` es anterior o igual a (ahora − demora) y posterior a (ahora − demora − ventana de recuperación), en la zona `medtracker.timezone`; y la toma no tiene notificación todavía. Cada ciclo procesa hasta 200 tomas, las más antiguas primero.
+- **Qué pasa con cada toma:** se relee de la base la toma con su recordatorio, su tratamiento y su usuario, y se verifica que sigan vigentes (el token que se usa es el releído, no el de la consulta); se reserva una `notification` con `dose_id` (único: una por toma, también entre varias instancias); se llama al proveedor fuera de toda transacción. Si se entrega, la `notification` queda. Si el token es inválido, se borra la reserva y se pone el `fcmToken` del usuario en `null` (solo si sigue siendo el mismo token). Si hay un error transitorio, se borra la reserva y el próximo ciclo reintenta mientras la toma siga dentro de la ventana. Por eso `GET /notifications` solo muestra avisos realmente enviados. Un fallo en una toma no corta el procesamiento de las demás.
+- **Garantía "como máximo una vez":** si la app se cae entre la reserva y el envío, ese aviso se pierde; y si fallara el borrado de una reserva, esa toma queda con una `notification` sin entregar y no se reintenta. Se prefiere no avisar a avisar dos veces.
+- **Notificaciones eliminadas:** una notificación eliminada lógicamente (`deleted_at`) sigue contando como ya enviada, así que esa toma no se vuelve a avisar; hoy ningún endpoint elimina notificaciones.
+- **Contenido del push:** título "Recordatorio de medicación", cuerpo genérico "Tenés una toma pendiente" y datos `type=DOSE_REMINDER` y `doseId`. El texto del recordatorio no viaja en el push (puede ser un dato de salud y se vería en la pantalla bloqueada): queda solo en la `notification`, que ve su dueño dentro de la app. Ese texto se guarda recortado; si el recordatorio no tiene mensaje se guarda el texto genérico, y se corta en 255 caracteres.
+- **Vigencia (TTL) del push:** se calcula por toma, como (hora de la toma + `medtracker.dose.skip-after-minutes`) menos el momento del envío. Si ya no queda vigencia, la toma no se avisa (no se reserva ni se envía).
+- **Cliente simulado y `enabled`:** con `medtracker.push.provider=log` (cliente simulado, el valor por defecto) y `medtracker.push.enabled=true`, el job "envía" de mentira y conserva la `notification` de cada toma. Esas tomas quedan consumidas y **no se reintentan** cuando más adelante se active el cliente FCM real: en un entorno real no se debe habilitar el job con `provider=log`. La propiedad `enabled` sigue en `false` por defecto.
+- **Tomas creadas ya vencidas:** una toma cargada con `POST /doses/register` dentro de la ventana de recuperación también recibe push.
+- **Un solo token por usuario:** hay un único `fcm_token` por usuario. Si alguien tiene la sesión abierta en dos celulares y cierra sesión en uno, pierde el push hasta que el otro vuelva a mandar el token con `PUT /users/me/fcm-token`.
+- **Operación:** se enciende con `MEDTRACKER_PUSH_ENABLED=true`. Para corridas locales o pruebas contra la base compartida, dejarlo apagado o limitarlo con `MEDTRACKER_PUSH_ALLOWED_USER_IDS`. El job consulta la base en cada intervalo y puede impedir que Neon se suspenda por inactividad.
+
 ---
 
 ### Requerimientos funcionales
@@ -281,7 +307,7 @@ Un job (`DoseAutoSkipScheduler`) corre cada 5 minutos y pasa a `SKIPPED` las tom
 | RF-03 | El sistema debe permitir seleccionar un medicamento del catálogo (o darlo de alta si no existe) con nombre y forma de administración. |
 | RF-04 | El sistema debe permitir crear un tratamiento asociando un medicamento a un usuario, con su dosis y frecuencia particular. |
 | RF-05 | El sistema debe permitir configurar uno o más horarios de recordatorio por tratamiento. |
-| RF-06 | El sistema debe enviar notificaciones push en el horario configurado. |
+| RF-06 | El sistema debe enviar una notificación push al paciente cuando una toma sigue pendiente pasada una demora configurable (15 minutos por defecto; 0 = a la hora de la toma); no envía nada si ya fue confirmada u omitida. Ver [Push de recordatorios](#push-de-recordatorios-rf-06-cu-05). |
 | RF-07 | El sistema debe permitir al usuario confirmar o marcar como omitida una toma de medicamento. |
 | RF-08 | El sistema debe registrar el historial de tomas (confirmadas, omitidas, pendientes). |
 | RF-09 | El sistema debe mostrar estadísticas o indicadores de adherencia al tratamiento. |
@@ -295,7 +321,7 @@ Un job (`DoseAutoSkipScheduler`) corre cada 5 minutos y pasa a `SKIPPED` las tom
 | ID | Descripción |
 |---|---|
 | RNF-01 | La aplicación debe funcionar en dispositivos Android e iOS. |
-| RNF-02 | Las notificaciones deben entregarse con una demora máxima de X minutos respecto al horario configurado. |
+| RNF-02 | El tiempo máximo hasta que el servidor despacha el push, respecto del horario de la toma, es la demora configurada más el intervalo del job (con los valores por defecto, 15 + 1 = 16 minutos), más lo que tarde el propio ciclo (depende de la cantidad de tomas del lote y de la latencia del proveedor). No incluye la entrega del proveedor al dispositivo. |
 | RNF-03 | La comunicación entre app y backend debe realizarse mediante HTTPS. |
 | RNF-04 | Los datos sensibles del usuario deben almacenarse de forma segura (contraseñas hasheadas, no texto plano). |
 | RNF-05 | El sistema debe soportar operación offline parcial (ver medicamentos ya cargados sin conexión). *(a confirmar si aplica)* |
@@ -339,7 +365,7 @@ Un job (`DoseAutoSkipScheduler`) corre cada 5 minutos y pasa a `SKIPPED` las tom
 | email | VARCHAR | Email (único, usado para login) |
 | password_hash | VARCHAR | Contraseña encriptada |
 | role | ENUM | `PATIENT` / `CAREGIVER` / `DOCTOR` (paciente, tutor/responsable, o médico; este último solo relevante para `medical_appointment`) |
-| fcm_token | VARCHAR | Token del dispositivo para notificaciones push |
+| fcm_token | VARCHAR | Token del dispositivo para notificaciones push (uno por usuario; se quita si otro usuario registra el mismo, al cerrar sesión o si FCM lo rechaza) |
 | created_at | TIMESTAMP | Fecha de alta del registro |
 | updated_at | TIMESTAMP | Fecha de última modificación del registro |
 | deleted_at | TIMESTAMP (nullable) | Fecha de eliminación lógica (soft delete). NULL si el registro está activo |
@@ -414,13 +440,14 @@ Cada fila es **una toma real**, generada a partir de un `reminder` para una fech
 
 ### Tabla: `notification`
 
-> **Nota de diseño:** la notificación está asociada al usuario destinatario y, opcionalmente, al recordatorio que la originó, con un flag de lectura (`read`) en vez de un estado de envío separado.
+> **Nota de diseño:** la notificación está asociada al usuario destinatario y, opcionalmente, al recordatorio que la originó, con un flag de lectura (`read`) en vez de un estado de envío separado. También guarda la toma que la originó (`dose_id`, única), para no duplicar el aviso de una misma toma.
 
 | Campo | Tipo | Descripción |
 |---|---|---|
 | id | UUID | Identificador único |
 | user_id | FK → user.id | Usuario destinatario de la notificación |
 | reminder_id | FK → reminder.id (nullable) | Recordatorio que originó la notificación, si aplica |
+| dose_id | FK → dose.id (nullable, único) | Toma que originó la notificación: una notificación como máximo por toma. NULL en las anteriores |
 | message | VARCHAR | Texto de la notificación |
 | read | BOOLEAN | Si el usuario ya la leyó |
 | sent_at | TIMESTAMP | Momento de envío de la notificación |
@@ -563,6 +590,15 @@ ALTER TABLE treatment ADD COLUMN end_time TIME;
 - **Rate limit.** Tras 5 refresh inválidos (token desconocido o reusado) desde una IP, `POST /auth/refresh` responde 429 durante 15 minutos, con el mismo contador en memoria del login. Un token vencido no cuenta.
 - **Limpieza.** Un job diario (03:30, zona `medtracker.timezone`) borra los refresh tokens vencidos hace más de 7 días; los revocados se conservan hasta entonces para poder detectar el reuso. Reusar un token cerrado con logout responde 401 sin cerrar las demás sesiones: solo un token ya rotado dispara la revocación total.
 
+**8. Notificación por toma (`dose_id`).** `notification` suma `dose_id UUID REFERENCES dose(id)`, **nullable y sin `DEFAULT`**, y un índice único sobre esa columna: las notificaciones existentes quedan con `dose_id` en `NULL` (el índice único admite varias filas con `NULL`) y a partir de ahora hay una notificación como máximo por toma. Es un cambio aditivo en una transacción, en `database/migration-notification-dose-id.sql`:
+
+```sql
+ALTER TABLE notification ADD COLUMN dose_id UUID REFERENCES dose(id);
+CREATE UNIQUE INDEX notification_dose_id_key ON notification (dose_id);
+```
+
+La reversión está en `database/rollback-notification-dose-id.sql` y aborta si ya hay notificaciones con `dose_id`, porque revertir las perdería. Como la entidad la mapea y `ddl-auto=validate` la exige, **hay que migrar antes de desplegar** esta versión; la versión anterior sigue funcionando sobre la base migrada (no usa la columna y Hibernate en `validate` ignora las columnas de más).
+
 ---
 
 ## Casos de uso
@@ -640,11 +676,11 @@ ALTER TABLE treatment ADD COLUMN end_time TIME;
 - **Precondición:** Existe un `reminder` activo cuyo `time` (y `days_of_week`, si aplica) se cumple hoy, dentro del rango vigente del tratamiento.
 - **Flujo principal:**
   1. Un proceso automático (ej. un job diario) recorre los `reminder` activos y, para cada uno que corresponda hoy, genera la `dose` de ese día en estado `PENDING`.
-  2. Al llegar el horario (`scheduled_at`), el backend crea la `notification` para el usuario y envía el push mediante FCM.
+  2. Pasada la demora configurada desde `scheduled_at` (15 minutos por defecto), si la `dose` sigue `PENDING`, el backend reserva la `notification` para el paciente dueño del tratamiento y le envía el push mediante FCM.
   3. El usuario recibe la notificación en su dispositivo.
 - **Flujos alternativos:**
-  - **2a.** Falla el envío del push (token inválido, sin conexión, etc.) *(a definir: cómo se registra un fallo de envío)*.
-- **Postcondición:** Queda un registro de `dose` pendiente para ese día y, de ser exitoso el envío, la notificación llega al usuario. *(Nota: las `dose` se generan día a día a partir del patrón del `reminder`, no se insertan todas de una vez al crear el tratamiento.)*
+  - **2a.** Falla el envío del push. Token inválido (FCM lo rechaza): se limpia el `fcm_token` del usuario y no queda `notification`. Error transitorio (sin conexión, proveedor caído, etc.): no queda `notification` y el ciclo siguiente reintenta mientras la toma siga dentro de la ventana de recuperación. Usuario sin token: no se envía nada.
+- **Postcondición:** Queda un registro de `dose` pendiente para ese día y, de ser exitoso el envío, queda una `notification` de esa toma y llega al usuario. *(Nota: las `dose` se generan día a día a partir del patrón del `reminder`, no se insertan todas de una vez al crear el tratamiento.)*
 
 ---
 

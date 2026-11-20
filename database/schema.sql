@@ -106,6 +106,7 @@ CREATE TABLE notification (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES "user"(id),
     reminder_id UUID REFERENCES reminder(id),
+    dose_id UUID REFERENCES dose(id),
     message VARCHAR(255) NOT NULL,
     read BOOLEAN NOT NULL DEFAULT false,
     sent_at TIMESTAMP NOT NULL DEFAULT now(),
@@ -113,6 +114,10 @@ CREATE TABLE notification (
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     deleted_at TIMESTAMP
 );
+
+-- Una notificacion como maximo por toma (dose_id NULL = sin toma asociada;
+-- el unique comun admite varias filas con NULL).
+CREATE UNIQUE INDEX notification_dose_id_key ON notification (dose_id);
 
 -- Tabla de vinculo puro entre dos usuarios: no tiene identidad propia mas
 -- alla del par (caregiver_id, patient_id), asi que no lleva un "id"
