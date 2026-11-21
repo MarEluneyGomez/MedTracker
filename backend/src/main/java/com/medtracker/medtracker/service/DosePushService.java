@@ -18,6 +18,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,10 @@ public class DosePushService {
 
     // Tomas procesadas por ciclo como máximo
     private static final int BATCH_SIZE = 200;
+    // Tope de duración de un ciclo. Se chequea entre tomas (nunca se interrumpe un
+    // envío en curso): las que no se alcanzan quedan para el ciclo siguiente, sin
+    // reserva alguna.
+    private static final Duration MAX_CYCLE_DURATION = Duration.ofSeconds(45);
     private static final String TITLE = "Recordatorio de medicación";
     // El push no lleva el texto del recordatorio: puede ser un dato de salud y
     // se vería en la pantalla bloqueada. El texto completo queda en la
@@ -111,6 +116,9 @@ public class DosePushService {
     // Envía el push de las tomas cuyo momento llegó. Un fallo en una toma no
     // corta el procesamiento de las demás.
     public PushRunResult sendDuePushes() {
+        Instant cycleStart = clock.instant();
+        // Solo para la consulta de candidatas: el ttl y la limpieza del token
+        // toman su propio "ahora" al momento de usarse
         LocalDateTime now = LocalDateTime.now(clock);
         LocalDateTime to = now.minusMinutes(delayMinutes);
         LocalDateTime from = to.minusMinutes(catchUpMinutes);
@@ -123,10 +131,16 @@ public class DosePushService {
         int invalidTokens = 0;
         int transientErrors = 0;
         int alreadyClaimed = 0;
-        for (Dose dose : candidates) {
+        for (int i = 0; i < candidates.size(); i++) {
+            if (Duration.between(cycleStart, clock.instant()).compareTo(MAX_CYCLE_DURATION) >= 0) {
+                log.warn("Ciclo de push cortado por tope de tiempo: {} tomas procesadas, {} sin procesar",
+                        i, candidates.size() - i);
+                break;
+            }
+            Dose dose = candidates.get(i);
             Outcome outcome;
             try {
-                outcome = process(dose, now);
+                outcome = process(dose);
             } catch (RuntimeException e) {
                 log.error("Falló el push de la toma {} ({})", dose.getId(), e.getClass().getSimpleName());
                 continue;
@@ -142,7 +156,7 @@ public class DosePushService {
         return new PushRunResult(sent, invalidTokens, transientErrors, alreadyClaimed);
     }
 
-    private Outcome process(Dose candidate, LocalDateTime now) {
+    private Outcome process(Dose candidate) {
         // Chequeo temprano sobre lo que trajo la consulta (solo evita abrir una
         // transacción): la decisión final es la de la reserva, con datos releídos
         if (trimmed(candidate.getReminder().getTreatment().getUser().getFcmToken()).isEmpty()) {
@@ -156,7 +170,7 @@ public class DosePushService {
         // registre y siga con las demás tomas.
         Reservation reservation;
         try {
-            reservation = transactionTemplate.execute(status -> reserve(candidate.getId(), now));
+            reservation = transactionTemplate.execute(status -> reserve(candidate.getId()));
         } catch (DataIntegrityViolationException e) {
             if (notificationRepository.existsByDoseId(candidate.getId())) {
                 return Outcome.ALREADY_CLAIMED;
@@ -176,6 +190,11 @@ public class DosePushService {
         } catch (RuntimeException e) {
             log.warn("El envío del push de la toma {} falló ({})", candidate.getId(), e.getClass().getSimpleName());
             result = PushResult.TRANSIENT_ERROR;
+        } catch (Throwable t) {
+            // Un Error (p. ej. NoClassDefFoundError) no se traga: se libera la
+            // reserva para que la toma no pierda su recordatorio y se relanza
+            release(reservation.notification(), candidate.getId());
+            throw t;
         }
         if (result == null) {
             result = PushResult.TRANSIENT_ERROR;
@@ -187,7 +206,8 @@ public class DosePushService {
                 return Outcome.SENT;
             case INVALID_TOKEN:
                 release(reservation.notification(), candidate.getId());
-                userRepository.clearFcmTokenIfEquals(reservation.ownerId(), reservation.token(), now);
+                userRepository.clearFcmTokenIfEquals(reservation.ownerId(), reservation.token(),
+                        LocalDateTime.now(clock));
                 return Outcome.INVALID_TOKEN;
             default:
                 release(reservation.notification(), candidate.getId());
@@ -201,7 +221,7 @@ public class DosePushService {
     // completado, usuario sin baja y con token no vacío, y con vigencia del push todavía
     // positiva. Si algo falla devuelve null y no reserva nada. Después, si la
     // toma no tiene notificación, inserta la del dueño.
-    private Reservation reserve(UUID doseId, LocalDateTime now) {
+    private Reservation reserve(UUID doseId) {
         Dose current = doseRepository.findByIdAndDeletedAtIsNull(doseId).orElse(null);
         if (current == null || current.getStatus() != Dose.DoseStatus.PENDING) {
             return null;
@@ -224,7 +244,7 @@ public class DosePushService {
         }
         // El push deja de valer cuando el auto-skip omitiría la toma: no se
         // reserva algo que no se va a enviar
-        Duration ttl = Duration.between(now, current.getScheduledAt().plusMinutes(skipAfterMinutes));
+        Duration ttl = Duration.between(LocalDateTime.now(clock), current.getScheduledAt().plusMinutes(skipAfterMinutes));
         if (ttl.isZero() || ttl.isNegative()) {
             return null;
         }
