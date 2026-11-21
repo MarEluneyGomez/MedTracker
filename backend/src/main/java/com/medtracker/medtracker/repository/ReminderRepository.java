@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 public interface ReminderRepository extends JpaRepository<Reminder, UUID> {
@@ -32,6 +33,14 @@ public interface ReminderRepository extends JpaRepository<Reminder, UUID> {
 
     // Buscar recordatorios activos (los que siguen generando dosis)
     List<Reminder> findByActive(boolean active);
+
+    // Ids de los tratamientos (de los indicados) con al menos un recordatorio activo y sin
+    // baja lógica (RN-02). Una sola consulta para todo un listado, sin una por tratamiento.
+    @Query("""
+            select distinct r.treatment.id from Reminder r
+            where r.treatment.id in :treatmentIds and r.active = true and r.deletedAt is null
+            """)
+    Set<UUID> findTreatmentIdsWithActiveReminders(@Param("treatmentIds") Collection<UUID> treatmentIds);
 
     // Recordatorios que pueden generar dosis en un día: activos, sin borrar y
     // con tratamiento vigente (no borrado, no completado y dentro de su rango

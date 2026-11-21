@@ -28,9 +28,12 @@ public class TreatmentDTO {
     private LocalTime startTime;
     private LocalTime endTime;
     private boolean completed;
+    // RN-02: true si el tratamiento tiene al menos un recordatorio activo y no eliminado
+    private boolean hasActiveReminders;
 
-    // Constructor auxiliar para mapear desde la entidad
-    public TreatmentDTO(Treatment treatment) {
+    // Constructor auxiliar para mapear desde la entidad; hasActiveReminders no sale de la
+    // entidad: lo calcula quien arma la respuesta (ver TreatmentService.activeReminderTreatmentIds)
+    public TreatmentDTO(Treatment treatment, boolean hasActiveReminders) {
         this.id = treatment.getId();
         this.userId = treatment.getUser().getId();
         this.medicationId = treatment.getMedication().getId();
@@ -41,5 +44,6 @@ public class TreatmentDTO {
         this.startTime = treatment.getStartTime();
         this.endTime = treatment.getEndTime();
         this.completed = treatment.isCompleted();
+        this.hasActiveReminders = hasActiveReminders;
     }
 }

@@ -18,7 +18,9 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -104,6 +106,16 @@ public class TreatmentService {
     public List<Treatment> findByUser(AuthenticatedUser principal, UUID userId) {
         accessPolicy.requireCanManagePatient(principal, userId);
         return treatmentRepository.findByUserIdAndDeletedAtIsNull(userId);
+    }
+
+    // Ids de los tratamientos de la lista con al menos un recordatorio activo y sin baja
+    // lógica (RN-02). Una sola consulta para toda la lista (sin N+1); con la lista vacía no consulta.
+    public Set<UUID> activeReminderTreatmentIds(Collection<Treatment> treatments) {
+        if (treatments.isEmpty()) {
+            return Set.of();
+        }
+        return reminderRepository.findTreatmentIdsWithActiveReminders(
+                treatments.stream().map(Treatment::getId).toList());
     }
 
     // Editar un tratamiento (CU-08): solo dosis, frecuencia y fechas; el

@@ -13,6 +13,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -31,35 +32,27 @@ public class TreatmentController {
     public ResponseEntity<TreatmentDTO> register(@AuthenticationPrincipal AuthenticatedUser principal,
                                                  @Valid @RequestBody TreatmentCreateRequestDTO request) {
         Treatment created = treatmentService.register(principal, request.toEntity());
-        return ResponseEntity.status(HttpStatus.CREATED).body(new TreatmentDTO(created));
+        return ResponseEntity.status(HttpStatus.CREATED).body(new TreatmentDTO(created, false));
     }
 
     // Buscar tratamiento por ID
     @GetMapping("/{id}")
     public ResponseEntity<TreatmentDTO> findById(@AuthenticationPrincipal AuthenticatedUser principal,
                                                  @PathVariable UUID id) {
-        return ResponseEntity.ok(new TreatmentDTO(treatmentService.findById(principal, id)));
+        return ResponseEntity.ok(toDto(treatmentService.findById(principal, id)));
     }
 
     // Listar los tratamientos propios y los de los pacientes que cuida
     @GetMapping
     public ResponseEntity<List<TreatmentDTO>> findAll(@AuthenticationPrincipal AuthenticatedUser principal) {
-        List<TreatmentDTO> list = treatmentService.findAll(principal)
-                .stream()
-                .map(TreatmentDTO::new)
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(list);
+        return ResponseEntity.ok(toDtos(treatmentService.findAll(principal)));
     }
 
     // Listar los tratamientos vigentes de un usuario
     @GetMapping("/user/{userId}")
     public ResponseEntity<List<TreatmentDTO>> findByUser(@AuthenticationPrincipal AuthenticatedUser principal,
                                                          @PathVariable UUID userId) {
-        List<TreatmentDTO> list = treatmentService.findByUser(principal, userId)
-                .stream()
-                .map(TreatmentDTO::new)
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(list);
+        return ResponseEntity.ok(toDtos(treatmentService.findByUser(principal, userId)));
     }
 
     // Editar tratamiento (CU-08): dosis, frecuencia y fechas
@@ -67,7 +60,7 @@ public class TreatmentController {
     public ResponseEntity<TreatmentDTO> update(@AuthenticationPrincipal AuthenticatedUser principal,
                                                @PathVariable UUID id,
                                                @Valid @RequestBody TreatmentUpdateRequestDTO request) {
-        return ResponseEntity.ok(new TreatmentDTO(treatmentService.update(principal, id, request.toEntity())));
+        return ResponseEntity.ok(toDto(treatmentService.update(principal, id, request.toEntity())));
     }
 
     // Eliminar tratamiento (CU-08): borrado lógico y recordatorios desactivados
@@ -82,13 +75,27 @@ public class TreatmentController {
     @PutMapping("/{id}/complete")
     public ResponseEntity<TreatmentDTO> markAsCompleted(@AuthenticationPrincipal AuthenticatedUser principal,
                                                         @PathVariable UUID id) {
-        return ResponseEntity.ok(new TreatmentDTO(treatmentService.markAsCompleted(principal, id)));
+        return ResponseEntity.ok(toDto(treatmentService.markAsCompleted(principal, id)));
     }
 
     // Reabrir un tratamiento completado (sin límite de tiempo)
     @PutMapping("/{id}/reopen")
     public ResponseEntity<TreatmentDTO> reopen(@AuthenticationPrincipal AuthenticatedUser principal,
                                                @PathVariable UUID id) {
-        return ResponseEntity.ok(new TreatmentDTO(treatmentService.reopen(principal, id)));
+        return ResponseEntity.ok(toDto(treatmentService.reopen(principal, id)));
+    }
+
+    // hasActiveReminders (RN-02) de un tratamiento: una consulta
+    private TreatmentDTO toDto(Treatment treatment) {
+        Set<UUID> active = treatmentService.activeReminderTreatmentIds(List.of(treatment));
+        return new TreatmentDTO(treatment, active.contains(treatment.getId()));
+    }
+
+    // hasActiveReminders (RN-02) de una lista: una sola consulta para todos (sin N+1)
+    private List<TreatmentDTO> toDtos(List<Treatment> treatments) {
+        Set<UUID> active = treatmentService.activeReminderTreatmentIds(treatments);
+        return treatments.stream()
+                .map(t -> new TreatmentDTO(t, active.contains(t.getId())))
+                .collect(Collectors.toList());
     }
 }
