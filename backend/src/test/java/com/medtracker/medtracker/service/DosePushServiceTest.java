@@ -8,6 +8,10 @@ import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.DoseRepository;
 import com.medtracker.medtracker.repository.NotificationRepository;
 import com.medtracker.medtracker.repository.UserRepository;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -20,7 +24,9 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
@@ -65,6 +71,35 @@ class DosePushServiceTest {
 
     private DosePushService defaultService() {
         return service(15, 30, "", 120);
+    }
+
+    // Reloj controlado por el test: avanza sin dormir
+    private static final class MutableClock extends Clock {
+        private Instant instant = NOW.toInstant(ZoneOffset.UTC);
+
+        void advance(Duration duration) {
+            instant = instant.plus(duration);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
+        }
+    }
+
+    private DosePushService serviceWith(Clock clock) {
+        return new DosePushService(doseRepository, notificationRepository, userRepository, pushSender,
+                clock, transactionManager, 15, 30, "", 120);
     }
 
     private static Dose dose(String token, String message) {
@@ -557,6 +592,101 @@ class DosePushServiceTest {
         assertThat(result).isEqualTo(new DosePushService.PushRunResult(0, 0, 1, 0));
         verify(notificationRepository).deleteById(any());
         verify(userRepository, never()).clearFcmTokenIfEquals(any(), any(), any());
+    }
+
+    // El "ahora" de la reserva (ttl) y del rechazo del token es el del momento,
+    // no el del inicio del ciclo
+    @Test
+    void ttlAndTokenClearingUseTheCurrentTimeAndNotTheCycleStart() {
+        MutableClock clock = new MutableClock();
+        Dose first = doseAt("token-1", "Primera", NOW.minusMinutes(20));
+        Dose second = doseAt("token-2", "Segunda", NOW.minusMinutes(20));
+        stubCandidates(first, second);
+        stubReread(first);
+        stubReread(second);
+        stubSaveAssignsIds();
+        // El envío de la primera toma tarda 20 segundos (bajo el tope) y su token
+        // es rechazado; la segunda se envía
+        when(pushSender.send(any())).thenAnswer(invocation -> {
+            clock.advance(Duration.ofSeconds(20));
+            return PushResult.INVALID_TOKEN;
+        }).thenReturn(PushResult.SENT);
+
+        DosePushService.PushRunResult result = serviceWith(clock).sendDuePushes();
+
+        assertThat(result).isEqualTo(new DosePushService.PushRunResult(1, 1, 0, 0));
+        // La consulta de candidatas sigue usando el "ahora" de inicio del ciclo
+        verify(doseRepository).findPushCandidates(NOW.minusMinutes(45), NOW.minusMinutes(15),
+                Dose.DoseStatus.PENDING, FIRST_PAGE);
+        ArgumentCaptor<PushMessage> messages = ArgumentCaptor.forClass(PushMessage.class);
+        verify(pushSender, times(2)).send(messages.capture());
+        // scheduledAt + 120 min - ahora: 100 min al inicio, 99 min 40 s tras los 20 s
+        assertThat(messages.getAllValues()).extracting(PushMessage::ttl)
+                .containsExactly(Duration.ofMinutes(100), Duration.ofMinutes(99).plusSeconds(40));
+        // El rechazo ocurrió 20 segundos después del inicio del ciclo
+        verify(userRepository).clearFcmTokenIfEquals(first.getReminder().getTreatment().getUser().getId(),
+                "token-1", NOW.plusSeconds(20));
+    }
+
+    @Test
+    void theCycleStopsBetweenDosesOnceTheTimeCapIsReachedAndWarnsWithNumbersOnly() {
+        MutableClock clock = new MutableClock();
+        Dose first = dose("token-secreto-1", "Texto secreto 1");
+        Dose second = dose("token-secreto-2", "Texto secreto 2");
+        stubCandidates(first, second);
+        stubReread(first);
+        stubSaveAssignsIds();
+        // El envío en curso no se interrumpe; tarda más que el tope de 45 segundos
+        when(pushSender.send(any())).thenAnswer(invocation -> {
+            clock.advance(Duration.ofSeconds(46));
+            return PushResult.SENT;
+        });
+        Logger logger = (Logger) org.slf4j.LoggerFactory.getLogger(DosePushService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        DosePushService.PushRunResult result;
+        try {
+            result = serviceWith(clock).sendDuePushes();
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        assertThat(result).isEqualTo(new DosePushService.PushRunResult(1, 0, 0, 0));
+        verify(pushSender, times(1)).send(any());
+        // No se reservó nada para la segunda toma: ni se la releyó
+        verify(notificationRepository, times(1)).saveAndFlush(any());
+        verify(doseRepository, never()).findByIdAndDeletedAtIsNull(second.getId());
+        assertThat(appender.list).filteredOn(event -> event.getLevel() == Level.WARN).hasSize(1)
+                .allSatisfy(event -> {
+                    assertThat(event.getFormattedMessage()).isEqualTo(
+                            "Ciclo de push cortado por tope de tiempo: 1 tomas procesadas, 1 sin procesar");
+                    assertThat(event.getFormattedMessage()).doesNotContain("secreto");
+                });
+    }
+
+    @Test
+    void anErrorFromTheSenderReleasesTheReservationIsRethrownAndTheNextCycleRetries() {
+        Dose dose = dose("token-1", "Tomar");
+        stubCandidates(dose);
+        stubReread(dose);
+        stubSaveAssignsIds();
+        NoClassDefFoundError error = new NoClassDefFoundError("clase-que-falta");
+        when(pushSender.send(any())).thenThrow(error).thenReturn(PushResult.SENT);
+        DosePushService service = defaultService();
+
+        assertThatThrownBy(service::sendDuePushes).isSameAs(error);
+
+        ArgumentCaptor<Notification> saved = ArgumentCaptor.forClass(Notification.class);
+        verify(notificationRepository).saveAndFlush(saved.capture());
+        verify(notificationRepository).deleteById(saved.getValue().getId());
+        verify(userRepository, never()).clearFcmTokenIfEquals(any(), any(), any());
+
+        // El ciclo siguiente puede reintentar la toma: no quedó reserva
+        DosePushService.PushRunResult retry = service.sendDuePushes();
+
+        assertThat(retry).isEqualTo(new DosePushService.PushRunResult(1, 0, 0, 0));
+        verify(notificationRepository, times(2)).saveAndFlush(any());
     }
 
     @Test
