@@ -386,6 +386,66 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(caregiver, json(post("/treatments/register"), forA))).andExpect(status().isCreated());
     }
 
+    // ---------------------------------------------------------------- hasActiveReminders (RN-02)
+
+    @Test
+    void treatmentListingExposesHasActiveRemindersPerTreatment() throws Exception {
+        Treatment withoutReminders = Treatment.builder().id(UUID.randomUUID()).user(a)
+                .medication(medication()).dosage("2 comp").frequency("cada 12 hs")
+                .startDate(LocalDateTime.of(2026, 10, 1, 8, 0)).build();
+        when(treatmentRepository.findByUserIdInAndDeletedAtIsNull(anyCollection()))
+                .thenReturn(List.of(treatmentA, withoutReminders));
+        when(treatmentRepository.findByUserIdAndDeletedAtIsNull(a.getId()))
+                .thenReturn(List.of(treatmentA, withoutReminders));
+        when(reminderRepository.findTreatmentIdsWithActiveReminders(anyCollection()))
+                .thenReturn(Set.of(treatmentA.getId()));
+
+        mockMvc.perform(as(a, get("/treatments"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].hasActiveReminders").value(true))
+                .andExpect(jsonPath("$[1].hasActiveReminders").value(false));
+        mockMvc.perform(as(a, get("/treatments/user/" + a.getId()))).andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].hasActiveReminders").value(true))
+                .andExpect(jsonPath("$[1].hasActiveReminders").value(false));
+        // una consulta por listado, no una por tratamiento
+        verify(reminderRepository, Mockito.times(2)).findTreatmentIdsWithActiveReminders(anyCollection());
+    }
+
+    @Test
+    void singleTreatmentEndpointsExposeHasActiveReminders() throws Exception {
+        String update = "{\"dosage\":\"9\",\"frequency\":\"x\",\"startDate\":\"2026-10-01T08:00:00\"}";
+
+        // Como JPA con una entidad existente, el save conserva el id (el stub de setUp asigna uno nuevo)
+        when(treatmentRepository.save(any(Treatment.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        // Sin recordatorios activos (el mock devuelve un Set vacío): false
+        mockMvc.perform(as(a, get("/treatments/" + treatmentA.getId()))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasActiveReminders").value(false));
+
+        when(reminderRepository.findTreatmentIdsWithActiveReminders(anyCollection()))
+                .thenReturn(Set.of(treatmentA.getId()));
+        mockMvc.perform(as(a, get("/treatments/" + treatmentA.getId()))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasActiveReminders").value(true));
+        mockMvc.perform(as(a, json(put("/treatments/" + treatmentA.getId()), update))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasActiveReminders").value(true));
+        mockMvc.perform(as(a, put("/treatments/" + treatmentA.getId() + "/complete"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.completed").value(true))
+                .andExpect(jsonPath("$.hasActiveReminders").value(true));
+        mockMvc.perform(as(a, put("/treatments/" + treatmentA.getId() + "/reopen"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.completed").value(false))
+                .andExpect(jsonPath("$.hasActiveReminders").value(true));
+    }
+
+    @Test
+    void registerReturnsHasActiveRemindersFalse() throws Exception {
+        String forA = "{\"user\":{\"id\":\"" + a.getId() + "\"},\"medication\":{\"id\":1},"
+                + "\"dosage\":\"1\",\"frequency\":\"8h\",\"startDate\":\"2026-10-01T08:00:00\"}";
+
+        mockMvc.perform(as(a, json(post("/treatments/register"), forA))).andExpect(status().isCreated())
+                .andExpect(jsonPath("$.hasActiveReminders").value(false));
+        // un tratamiento nuevo no tiene recordatorios: no hace falta consultarlos
+        verify(reminderRepository, never()).findTreatmentIdsWithActiveReminders(anyCollection());
+    }
+
     // ---------------------------------------------------------------- RN-01: recordatorios
 
     @Test

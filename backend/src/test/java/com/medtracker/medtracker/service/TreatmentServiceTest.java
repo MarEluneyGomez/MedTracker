@@ -31,9 +31,12 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -473,5 +476,40 @@ class TreatmentServiceTest {
                 .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
         verify(treatmentRepository, never()).reopenIfCompleted(any(), any());
         verifyNoInteractions(doseGenerationService);
+    }
+
+    // ---- hasActiveReminders (RN-02)
+
+    @Test
+    void activeReminderTreatmentIdsIsEmptyAndDoesNotQueryForAnEmptyList() {
+        assertThat(service.activeReminderTreatmentIds(List.of())).isEmpty();
+
+        verifyNoInteractions(reminderRepository);
+    }
+
+    @Test
+    void activeReminderTreatmentIdsQueriesOnceForAllTheTreatments() {
+        UUID id1 = UUID.randomUUID();
+        UUID id2 = UUID.randomUUID();
+        UUID id3 = UUID.randomUUID();
+        when(reminderRepository.findTreatmentIdsWithActiveReminders(anyCollection())).thenReturn(Set.of(id1));
+
+        service.activeReminderTreatmentIds(List.of(existing(id1), existing(id2), existing(id3)));
+
+        verify(reminderRepository, times(1)).findTreatmentIdsWithActiveReminders(
+                argThat(ids -> ids.size() == 3 && ids.containsAll(List.of(id1, id2, id3))));
+    }
+
+    @Test
+    void activeReminderTreatmentIdsReturnsOnlyTheIdsTheRepositoryReports() {
+        UUID withReminders = UUID.randomUUID();
+        UUID without = UUID.randomUUID();
+        when(reminderRepository.findTreatmentIdsWithActiveReminders(anyCollection()))
+                .thenReturn(Set.of(withReminders));
+
+        Set<UUID> result = service.activeReminderTreatmentIds(
+                List.of(existing(withReminders), existing(without)));
+
+        assertThat(result).containsExactly(withReminders);
     }
 }
