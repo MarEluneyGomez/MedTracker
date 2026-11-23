@@ -60,18 +60,35 @@ class MedicalAppointmentServiceTest {
     }
 
     @Test
-    void thePatientCanScheduleTheirOwnAppointment() {
+    void thePatientCanScheduleTheirOwnAppointmentAndItIsBornConfirmed() {
         givenUsers();
 
         assertThat(service.register(patientP, incoming()).getStatus())
-                .isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
+                .isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
     }
 
     @Test
-    void theAssignedDoctorCanScheduleTheAppointment() {
+    void theAssignedDoctorCanScheduleTheAppointmentAndItIsBornPending() {
         givenUsers();
 
-        assertThat(service.register(doctorP, incoming()).getDoctor()).isSameAs(doctor);
+        MedicalAppointment created = service.register(doctorP, incoming());
+
+        assertThat(created.getDoctor()).isSameAs(doctor);
+        assertThat(created.getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
+    }
+
+    @Test
+    void theClientCannotImposeTheInitialStatus() {
+        givenUsers();
+        MedicalAppointment byPatient = incoming();
+        byPatient.setStatus(MedicalAppointment.AppointmentStatus.CANCELLED);
+        MedicalAppointment byDoctor = incoming();
+        byDoctor.setStatus(MedicalAppointment.AppointmentStatus.CONFIRMED);
+
+        assertThat(service.register(patientP, byPatient).getStatus())
+                .isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        assertThat(service.register(doctorP, byDoctor).getStatus())
+                .isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
     }
 
     @Test
@@ -108,19 +125,68 @@ class MedicalAppointmentServiceTest {
     }
 
     @Test
-    void theAssignedDoctorCanConfirmButACancelledAppointmentIsDefinitive() {
+    void theDoctorCannotConfirmOrReopenAnAppointmentAndNothingIsSaved() {
         MedicalAppointment pending = appointment();
+        MedicalAppointment confirmed = appointment();
+        confirmed.setStatus(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        when(accessPolicy.requireAppointment(doctorP, pending.getId())).thenReturn(pending);
+        when(accessPolicy.requireAppointment(doctorP, confirmed.getId())).thenReturn(confirmed);
+
+        assertThatThrownBy(() -> service.changeStatus(doctorP, pending.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN))
+                .hasMessageContaining("El médico solo puede cancelar la cita; la confirma el paciente");
+        assertThatThrownBy(() -> service.changeStatus(doctorP, pending.getId(),
+                MedicalAppointment.AppointmentStatus.PENDING))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+        assertThatThrownBy(() -> service.changeStatus(doctorP, confirmed.getId(),
+                MedicalAppointment.AppointmentStatus.PENDING))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+        assertThat(pending.getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
+        assertThat(confirmed.getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void theDoctorCanCancelAnAppointment() {
+        MedicalAppointment confirmed = appointment();
+        confirmed.setStatus(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        when(accessPolicy.requireAppointment(doctorP, confirmed.getId())).thenReturn(confirmed);
+        when(repository.save(confirmed)).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(service.changeStatus(doctorP, confirmed.getId(), MedicalAppointment.AppointmentStatus.CANCELLED)
+                .getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CANCELLED);
+    }
+
+    @Test
+    void thePatientCanConfirmReturnToPendingAndCancel() {
+        MedicalAppointment appointment = appointment();
+        when(accessPolicy.requireAppointment(patientP, appointment.getId())).thenReturn(appointment);
+        when(repository.save(appointment)).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(service.changeStatus(patientP, appointment.getId(), MedicalAppointment.AppointmentStatus.CONFIRMED)
+                .getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        assertThat(service.changeStatus(patientP, appointment.getId(), MedicalAppointment.AppointmentStatus.PENDING)
+                .getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
+        assertThat(service.changeStatus(patientP, appointment.getId(), MedicalAppointment.AppointmentStatus.CANCELLED)
+                .getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CANCELLED);
+    }
+
+    @Test
+    void aCancelledAppointmentIs409ForAnyActorAndAnyStatusBeforeTheRoleRule() {
         MedicalAppointment cancelled = appointment();
         cancelled.setStatus(MedicalAppointment.AppointmentStatus.CANCELLED);
-        when(accessPolicy.requireAppointment(doctorP, pending.getId())).thenReturn(pending);
+        when(accessPolicy.requireAppointment(patientP, cancelled.getId())).thenReturn(cancelled);
         when(accessPolicy.requireAppointment(doctorP, cancelled.getId())).thenReturn(cancelled);
-        when(repository.save(pending)).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThat(service.changeStatus(doctorP, pending.getId(), MedicalAppointment.AppointmentStatus.CONFIRMED)
-                .getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
-        assertThatThrownBy(() -> service.changeStatus(doctorP, cancelled.getId(),
-                MedicalAppointment.AppointmentStatus.CONFIRMED))
-                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+        for (MedicalAppointment.AppointmentStatus requested : MedicalAppointment.AppointmentStatus.values()) {
+            assertThatThrownBy(() -> service.changeStatus(patientP, cancelled.getId(), requested))
+                    .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+            // el médico pidiendo CONFIRMED o PENDING recibe 409 y no 403
+            assertThatThrownBy(() -> service.changeStatus(doctorP, cancelled.getId(), requested))
+                    .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+        }
+        verify(repository, never()).save(any());
     }
 
     @Test

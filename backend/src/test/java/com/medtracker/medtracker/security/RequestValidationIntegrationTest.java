@@ -884,17 +884,30 @@ class RequestValidationIntegrationTest {
 
     @Test
     void appointmentRegisterKeepsTheShapeAndIgnoresStatusIdAndDeletedAt() throws Exception {
+        // el paciente manda CANCELLED en el body: se ignora y la cita nace CONFIRMED
         mockMvc.perform(as(a, json(post("/medical-appointments/register"),
-                        appointmentBody(",\"status\":\"CONFIRMED\",\"id\":\"" + UUID.randomUUID() + "\","
+                        appointmentBody(",\"status\":\"CANCELLED\",\"id\":\"" + UUID.randomUUID() + "\","
                                 + "\"deletedAt\":\"2020-01-01T00:00:00\",\"campoDesconocido\":1"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("CONFIRMED"));
+
+        ArgumentCaptor<MedicalAppointment> saved = ArgumentCaptor.forClass(MedicalAppointment.class);
+        verify(appointmentRepository).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        assertThat(saved.getValue().getId()).isNull();
+        assertThat(saved.getValue().getDeletedAt()).isNull();
+    }
+
+    @Test
+    void anAppointmentRegisteredByTheDoctorIsBornPendingEvenIfTheBodySaysConfirmed() throws Exception {
+        mockMvc.perform(as(doctor, json(post("/medical-appointments/register"),
+                        appointmentBody(",\"status\":\"CONFIRMED\""))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("PENDING"));
 
         ArgumentCaptor<MedicalAppointment> saved = ArgumentCaptor.forClass(MedicalAppointment.class);
         verify(appointmentRepository).save(saved.capture());
         assertThat(saved.getValue().getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
-        assertThat(saved.getValue().getId()).isNull();
-        assertThat(saved.getValue().getDeletedAt()).isNull();
     }
 
     @Test
@@ -973,7 +986,7 @@ class RequestValidationIntegrationTest {
         mockMvc.perform(as(b, json(post("/medical-histories/register"), historyBody("ok"))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.length()").value(5));
-        // el médico sin cita vigente con el paciente tampoco puede
+        // el médico sin cita CONFIRMED con el paciente tampoco puede (el mock responde false por defecto)
         mockMvc.perform(as(doctor, json(post("/medical-histories/register"), historyBody("ok"))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.length()").value(5));

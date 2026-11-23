@@ -43,7 +43,9 @@ public class MedicalAppointment {
     @Column(nullable = false)
     private String reason;
 
-    // Estado de la cita; toda cita nueva arranca pendiente (CU-09)
+    // Estado de la cita (CU-09): nace CONFIRMED si la agenda el paciente y PENDING si la
+    // agenda el médico. El PENDING por defecto es solo una red de seguridad: el servicio
+    // siempre fija el estado al crearla.
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     @Builder.Default

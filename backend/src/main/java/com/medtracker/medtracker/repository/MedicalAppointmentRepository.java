@@ -31,7 +31,7 @@ public interface MedicalAppointmentRepository extends JpaRepository<MedicalAppoi
             """)
     List<MedicalAppointment> findByParticipant(@Param("userId") UUID userId);
 
-    // ¿Hay una cita vigente y no cancelada entre ese médico y ese paciente? (acceso al historial médico)
+    // ¿Hay una cita vigente y no cancelada entre ese médico y ese paciente? (perfil reducido y listados de citas; no habilita el historial)
     @Query("""
             select count(a) > 0 from MedicalAppointment a
             where a.doctor.id = :doctorId and a.patient.id = :patientId
@@ -39,13 +39,21 @@ public interface MedicalAppointmentRepository extends JpaRepository<MedicalAppoi
             """)
     boolean existsActiveByDoctorAndPatient(@Param("doctorId") UUID doctorId, @Param("patientId") UUID patientId);
 
-    // Pacientes con los que el médico tiene una cita vigente y no cancelada
+    // ¿Hay una cita vigente y CONFIRMED por el paciente entre ese médico y ese paciente? (acceso al historial médico)
+    @Query("""
+            select count(a) > 0 from MedicalAppointment a
+            where a.doctor.id = :doctorId and a.patient.id = :patientId
+              and a.deletedAt is null and a.status = com.medtracker.medtracker.model.MedicalAppointment.AppointmentStatus.CONFIRMED
+            """)
+    boolean existsConfirmedByDoctorAndPatient(@Param("doctorId") UUID doctorId, @Param("patientId") UUID patientId);
+
+    // Pacientes con los que el médico tiene una cita vigente y CONFIRMED
     @Query("""
             select distinct a.patient.id from MedicalAppointment a
             where a.doctor.id = :doctorId
-              and a.deletedAt is null and a.status <> com.medtracker.medtracker.model.MedicalAppointment.AppointmentStatus.CANCELLED
+              and a.deletedAt is null and a.status = com.medtracker.medtracker.model.MedicalAppointment.AppointmentStatus.CONFIRMED
             """)
-    List<UUID> findActivePatientIdsByDoctor(@Param("doctorId") UUID doctorId);
+    List<UUID> findConfirmedPatientIdsByDoctor(@Param("doctorId") UUID doctorId);
 
     // Buscar citas por estado
     List<MedicalAppointment> findByStatus(MedicalAppointment.AppointmentStatus status);

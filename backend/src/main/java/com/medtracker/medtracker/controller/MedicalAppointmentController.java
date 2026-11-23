@@ -72,7 +72,9 @@ public class MedicalAppointmentController {
         return ResponseEntity.ok(list);
     }
 
-    // Cambiar estado de la cita (PENDING, CONFIRMED o CANCELLED)
+    // Cambiar estado de la cita (PENDING, CONFIRMED o CANCELLED). El paciente puede dejar
+    // cualquiera; el médico solo CANCELLED (si no, 403). Una cita cancelada no cambia (409).
+    // Un usuario que no participa de la cita recibe 404.
     @PutMapping("/{id}/status")
     public ResponseEntity<MedicalAppointmentDTO> changeStatus(@AuthenticationPrincipal AuthenticatedUser principal,
                                                               @PathVariable UUID id,
