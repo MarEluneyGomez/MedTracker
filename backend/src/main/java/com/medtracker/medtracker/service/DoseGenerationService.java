@@ -2,7 +2,6 @@ package com.medtracker.medtracker.service;
 
 import com.medtracker.medtracker.model.Dose;
 import com.medtracker.medtracker.model.Reminder;
-import com.medtracker.medtracker.model.Treatment;
 import com.medtracker.medtracker.repository.DoseRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import lombok.RequiredArgsConstructor;
@@ -10,10 +9,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
@@ -25,11 +22,6 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class DoseGenerationService {
-
-    // Margen con el que una dosis de hoy todavía se considera vigente: una
-    // dosis solo se crea o se mueve a un horario si no pasó hace más de esto
-    // (cubre también al job de medianoche, que puede disparar con un leve retraso)
-    private static final Duration PAST_DOSE_MARGIN = Duration.ofMinutes(5);
 
     private final ReminderRepository reminderRepository;
     private final DoseRepository doseRepository;
@@ -117,7 +109,7 @@ public class DoseGenerationService {
     private boolean createDoseIfDue(Reminder reminder, LocalDate day, LocalDateTime now) {
         // Los días se guardan como MON..SUN, igual que las 3 primeras letras del enum
         String dayCode = day.getDayOfWeek().name().substring(0, 3);
-        if (!treatmentActiveOn(reminder.getTreatment(), day, reminder.getTime())
+        if (!DoseSchedulingRules.treatmentActiveOn(reminder.getTreatment(), day, reminder.getTime())
                 || !appliesOn(reminder, day, dayCode)) {
             return false;
         }
@@ -144,36 +136,7 @@ public class DoseGenerationService {
     // scheduledAt anterior a (ahora - margen) ya pasó y no se crea ni se mueve
     // ahí. Otros días no se tocan.
     private boolean isPastToday(LocalDate day, LocalDateTime scheduledAt, LocalDateTime now) {
-        return day.equals(now.toLocalDate()) && scheduledAt.isBefore(now.minus(PAST_DOSE_MARGIN));
-    }
-
-    // El día debe caer dentro de [startDate, endDate] del tratamiento (la hora de
-    // esos campos se ignora). Si el día es el primero/último y el tratamiento
-    // tiene startTime/endTime, la hora de la toma debe respetarlos (inclusive).
-    private boolean treatmentActiveOn(Treatment treatment, LocalDate day, LocalTime time) {
-        if (treatment == null || treatment.getDeletedAt() != null || treatment.isCompleted()
-                || treatment.getStartDate() == null) {
-            return false;
-        }
-        // Un paciente dado de baja no recibe dosis nuevas. El null check es defensivo: en produccion Treatment.user es NOT NULL, pero algunos tests arman Treatment sin user.
-        if (treatment.getUser() != null && treatment.getUser().getDeletedAt() != null) {
-            return false;
-        }
-        LocalDate startDay = treatment.getStartDate().toLocalDate();
-        if (startDay.compareTo(day) > 0) {
-            return false;
-        }
-        if (startDay.equals(day) && treatment.getStartTime() != null && time.isBefore(treatment.getStartTime())) {
-            return false;
-        }
-        if (treatment.getEndDate() == null) {
-            return true;
-        }
-        LocalDate endDay = treatment.getEndDate().toLocalDate();
-        if (endDay.compareTo(day) < 0) {
-            return false;
-        }
-        return !(endDay.equals(day) && treatment.getEndTime() != null && time.isAfter(treatment.getEndTime()));
+        return day.equals(now.toLocalDate()) && DoseSchedulingRules.isBeforeNowMinusMargin(scheduledAt, now);
     }
 
     // Con intervalo: cada N días contados desde startDate (ese día incluido), sin

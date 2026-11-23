@@ -3,6 +3,7 @@ package com.medtracker.medtracker.service;
 import com.medtracker.medtracker.dto.DoseAdherenceDTO;
 import com.medtracker.medtracker.dto.DoseDTO;
 import com.medtracker.medtracker.model.Dose;
+import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.repository.DoseRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
@@ -45,10 +46,40 @@ public class DoseService {
         if (dose.getScheduledAt() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Falta la fecha y hora de la toma");
         }
-        dose.setReminder(accessPolicy.requireReminder(principal, dose.getReminder().getId()));
-        if (doseRepository.existsByReminderIdAndScheduledAt(dose.getReminder().getId(), dose.getScheduledAt())) {
+        Reminder reminder = accessPolicy.requireReminder(principal, dose.getReminder().getId());
+        dose.setReminder(reminder);
+        // Las reglas de horario van después de autorizar: un recordatorio ajeno
+        // siempre responde 404, sin revelar nada de su estado
+        LocalDateTime scheduledAt = dose.getScheduledAt();
+        // Un solo "ahora" para toda la validación; el margen y su comparación
+        // inclusiva son los mismos que usa la generación automática
+        LocalDateTime now = LocalDateTime.now(clock);
+        if (DoseSchedulingRules.isBeforeNowMinusMargin(scheduledAt, now)) {
+            // El margen del mensaje sale de la misma constante que la regla: si cambia, el texto no queda desfasado
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "La toma no puede ser anterior a la hora actual (se admiten hasta "
+                            + DoseSchedulingRules.PAST_DOSE_MARGIN.toMinutes() + " minutos de diferencia)");
+        }
+        if (!reminder.isActive()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El recordatorio está desactivado");
+        }
+        // La generación automática aplica esta misma regla al crear dosis
+        if (!DoseSchedulingRules.treatmentActiveOn(reminder.getTreatment(),
+                scheduledAt.toLocalDate(), scheduledAt.toLocalTime())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "El tratamiento no está vigente en esa fecha y hora");
+        }
+        // Exacto: también cuenta las tomas con baja lógica, que el índice único no admite repetir
+        if (doseRepository.existsByReminderIdAndScheduledAt(reminder.getId(), scheduledAt)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Ya existe una toma de ese recordatorio en ese horario");
+        }
+        // Un recordatorio tiene como máximo una toma vigente por día (igual que la generación);
+        // scheduledAt ya es hora local de medtracker.timezone, así que el día no necesita conversión
+        LocalDate day = scheduledAt.toLocalDate();
+        if (doseRepository.existsByReminderIdAndScheduledAtGreaterThanEqualAndScheduledAtLessThanAndDeletedAtIsNull(
+                reminder.getId(), day.atStartOfDay(), day.plusDays(1).atStartOfDay())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Ese recordatorio ya tiene una toma ese día");
         }
         // Evita pisar una dosis existente por id o resucitar una eliminada, y
         // que el cliente falsee el estado: toda toma nace pendiente (RN-03)

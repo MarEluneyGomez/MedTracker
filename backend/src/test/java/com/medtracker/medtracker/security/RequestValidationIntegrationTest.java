@@ -663,13 +663,44 @@ class RequestValidationIntegrationTest {
 
     @Test
     void doseRegisterIgnoresStatusAndConfirmationFromTheClient() throws Exception {
+        // Mañana a las 08:00 según el mismo reloj del test: una fecha fija terminaría siendo pasada
+        String tomorrow = LocalDate.now(ZoneOffset.UTC).plusDays(1).atTime(8, 0)
+                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
         mockMvc.perform(as(a, json(post("/doses/register"),
                         "{\"reminder\":{\"id\":\"" + reminderA.getId() + "\"},"
-                                + "\"scheduledAt\":\"2026-10-27T08:00:00\",\"status\":\"CONFIRMED\","
+                                + "\"scheduledAt\":\"" + tomorrow + "\",\"status\":\"CONFIRMED\","
                                 + "\"confirmedAt\":\"2026-10-27T08:01:00\"}")))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("PENDING"))
                 .andExpect(jsonPath("$.confirmedAt").doesNotExist());
+    }
+
+    @Test
+    void doseRegisterInThePastIs400() throws Exception {
+        String yesterday = LocalDate.now(ZoneOffset.UTC).minusDays(1).atTime(8, 0)
+                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+
+        assertInvalid(mockMvc.perform(as(a, json(post("/doses/register"),
+                        "{\"reminder\":{\"id\":\"" + reminderA.getId() + "\"},"
+                                + "\"scheduledAt\":\"" + yesterday + "\"}"))),
+                "/doses/register",
+                "La toma no puede ser anterior a la hora actual (se admiten hasta 5 minutos de diferencia)");
+        verify(doseRepository, never()).save(any(Dose.class));
+    }
+
+    @Test
+    void doseRegisterOnAnInactiveReminderIs400() throws Exception {
+        Reminder inactive = Reminder.builder().id(UUID.randomUUID()).treatment(treatmentA)
+                .time(LocalTime.of(8, 0)).message("Tomar").active(false).build();
+        when(reminderRepository.findByIdAndDeletedAtIsNull(inactive.getId())).thenReturn(Optional.of(inactive));
+        String tomorrow = LocalDate.now(ZoneOffset.UTC).plusDays(1).atTime(8, 0)
+                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+
+        assertInvalid(mockMvc.perform(as(a, json(post("/doses/register"),
+                        "{\"reminder\":{\"id\":\"" + inactive.getId() + "\"},"
+                                + "\"scheduledAt\":\"" + tomorrow + "\"}"))),
+                "/doses/register", "El recordatorio está desactivado");
+        verify(doseRepository, never()).save(any(Dose.class));
     }
 
     @Test
