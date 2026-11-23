@@ -92,8 +92,9 @@ public class AccessPolicy {
     }
 
     // ¿Son paciente y médico de una misma cita vigente y no cancelada, en cualquier
-    // sentido? No cuenta las citas CANCELLED ni las dadas de baja (deleted_at). Es la
-    // misma condición que usa el acceso al historial médico (hasActiveAppointmentAsDoctor).
+    // sentido? No cuenta las citas CANCELLED ni las dadas de baja (deleted_at). Una cita
+    // PENDING cuenta aquí, pero NO habilita el historial médico (ese exige CONFIRMED:
+    // hasConfirmedAppointmentAsDoctor).
     public boolean shareAppointment(UUID userA, UUID userB) {
         // existsActiveByDoctorAndPatient recibe (médico, paciente): la segunda llamada
         // invierte los argumentos por simetría, para cubrir ambos sentidos
@@ -116,14 +117,15 @@ public class AccessPolicy {
         }
     }
 
-    public boolean hasActiveAppointmentAsDoctor(UUID doctorId, UUID patientId) {
-        return medicalAppointmentRepository.existsActiveByDoctorAndPatient(doctorId, patientId);
+    // ¿El médico tiene una cita vigente y CONFIRMED por el paciente con él?
+    public boolean hasConfirmedAppointmentAsDoctor(UUID doctorId, UUID patientId) {
+        return medicalAppointmentRepository.existsConfirmedByDoctorAndPatient(doctorId, patientId);
     }
 
-    // Historial médico: el propio paciente, o un médico con una cita vigente y no
-    // cancelada con él. El cuidador no entra (dato de salud sensible).
+    // Historial médico: el propio paciente, o un médico con una cita CONFIRMED por el
+    // paciente. El cuidador no entra (dato de salud sensible).
     public boolean canAccessHistoryOf(AuthenticatedUser principal, UUID patientId) {
-        return principal.id().equals(patientId) || hasActiveAppointmentAsDoctor(principal.id(), patientId);
+        return principal.id().equals(patientId) || hasConfirmedAppointmentAsDoctor(principal.id(), patientId);
     }
 
     public void requireCanAccessHistoryOf(AuthenticatedUser principal, UUID patientId) {
@@ -132,11 +134,11 @@ public class AccessPolicy {
         }
     }
 
-    // Pacientes cuyo historial puede ver: él mismo y los pacientes de sus citas vigentes
+    // Pacientes cuyo historial puede ver: él mismo y los pacientes de sus citas CONFIRMED
     public Set<UUID> historyPatientIds(AuthenticatedUser principal) {
         Set<UUID> ids = new HashSet<>();
         ids.add(principal.id());
-        ids.addAll(medicalAppointmentRepository.findActivePatientIdsByDoctor(principal.id()));
+        ids.addAll(medicalAppointmentRepository.findConfirmedPatientIdsByDoctor(principal.id()));
         return ids;
     }
 

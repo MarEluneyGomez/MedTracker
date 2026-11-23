@@ -23,7 +23,7 @@ public class MedicalHistoryService {
     private final AccessPolicy accessPolicy;
 
     // Registrar un nuevo historial médico; pertenece siempre a un paciente. Lo crea
-    // el propio paciente o un médico con una cita vigente y no cancelada con él (403
+    // el propio paciente o un médico con una cita CONFIRMED por el paciente (403
     // si nombra a otro paciente). No guarda el autor de la entrada.
     public MedicalHistory register(AuthenticatedUser principal, MedicalHistory history) {
         if (history.getPatient() != null && history.getPatient().getId() != null) {
@@ -61,7 +61,7 @@ public class MedicalHistoryService {
                 accessPolicy.historyPatientIds(principal));
     }
 
-    // Listar historiales por paciente (403 si no es el propio ni un paciente con cita vigente)
+    // Listar historiales por paciente (403 si no es el propio ni un paciente con cita CONFIRMED)
     public List<MedicalHistory> findByPatient(AuthenticatedUser principal, UUID patientId) {
         accessPolicy.requireCanAccessHistoryOf(principal, patientId);
         return medicalHistoryRepository.findByPatientIdAndDeletedAtIsNullOrderByRecordDateDesc(patientId);
