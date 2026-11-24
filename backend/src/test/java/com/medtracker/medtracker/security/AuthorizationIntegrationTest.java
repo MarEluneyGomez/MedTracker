@@ -285,6 +285,18 @@ class AuthorizationIntegrationTest {
             return id.equals(a.getId()) || id.equals(doctor.getId()) ? List.of(appointment) : List.of();
         });
         when(appointmentRepository.save(any(MedicalAppointment.class))).thenAnswer(inv -> inv.getArgument(0));
+        // Cambiar el estado es un UPDATE condicional en la base, que el repositorio mockeado no
+        // ejecuta: se imita sobre la cita en memoria (no aplica si ya está cancelada) y la
+        // relectura devuelve la cita con el estado nuevo
+        when(appointmentRepository.updateStatusUnlessCancelled(eq(appointment.getId()), any(), any()))
+                .thenAnswer(inv -> {
+                    if (appointment.getStatus() == MedicalAppointment.AppointmentStatus.CANCELLED) {
+                        return 0;
+                    }
+                    appointment.setStatus(inv.getArgument(1));
+                    return 1;
+                });
+        when(appointmentRepository.findById(appointment.getId())).thenReturn(Optional.of(appointment));
         // El médico asignado tiene una cita CONFIRMED con A: cuenta como vigente y no cancelada
         // (perfil reducido y listados de citas) y además habilita el historial
         when(appointmentRepository.existsActiveByDoctorAndPatient(doctor.getId(), a.getId())).thenReturn(true);
@@ -735,12 +747,12 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(otherDoctor, put(url).param("status", "CONFIRMED"))).andExpect(status().isNotFound());
         mockMvc.perform(as(b, put(url).param("status", "CANCELLED"))).andExpect(status().isNotFound());
         mockMvc.perform(as(caregiver, put(url).param("status", "CANCELLED"))).andExpect(status().isNotFound());
-        verify(appointmentRepository, never()).save(any());
+        verify(appointmentRepository, never()).updateStatusUnlessCancelled(any(), any(), any());
 
         // el médico de la cita no puede confirmarla ni reabrirla: 403 y no se guarda nada
         mockMvc.perform(as(doctor, put(url).param("status", "CONFIRMED"))).andExpect(status().isForbidden());
         mockMvc.perform(as(doctor, put(url).param("status", "PENDING"))).andExpect(status().isForbidden());
-        verify(appointmentRepository, never()).save(any());
+        verify(appointmentRepository, never()).updateStatusUnlessCancelled(any(), any(), any());
 
         // el paciente sí, y el médico puede cancelarla
         mockMvc.perform(as(a, put(url).param("status", "CONFIRMED"))).andExpect(status().isOk());
@@ -760,6 +772,23 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(a, put(url).param("status", "PENDING")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("PENDING"));
+    }
+
+    @Test
+    void ifTheAppointmentWasCancelledByAnotherRequestTheStatusChangeIs409AndItIsNotReopened() throws Exception {
+        String url = "/medical-appointments/" + appointment.getId() + "/status";
+        // la comprobación previa vio la cita sin cancelar, pero el UPDATE condicional no afecta filas
+        when(appointmentRepository.updateStatusUnlessCancelled(eq(appointment.getId()), any(), any())).thenReturn(0);
+
+        mockMvc.perform(as(a, put(url).param("status", "CONFIRMED")))
+                .andExpect(status().isConflict())
+                // este contexto no incluye GlobalExceptionHandler: el texto se comprueba en la excepción
+                .andExpect(result -> org.assertj.core.api.Assertions.assertThat(result.getResolvedException())
+                        .isInstanceOfSatisfying(org.springframework.web.server.ResponseStatusException.class,
+                                ex -> org.assertj.core.api.Assertions.assertThat(ex.getReason())
+                                        .isEqualTo("La cita ya fue cancelada")));
+        verify(appointmentRepository, never()).findById(any());
+        verify(appointmentRepository, never()).save(any());
     }
 
     @Test
