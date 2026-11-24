@@ -9,6 +9,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -19,6 +21,7 @@ public class MedicalAppointmentService {
     private final MedicalAppointmentRepository medicalAppointmentRepository;
     private final UserService userService;
     private final AccessPolicy accessPolicy;
+    private final Clock clock;
 
     // Registrar una nueva cita médica (CU-09) entre un paciente y un médico;
     // arranca CONFIRMED si la agenda el paciente y PENDING si la agenda el médico
@@ -94,7 +97,13 @@ public class MedicalAppointmentService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "El médico solo puede cancelar la cita; la confirma el paciente");
         }
-        appointment.setStatus(status);
-        return medicalAppointmentRepository.save(appointment);
+        // UPDATE atómico: si otra petición canceló la cita entre la comprobación y acá,
+        // no se la reabre (0 filas)
+        int updated = medicalAppointmentRepository.updateStatusUnlessCancelled(id, status, LocalDateTime.now(clock));
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La cita ya fue cancelada");
+        }
+        return medicalAppointmentRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Cita no encontrada: " + id));
     }
 }

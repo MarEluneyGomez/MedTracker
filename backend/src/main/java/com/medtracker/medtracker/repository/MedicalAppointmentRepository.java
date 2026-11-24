@@ -2,9 +2,12 @@ package com.medtracker.medtracker.repository;
 
 import com.medtracker.medtracker.model.MedicalAppointment;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -57,4 +60,22 @@ public interface MedicalAppointmentRepository extends JpaRepository<MedicalAppoi
 
     // Buscar citas por estado
     List<MedicalAppointment> findByStatus(MedicalAppointment.AppointmentStatus status);
+
+    // Cambia el estado salvo que la cita ya esté cancelada o eliminada; devuelve las
+    // filas afectadas (0 = otra petición la canceló antes). No comprueba quién llama:
+    // hay que autorizar antes con requireAppointment. Un UPDATE masivo no dispara
+    // @UpdateTimestamp, por eso se asigna updatedAt a mano.
+    // Ojo: flushAutomatically y clearAutomatically se acoplan a una transacción externa si algún
+    // día el servicio abre una (hoy no la hay): desligarían todas las entidades gestionadas y
+    // vaciarían cambios pendientes antes de tiempo. Es el mismo patrón que DoseRepository.
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update MedicalAppointment a set a.status = :status, a.updatedAt = :now
+            where a.id = :id and a.deletedAt is null
+              and a.status <> com.medtracker.medtracker.model.MedicalAppointment.AppointmentStatus.CANCELLED
+            """)
+    int updateStatusUnlessCancelled(@Param("id") UUID id,
+                                    @Param("status") MedicalAppointment.AppointmentStatus status,
+                                    @Param("now") LocalDateTime now);
 }
