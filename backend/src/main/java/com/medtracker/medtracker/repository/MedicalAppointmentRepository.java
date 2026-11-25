@@ -34,7 +34,9 @@ public interface MedicalAppointmentRepository extends JpaRepository<MedicalAppoi
             """)
     List<MedicalAppointment> findByParticipant(@Param("userId") UUID userId);
 
-    // ¿Hay una cita vigente y no cancelada entre ese médico y ese paciente? (perfil reducido y listados de citas; no habilita el historial)
+    // ¿Hay una cita vigente y no cancelada entre ese médico y ese paciente? Hoy se usa solo en el
+    // sentido paciente -> médico de AccessPolicy.shareAppointment. NO usarla para dar acceso al
+    // médico: médico -> paciente y el historial exigen CONFIRMED (existsConfirmedByDoctorAndPatient).
     @Query("""
             select count(a) > 0 from MedicalAppointment a
             where a.doctor.id = :doctorId and a.patient.id = :patientId

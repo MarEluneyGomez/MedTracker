@@ -91,15 +91,18 @@ public class AccessPolicy {
         return hasActiveLink(userA, userB) || hasActiveLink(userB, userA);
     }
 
-    // ¿Son paciente y médico de una misma cita vigente y no cancelada, en cualquier
-    // sentido? No cuenta las citas CANCELLED ni las dadas de baja (deleted_at). Una cita
-    // PENDING cuenta aquí, pero NO habilita el historial médico (ese exige CONFIRMED:
-    // hasConfirmedAppointmentAsDoctor).
-    public boolean shareAppointment(UUID userA, UUID userB) {
-        // existsActiveByDoctorAndPatient recibe (médico, paciente): la segunda llamada
-        // invierte los argumentos por simetría, para cubrir ambos sentidos
-        return medicalAppointmentRepository.existsActiveByDoctorAndPatient(userB, userA)
-                || medicalAppointmentRepository.existsActiveByDoctorAndPatient(userA, userB);
+    // ¿Puede el solicitante ver al objetivo por una cita compartida? Regla asimétrica:
+    // - solicitante MÉDICO, objetivo PACIENTE: la cita debe estar CONFIRMED (vigente);
+    // - solicitante PACIENTE, objetivo MÉDICO: basta una cita vigente y no cancelada
+    //   (PENDING o CONFIRMED), para que el paciente siga viendo al médico antes de confirmar.
+    // La dirección NO se decide por el rol del solicitante ni comparando con el id del
+    // médico (no reemplazar por ninguno de esos chequeos), sino por quién figura como
+    // médico y quién como paciente en la fila de la cita.
+    public boolean shareAppointment(UUID requesterId, UUID targetId) {
+        // En la segunda consulta el objetivo es el MÉDICO y el solicitante el PACIENTE,
+        // porque existsActiveByDoctorAndPatient recibe (médico, paciente).
+        return hasConfirmedAppointmentAsDoctor(requesterId, targetId)
+                || medicalAppointmentRepository.existsActiveByDoctorAndPatient(targetId, requesterId);
     }
 
     // Un listado que nombra a otro usuario por id: solo el propio usuario o
@@ -110,7 +113,9 @@ public class AccessPolicy {
         }
     }
 
-    // Igual, pero para citas: el propio usuario o la contraparte de una cita vigente y no cancelada
+    // Igual, pero para citas: el propio usuario o la contraparte según shareAppointment: el médico
+    // necesita una cita CONFIRMED con el paciente que nombra; el paciente, una vigente y no
+    // cancelada con el médico que nombra
     public void requireSelfOrSharedAppointment(AuthenticatedUser principal, UUID userId) {
         if (!principal.id().equals(userId) && !shareAppointment(principal.id(), userId)) {
             throw forbiddenUser();

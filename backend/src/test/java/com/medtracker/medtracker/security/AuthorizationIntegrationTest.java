@@ -1060,7 +1060,7 @@ class AuthorizationIntegrationTest {
     }
 
     @Test
-    void aDoctorWhoseOnlyAppointmentIsPendingHasNoHistoryAccessButStillSeesTheProfile() throws Exception {
+    void aDoctorWhoseOnlyAppointmentIsPendingHasNoHistoryAccessNorTheProfileNorTheListingByPatient() throws Exception {
         // cita PENDING (la agendó el médico y el paciente no la confirmó): existsActiveByDoctorAndPatient
         // responde true, pero existsConfirmedByDoctorAndPatient sigue en false (valor por defecto del mock)
         when(appointmentRepository.existsActiveByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(true);
@@ -1076,16 +1076,58 @@ class AuthorizationIntegrationTest {
                 .andExpect(jsonPath("$.length()").value(0));
         verify(medicalHistoryRepository, never()).save(any());
 
-        // el perfil reducido y los listados de citas siguen abiertos con una cita PENDING
-        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isOk());
+        // con una cita solo PENDING el médico no ve el perfil del paciente ni el listado por paciente
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isNotFound());
         mockMvc.perform(as(otherDoctor, get("/medical-appointments/patient/" + a.getId())))
+                .andExpect(status().isForbidden());
+        // el paciente sí ve al médico con esa misma cita PENDING
+        mockMvc.perform(as(a, get("/users/" + otherDoctor.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(a, get("/medical-appointments/doctor/" + otherDoctor.getId())))
                 .andExpect(status().isOk());
     }
 
     @Test
-    void aCancelledAppointmentNoLongerOpensTheCounterpartsProfileNorTheListingsByUser() throws Exception {
-        // con una cita vigente y no cancelada entre otherDoctor y A, el perfil y los listados se abren
+    void aPendingAppointmentScheduledByTheDoctorHidesThePatientFromTheDoctorUntilThePatientConfirms() throws Exception {
+        MedicalAppointment pending = MedicalAppointment.builder().id(UUID.randomUUID())
+                .patient(a).doctor(otherDoctor).status(MedicalAppointment.AppointmentStatus.PENDING).build();
+        when(appointmentRepository.findByIdAndDeletedAtIsNull(pending.getId())).thenReturn(Optional.of(pending));
+        when(appointmentRepository.findByParticipant(otherDoctor.getId())).thenReturn(List.of(pending));
+        when(appointmentRepository.findByPatientIdAndDeletedAtIsNull(a.getId())).thenReturn(List.of(pending));
+        when(appointmentRepository.findByDoctorIdAndDeletedAtIsNull(otherDoctor.getId())).thenReturn(List.of(pending));
+        // cita PENDING: vigente y no cancelada, pero no CONFIRMED (ids exactos, nunca any())
         when(appointmentRepository.existsActiveByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(true);
+        when(appointmentRepository.existsConfirmedByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(false);
+
+        // médico: no ve al paciente, pero sí sus propias citas
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isNotFound());
+        mockMvc.perform(as(otherDoctor, get("/medical-appointments/patient/" + a.getId())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(as(otherDoctor, get("/medical-appointments")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1));
+        mockMvc.perform(as(otherDoctor, get("/medical-appointments/" + pending.getId())))
+                .andExpect(status().isOk());
+        // paciente: ve al médico para poder confirmar
+        mockMvc.perform(as(a, get("/users/" + otherDoctor.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(a, get("/medical-appointments/doctor/" + otherDoctor.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1));
+
+        // el paciente confirma: ahora el médico vuelve a ver ambos
+        when(appointmentRepository.existsConfirmedByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(true);
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(otherDoctor, get("/medical-appointments/patient/" + a.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1));
+    }
+
+    @Test
+    void aCancelledAppointmentNoLongerOpensTheCounterpartsProfileNorTheListingsByUser() throws Exception {
+        // Cubre solo el cierre por cancelación: con ambas consultas en true se abren los accesos
+        // y con ambas en false se cierran. La protección contra la inversión de la dirección
+        // está en los otros tests.
+        when(appointmentRepository.existsActiveByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(true);
+        when(appointmentRepository.existsConfirmedByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(true);
 
         mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isOk());
         mockMvc.perform(as(a, get("/users/" + otherDoctor.getId()))).andExpect(status().isOk());
@@ -1096,6 +1138,7 @@ class AuthorizationIntegrationTest {
 
         // la cita pasa a CANCELLED: la consulta deja de encontrarla y se cierran los cuatro accesos
         when(appointmentRepository.existsActiveByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(false);
+        when(appointmentRepository.existsConfirmedByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(false);
 
         mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isNotFound());
         mockMvc.perform(as(a, get("/users/" + otherDoctor.getId()))).andExpect(status().isNotFound());
@@ -1106,7 +1149,7 @@ class AuthorizationIntegrationTest {
     }
 
     @Test
-    void registeringANewAppointmentCreatesItAndWithItSimulatedAsActiveTheReducedProfileIsVisibleAgain() throws Exception {
+    void registeringANewAppointmentAsTheDoctorCreatesItPendingAndOnlyThePatientSeesTheReducedProfile() throws Exception {
         AtomicBoolean rescheduled = new AtomicBoolean(false);
         // el mock simula el efecto del save (cita nueva vigente); el JPQL real se prueba en el hot-test
         when(appointmentRepository.existsActiveByDoctorAndPatient(otherDoctor.getId(), a.getId()))
@@ -1124,9 +1167,12 @@ class AuthorizationIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("PENDING"));
 
-        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId())))
+        // la cita nueva queda PENDING: el médico sigue sin ver al paciente (no está CONFIRMED)
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isNotFound());
+        // el paciente sí ve al médico con la cita vigente
+        mockMvc.perform(as(a, get("/users/" + otherDoctor.getId())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.name").value(a.getName()))
+                .andExpect(jsonPath("$.name").value(otherDoctor.getName()))
                 .andExpect(jsonPath("$.fcmToken").doesNotExist());
     }
 
