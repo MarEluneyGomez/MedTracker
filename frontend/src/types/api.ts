@@ -82,6 +82,11 @@ export type MedicalAppointment = {
   status: AppointmentStatus;
 };
 
+export type Doctor = {
+  id: string;
+  name: string;
+};
+
 export type MedicalHistory = {
   id: string;
   patientId: string;

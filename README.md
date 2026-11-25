@@ -56,7 +56,7 @@ MedTracker/
 │   │   ├── services/           # Llamadas a la API, datos sin conexión, notificaciones y push
 │   │   ├── types/              # Tipos de los datos que devuelve el backend
 │   │   ├── theme/              # Paleta de colores y estilos de texto compartidos
-│   │   └── utils/              # Fechas, dosis, frecuencia, horarios, tomas que vienen, texto y calendario en español
+│   │   └── utils/              # Fechas, dosis, frecuencia, horarios, tomas que vienen, citas, texto y calendario en español
 │   ├── App.tsx                 # Componente raíz
 │   ├── index.ts                # Punto de entrada
 │   ├── app.json                # Configuración de Expo
