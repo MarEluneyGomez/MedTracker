@@ -4,6 +4,7 @@ import { ActivityIndicator, Alert, SectionList, StyleSheet, Text, View } from 'r
 import AppButton from '../components/AppButton';
 import AppointmentCard from '../components/AppointmentCard';
 import Screen from '../components/Screen';
+import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import { ApiError } from '../services/api';
 import {
@@ -11,6 +12,7 @@ import {
   confirmAppointment,
   getAppointments,
   getDoctors,
+  getConfirmedPatients,
 } from '../services/appointments';
 import { colors } from '../theme/colors';
 import type { MedicalAppointment } from '../types/api';
@@ -18,8 +20,10 @@ import { groupAppointments, isUpcoming, type AppointmentSection } from '../utils
 import { formatClockTime, formatLongDate, fromBackendDate } from '../utils/dates';
 
 export default function AppointmentsScreen() {
+  const { user } = useAuth();
+  const isDoctor = user?.role === 'DOCTOR';
   const [appointments, setAppointments] = useState<MedicalAppointment[]>([]);
-  const [doctorNames, setDoctorNames] = useState<Record<string, string>>({});
+  const [names, setNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,9 +33,9 @@ export default function AppointmentsScreen() {
 
   async function load() {
     try {
-      const [userAppointments, doctors] = await Promise.all([getAppointments(), getDoctors()]);
+      const userAppointments = await getAppointments();
+      setNames(isDoctor ? await loadPatientNames(userAppointments) : await loadDoctorNames());
       setAppointments(userAppointments);
-      setDoctorNames(Object.fromEntries(doctors.map((doctor) => [doctor.id, doctor.name])));
       setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudieron cargar las citas.');
@@ -70,12 +74,12 @@ export default function AppointmentsScreen() {
     }
   }
 
-  function confirmCancel(appointment: MedicalAppointment, doctorName: string) {
+  function confirmCancel(appointment: MedicalAppointment) {
     const day = formatLongDate(fromBackendDate(appointment.dateTime)).toLowerCase();
     const time = formatClockTime(appointment.dateTime);
     Alert.alert(
       'Cancelar cita',
-      `¿Cancelar la cita con ${doctorName} del ${day} a las ${time}? Después no se puede reabrir.`,
+      `¿Cancelar la cita del ${day} a las ${time}? Después no se puede reabrir.`,
       [
         { text: 'Volver', style: 'cancel' },
         {
@@ -85,6 +89,13 @@ export default function AppointmentsScreen() {
         },
       ],
     );
+  }
+
+  function personName(appointment: MedicalAppointment): string {
+    if (isDoctor) {
+      return names[appointment.patientId] ?? 'Paciente sin confirmar';
+    }
+    return names[appointment.doctorId] ?? 'Médico';
   }
 
   if (loading) {
@@ -126,22 +137,32 @@ export default function AppointmentsScreen() {
         renderSectionHeader={({ section }) => (
           <Text style={styles.sectionTitle}>{section.title}</Text>
         )}
-        renderItem={({ item }) => {
-          const doctorName = doctorNames[item.doctorId] ?? 'Médico';
-          return (
-            <AppointmentCard
-              appointment={item}
-              doctorName={doctorName}
-              upcoming={isUpcoming(item, now)}
-              busy={busyId === item.id}
-              onConfirm={() => changeStatus(item.id, confirmAppointment)}
-              onCancel={() => confirmCancel(item, doctorName)}
-            />
-          );
-        }}
+        renderItem={({ item }) => (
+          <AppointmentCard
+            appointment={item}
+            personName={personName(item)}
+            viewer={isDoctor ? 'doctor' : 'patient'}
+            upcoming={isUpcoming(item, now)}
+            busy={busyId === item.id}
+            onConfirm={isDoctor ? undefined : () => changeStatus(item.id, confirmAppointment)}
+            onCancel={() => confirmCancel(item)}
+          />
+        )}
       />
     </Screen>
   );
+}
+
+async function loadDoctorNames(): Promise<Record<string, string>> {
+  const doctors = await getDoctors();
+  return Object.fromEntries(doctors.map((doctor) => [doctor.id, doctor.name]));
+}
+
+async function loadPatientNames(
+  appointments: MedicalAppointment[],
+): Promise<Record<string, string>> {
+  const patients = await getConfirmedPatients(appointments);
+  return Object.fromEntries(patients.map((patient) => [patient.id, patient.name]));
 }
 
 const styles = StyleSheet.create({

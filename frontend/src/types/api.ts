@@ -87,6 +87,13 @@ export type Doctor = {
   name: string;
 };
 
+export type UserSummary = {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+};
+
 export type MedicalHistory = {
   id: string;
   patientId: string;
