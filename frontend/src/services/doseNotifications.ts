@@ -1,4 +1,5 @@
 import { upcomingDoses } from '../utils/upcomingDoses';
+import { toLocalDateTime } from '../utils/dates';
 import { getTodayDoses } from './doses';
 import {
   cancelAllReminders,
@@ -50,9 +51,12 @@ async function scheduleUpcomingDoses(userId: string): Promise<void> {
     doses: applyPendingDoseActions(todayDoses, pending),
     now: new Date(),
   });
-  const scheduled: ScheduledReminder[] = upcoming
-    .slice(0, MAX_SCHEDULED_DOSES)
-    .map((dose) => ({ date: dose.at, title: DOSE_TITLE, body: DOSE_BODY }));
+  const scheduled: ScheduledReminder[] = upcoming.slice(0, MAX_SCHEDULED_DOSES).map((dose) => ({
+    date: dose.at,
+    title: DOSE_TITLE,
+    body: DOSE_BODY,
+    dose: { reminderId: dose.reminderId, scheduledAt: toLocalDateTime(dose.at) },
+  }));
   if (upcoming.length > MAX_SCHEDULED_DOSES) {
     scheduled.push(openAppNotice(scheduled[scheduled.length - 1].date));
   }

@@ -46,20 +46,22 @@ El sistema permite a un usuario (paciente) registrar los medicamentos que debe t
 ```
 MedTracker/
 ├── frontend/                  # App React Native (Expo + TypeScript)
-│   ├── assets/                 # Íconos y splash de la app
+│   ├── assets/                 # Íconos de la app y de las notificaciones, y su sonido
 │   ├── src/
 │   │   ├── screens/            # Pantallas
 │   │   ├── components/         # Componentes reutilizables
 │   │   ├── navigation/         # Navegación según la sesión y el rol
 │   │   ├── context/            # Estado compartido (sesión del usuario)
 │   │   ├── hooks/              # Hooks reutilizables
-│   │   ├── services/           # Llamadas a la API, datos sin conexión y notificaciones locales
+│   │   ├── services/           # Llamadas a la API, datos sin conexión, notificaciones y push
 │   │   ├── types/              # Tipos de los datos que devuelve el backend
 │   │   ├── theme/              # Paleta de colores y estilos de texto compartidos
 │   │   └── utils/              # Fechas, dosis, frecuencia, horarios, tomas que vienen, texto y calendario en español
 │   ├── App.tsx                 # Componente raíz
 │   ├── index.ts                # Punto de entrada
 │   ├── app.json                # Configuración de Expo
+│   ├── app.config.js           # Ubicación del google-services.json (no versionado)
+│   ├── eas.json                # Perfiles de compilación con EAS Build
 │   ├── .prettierrc             # Reglas de formato del código
 │   ├── tsconfig.json
 │   └── package.json

@@ -92,8 +92,12 @@ Cubre RF-06 con notificaciones locales: el celular avisa cada toma a su hora ("R
 - **Límite:** iOS admite hasta 64 notificaciones programadas por app, así que se programan las 60 más próximas. Si hay más, un minuto después de la última llega "Abrí MedTracker para seguir recibiendo los avisos de tus tomas".
 - **Cuándo se recalculan:** al iniciar sesión o abrir la app, cada vez que vuelve a primer plano, al volver a la lista de Tratamientos (después de crear, editar o borrar tratamientos y horarios) y después de marcar una toma. Cada recálculo cancela todas y programa la lista nueva, de a uno por vez para que no se mezclen.
 - **Al tocar una notificación** se abre Hoy, donde está la toma para marcarla.
+- **Botón "La tomé"** en la notificación: abre la app, confirma la toma de ese día (con la cola de acciones sin conexión si hace falta) y muestra Hoy con la toma marcada. Abre la app a propósito: así la persona ve la confirmación y se usa la sesión con su renovación habitual. No hay botón de "recordarme más tarde": si la toma sigue pendiente, el push de respaldo del backend vuelve a avisar a los 15 minutos.
 - **Al cerrar sesión** se cancelan todas: son datos de salud y no deben sonar en el celular de otra persona.
-- **Permiso:** se pide la primera vez que se programan. Si la persona lo niega, la app funciona igual, sin avisos. En Android las notificaciones van en el canal "Recordatorios de medicación", con importancia alta para que suenen y aparezcan arriba de la pantalla.
+- **Permiso:** se pide la primera vez que se programan. Si la persona lo niega, la app funciona igual, sin avisos. En Android las notificaciones van en el canal "Recordatorios de medicación" (`dose-reminders`), con importancia alta para que suenen y aparezcan arriba de la pantalla, y con un sonido propio (`assets/sounds/recordatorio.wav`, de [Mixkit](https://mixkit.co/free-sound-effects/notification/), con licencia de uso libre sin atribución, recortado a 3 segundos). Android no deja cambiar el sonido de un canal ya creado, por eso un sonido nuevo requiere otro id de canal.
+- **Ícono:** el de la app es una cápsula sobre el violeta de la app; el de las notificaciones es su silueta, que Android pinta de un solo color.
+- **Push de respaldo:** el backend manda un push ("Tenés una toma pendiente") si la toma sigue pendiente 15 minutos después. Para eso la app manda el token del dispositivo con `PUT /users/me/fcm-token` al entrar, al volver a primer plano y cuando Firebase lo cambia (`src/hooks/usePushTokenRegistration.ts`); el backend lo borra al cerrar sesión. Usa el token nativo de Firebase, así que por ahora funciona solo en Android. Los push llegan al mismo canal que las notificaciones locales (`defaultChannel` en `app.json`).
+- **Configuración de Firebase:** la app necesita el `google-services.json` del proyecto de Firebase. Como el repo es público, no se versiona: en EAS está como archivo secreto (`GOOGLE_SERVICES_JSON`) y `app.config.js` lo toma de ahí, o de `frontend/google-services.json` en la PC.
 - **A horario exacto en Android:** sin el permiso de alarmas exactas, Android trata los avisos como aproximados y puede entregarlos hasta una hora tarde, y algunas marcas los demoran más para ahorrar batería. Por eso la app declara `USE_EXACT_ALARM` (Android 13 o superior, se concede al instalar) y `SCHEDULE_EXACT_ALARM` (Android 12) y programa cada aviso como alarma (`delivery: 'alarmClock'`), que el sistema no posterga. Probado en un Xiaomi: llega a horario con la app cerrada y el teléfono bloqueado.
 
 **Limitaciones de Expo Go en Android:** no puede crear el canal (la app sigue igual y Android usa un canal genérico) y se cierra al tocar una notificación. Por eso la app se prueba con un development build (ver "Ejecución").
@@ -117,7 +121,8 @@ Cubre RNF-05 (ver los datos ya cargados sin conexión). Cada lectura que respond
 
 ```
 frontend/
-├── assets/                 # Íconos y splash de la app
+├── assets/                 # Íconos de la app y de las notificaciones
+│   └── sounds/             # Sonido de las notificaciones (recordatorio.wav)
 ├── src/
 │   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, pestañas de cada rol, perfil)
 │   ├── components/         # Componentes reutilizables
@@ -135,16 +140,19 @@ frontend/
 │   │   ├── useDoseNotificationsSync.ts # Recalcula las notificaciones al entrar y al volver a primer plano
 │   │   ├── useFlashScrollIndicators.ts # Muestra la barra de scroll al abrir una lista en iOS
 │   │   ├── useOfflineDataSavedAt.ts # Fecha de los datos guardados que se muestran sin conexión
-│   │   └── useOpenTodayOnNotificationTap.ts # Abre Hoy al tocar una notificación
+│   │   ├── useOpenTodayOnNotificationTap.ts # Al tocar una notificación abre Hoy; con "La tomé" además marca la toma
+│   │   └── usePushTokenRegistration.ts # Manda el token de push al backend al entrar, al volver a primer plano y si cambia
 │   ├── services/
 │   │   ├── api.ts          # Cliente HTTP: token en cada pedido, renovación de la sesión, copias sin conexión y errores (ApiError)
 │   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión
 │   │   ├── cache.ts        # Copias de las lecturas en el dispositivo (AsyncStorage)
 │   │   ├── connection.ts   # Si se están mostrando datos guardados y de cuándo
 │   │   ├── pendingDoseActions.ts # Acciones sobre tomas hechas sin conexión, en espera de mandarse
-│   │   ├── doses.ts        # Tomas: todas, las de hoy, confirmar, omitir y deshacer
-│   │   ├── notifications.ts # Permiso, canal de Android y programar o cancelar notificaciones
+│   │   ├── doses.ts        # Tomas: todas, las de hoy, confirmar (también desde la notificación), omitir y deshacer
+│   │   ├── doseEvents.ts   # Aviso de que cambió una toma fuera de Hoy, para que se recargue
+│   │   ├── notifications.ts # Permiso, canal de Android, botón "La tomé" y programar o cancelar notificaciones
 │   │   ├── doseNotifications.ts # Qué notificaciones programar según las tomas que vienen
+│   │   ├── pushToken.ts    # Token de push del dispositivo para el backend
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
@@ -165,6 +173,7 @@ frontend/
 ├── App.tsx                 # Componente raíz
 ├── index.ts                # Punto de entrada
 ├── app.json                # Configuración de Expo
+├── app.config.js           # Ubicación del google-services.json (secreto de EAS o archivo local, no versionado)
 ├── eas.json                # Perfiles de compilación con EAS Build
 ├── .prettierrc             # Reglas de formato del código
 ├── tsconfig.json

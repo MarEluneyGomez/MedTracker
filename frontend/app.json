@@ -12,7 +12,7 @@
     "android": {
       "package": "com.medtracker.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6E1FF",
+        "backgroundColor": "#6A5ACD",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -27,7 +27,15 @@
       "expo-secure-store",
       "expo-font",
       "expo-status-bar",
-      "expo-notifications"
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#6A5ACD",
+          "defaultChannel": "dose-reminders",
+          "sounds": ["./assets/sounds/recordatorio.wav"]
+        }
+      ]
     ],
     "extra": {
       "eas": {

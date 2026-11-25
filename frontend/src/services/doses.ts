@@ -2,8 +2,10 @@ import type { Dose } from '../types/api';
 import { ApiError, apiRequest, isConnectionError } from './api';
 import { toLocalDateTime } from '../utils/dates';
 import { getOfflineDataSavedAt } from './connection';
+import type { DoseReference } from './notifications';
 import {
   applyDoseAction,
+  applyPendingDoseActions,
   loadPendingDoseActions,
   queueDoseAction,
   removePendingDoseAction,
@@ -100,5 +102,22 @@ async function confirmAtTimeTaken(id: string, at: string): Promise<Dose> {
       return confirmDose(id);
     }
     throw e;
+  }
+}
+
+export async function confirmDoseFromNotification(
+  userId: string,
+  reference: DoseReference,
+): Promise<void> {
+  const day = reference.scheduledAt.slice(0, 10);
+  const doses = applyPendingDoseActions(
+    await getTodayDoses(userId),
+    await loadPendingDoseActions(),
+  );
+  const dose = doses.find(
+    (item) => item.reminderId === reference.reminderId && item.scheduledAt.slice(0, 10) === day,
+  );
+  if (dose && dose.status !== 'CONFIRMED') {
+    await changeDose(dose, 'confirm');
   }
 }

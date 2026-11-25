@@ -1,5 +1,5 @@
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, View } from 'react-native';
 import AppButton from '../components/AppButton';
 import DoseCard from '../components/DoseCard';
@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import { ApiError } from '../services/api';
 import { changeDose, getTodayDoses, syncPendingDoseActions } from '../services/doses';
+import { subscribeToDoseChanges } from '../services/doseEvents';
 import { syncDoseNotifications } from '../services/doseNotifications';
 import {
   applyPendingDoseActions,
@@ -63,6 +64,8 @@ export default function TodayScreen() {
       load();
     }, [user]),
   );
+
+  useEffect(() => subscribeToDoseChanges(load), [user]);
 
   function handleRefresh() {
     setRefreshing(true);
