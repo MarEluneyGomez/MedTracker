@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { HeaderShownContext } from '@react-navigation/elements';
+import { useContext, type ReactNode } from 'react';
 import { StyleSheet } from 'react-native';
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
@@ -12,7 +13,8 @@ type ScreenProps = {
 // Abajo nunca se agrega el área segura: la barra de pestañas ya la deja.
 // Arriba tampoco cuando la pantalla tiene barra con flecha, que también la deja.
 export default function Screen({ children, hasHeader = false }: ScreenProps) {
-  const edges: Edge[] = hasHeader ? ['left', 'right'] : ['top', 'left', 'right'];
+  const isUnderHeader = useContext(HeaderShownContext);
+  const edges: Edge[] = hasHeader || isUnderHeader ? ['left', 'right'] : ['top', 'left', 'right'];
   return (
     <SafeAreaView style={styles.container} edges={edges}>
       <OfflineBanner />
