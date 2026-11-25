@@ -6,7 +6,7 @@ import AppButton from '../components/AppButton';
 import ChipSelector from '../components/ChipSelector';
 import DoseStatusLabel from '../components/DoseStatusLabel';
 import Screen from '../components/Screen';
-import { useAuth } from '../context/AuthContext';
+import { useActivePatient } from '../context/ActivePatientContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import { ApiError } from '../services/api';
 import { getDoses, syncPendingDoseActions } from '../services/doses';
@@ -49,7 +49,7 @@ const LEVELS: Record<AdherenceLevel, LevelStyle> = {
 };
 
 export default function HistoryScreen() {
-  const { user } = useAuth();
+  const patient = useActivePatient();
   const [doses, setDoses] = useState<Dose[]>([]);
   const [details, setDetails] = useState<Record<string, DoseDetails>>({});
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
@@ -60,7 +60,7 @@ export default function HistoryScreen() {
   const listRef = useFlashScrollIndicators<SectionList<Dose, DaySection>>(!loading);
 
   async function load() {
-    if (!user) {
+    if (!patient.id) {
       return;
     }
     try {
@@ -68,13 +68,15 @@ export default function HistoryScreen() {
       const [allDoses, reminders, treatments, medications] = await Promise.all([
         getDoses(),
         getReminders(),
-        getTreatmentsByUser(user.id),
+        getTreatmentsByUser(patient.id),
         getMedications(),
       ]);
       const pending = await loadPendingDoseActions();
-      setDoses(applyPendingDoseActions(allDoses, pending));
+      const patientDetails = buildDoseDetails(reminders, treatments, medications);
+      const patientDoses = allDoses.filter((dose) => dose.reminderId in patientDetails);
+      setDoses(applyPendingDoseActions(patientDoses, pending));
       setPendingIds(new Set(pending.map((action) => action.doseId)));
-      setDetails(buildDoseDetails(reminders, treatments, medications));
+      setDetails(patientDetails);
       setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo cargar el historial.');
@@ -87,7 +89,7 @@ export default function HistoryScreen() {
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [user]),
+    }, [patient.id]),
   );
 
   function handleRefresh() {
@@ -189,6 +191,7 @@ export default function HistoryScreen() {
 }
 
 function AdherenceSummary({ adherence }: { adherence: Adherence }) {
+  const { isOwn } = useActivePatient();
   const percent = adherence.percent ?? 0;
   const level = LEVELS[adherenceLevel(percent)];
   return (
@@ -201,7 +204,7 @@ function AdherenceSummary({ adherence }: { adherence: Adherence }) {
         </View>
       </View>
       <Text style={styles.summaryText}>
-        Tomaste {adherence.confirmed} de {adherence.total} tomas
+        {isOwn ? 'Tomaste' : 'Tomó'} {adherence.confirmed} de {adherence.total} tomas
       </Text>
       <View style={styles.progressTrack}>
         <View

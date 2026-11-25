@@ -22,3 +22,8 @@ export type DoctorPatientsStackParamList = {
   PatientHistory: { patientId: string; patientName: string };
   MedicalHistoryForm: { patientId: string; patientName: string };
 };
+
+export type CaregiverStackParamList = {
+  CaregiverHome: undefined;
+  PatientDetail: { patientId: string; patientName: string };
+};

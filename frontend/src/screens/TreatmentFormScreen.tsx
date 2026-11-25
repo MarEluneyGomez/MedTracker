@@ -18,7 +18,7 @@ import FrequencyPicker from '../components/FrequencyPicker';
 import MedicationPicker from '../components/MedicationPicker';
 import SchedulePicker from '../components/SchedulePicker';
 import Screen from '../components/Screen';
-import { useAuth } from '../context/AuthContext';
+import { useActivePatient } from '../context/ActivePatientContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import type { TreatmentsStackParamList } from '../navigation/types';
 import { ApiError } from '../services/api';
@@ -70,7 +70,7 @@ type FieldErrors = {
 };
 
 export default function TreatmentFormScreen() {
-  const { user } = useAuth();
+  const patient = useActivePatient();
   const navigation = useNavigation<NativeStackNavigationProp<TreatmentsStackParamList>>();
   const route = useRoute<RouteProp<TreatmentsStackParamList, 'TreatmentForm'>>();
   const treatmentId = route.params?.treatmentId;
@@ -167,7 +167,7 @@ export default function TreatmentFormScreen() {
     setFieldErrors(errors);
     if (
       Object.keys(errors).length > 0 ||
-      !user ||
+      !patient.id ||
       !medication ||
       !dosage ||
       !frequency ||
@@ -196,7 +196,7 @@ export default function TreatmentFormScreen() {
     try {
       savedId = treatmentId
         ? (await updateTreatment(treatmentId, changes)).id
-        : (await createTreatment(user.id, { ...changes, medicationId: medication.id })).id;
+        : (await createTreatment(patient.id, { ...changes, medicationId: medication.id })).id;
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo guardar el tratamiento.');
       setSaving(false);

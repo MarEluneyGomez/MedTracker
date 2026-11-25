@@ -51,7 +51,7 @@ MedTracker/
 │   │   ├── screens/            # Pantallas
 │   │   ├── components/         # Componentes reutilizables
 │   │   ├── navigation/         # Navegación según la sesión y el rol
-│   │   ├── context/            # Estado compartido (sesión del usuario)
+│   │   ├── context/            # Estado compartido (sesión del usuario y paciente que se está viendo)
 │   │   ├── hooks/              # Hooks reutilizables
 │   │   ├── services/           # Llamadas a la API, datos sin conexión, notificaciones y push
 │   │   ├── types/              # Tipos de los datos que devuelve el backend

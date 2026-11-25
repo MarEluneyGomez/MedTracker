@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, View } from 'reac
 import AppButton from '../components/AppButton';
 import DoseCard from '../components/DoseCard';
 import Screen from '../components/Screen';
-import { useAuth } from '../context/AuthContext';
+import { useActivePatient } from '../context/ActivePatientContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import { ApiError } from '../services/api';
 import { changeDose, getTodayDoses, syncPendingDoseActions } from '../services/doses';
@@ -24,7 +24,7 @@ import { formatLongDate } from '../utils/dates';
 import { buildDoseDetails, type DoseDetails } from '../utils/doseDetails';
 
 export default function TodayScreen() {
-  const { user } = useAuth();
+  const patient = useActivePatient();
   const [doses, setDoses] = useState<Dose[]>([]);
   const [details, setDetails] = useState<Record<string, DoseDetails>>({});
   const [loading, setLoading] = useState(true);
@@ -35,15 +35,15 @@ export default function TodayScreen() {
   const listRef = useFlashScrollIndicators<FlatList<Dose>>(!loading);
 
   async function load() {
-    if (!user) {
+    if (!patient.id) {
       return;
     }
     try {
       await syncPendingDoseActions();
       const [todayDoses, reminders, treatments, medications] = await Promise.all([
-        getTodayDoses(user.id),
+        getTodayDoses(patient.id),
         getReminders(),
-        getTreatmentsByUser(user.id),
+        getTreatmentsByUser(patient.id),
         getMedications(),
       ]);
       const pending = await loadPendingDoseActions();
@@ -62,10 +62,10 @@ export default function TodayScreen() {
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [user]),
+    }, [patient.id]),
   );
 
-  useEffect(() => subscribeToDoseChanges(load), [user]);
+  useEffect(() => subscribeToDoseChanges(load), [patient.id]);
 
   function handleRefresh() {
     setRefreshing(true);
@@ -91,8 +91,8 @@ export default function TodayScreen() {
         }
         return next;
       });
-      if (user) {
-        syncDoseNotifications(user.id);
+      if (patient.isOwn && patient.id) {
+        syncDoseNotifications(patient.id);
       }
     } catch (e) {
       Alert.alert('No se pudo guardar', e instanceof ApiError ? e.message : 'Intentá de nuevo.');
@@ -143,7 +143,7 @@ export default function TodayScreen() {
             {doses.length > 0 ? (
               <View style={styles.summary}>
                 <Text style={styles.summaryText}>
-                  Tomaste {taken} de {doses.length}
+                  {patient.isOwn ? 'Tomaste' : 'Tomó'} {taken} de {doses.length}
                 </Text>
                 <View style={styles.progressTrack}>
                   <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
@@ -154,7 +154,8 @@ export default function TodayScreen() {
         }
         ListEmptyComponent={
           <Text style={styles.message}>
-            No tenés tomas para hoy. Los horarios se cargan desde Tratamientos.
+            {patient.isOwn ? 'No tenés' : 'No tiene'} tomas para hoy. Los horarios se cargan desde
+            Tratamientos.
           </Text>
         }
         renderItem={({ item }) => {

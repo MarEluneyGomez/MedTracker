@@ -84,6 +84,16 @@ Cubre CU-07, RF-08 y RF-09. La pestaña Historial trae todas las tomas del usuar
 
 Cuentan las tomas ya marcadas, aunque se hayan marcado antes de hora, y las pendientes cuya hora ya pasó: una toma que todavía no toca no es un incumplimiento. El backend no devuelve las tomas de tratamientos o recordatorios eliminados, así que no aparecen en el historial; las de tratamientos completados sí. El cálculo se hace en la app (`src/utils/adherence.ts`), así que cambiar de período no vuelve a pedir datos.
 
+## Cuidadores
+
+El cuidador (tutor) ve en la pestaña **Pacientes** a los pacientes vinculados con él (`GET /caregiver-links/caregiver/{id}`, con el nombre de cada uno del perfil reducido). Al tocar uno se abre, encima, una pantalla con su nombre arriba y sus pestañas **Hoy, Tratamientos e Historial**: las mismas pantallas del paciente, con los datos de ese paciente. Puede hacer lo mismo que el paciente (marcar tomas, crear y editar tratamientos y horarios, ver la adherencia), como permite el backend (RN-08); no ve citas ni historial médico.
+
+- **Paciente activo:** las pantallas no usan el usuario de la sesión sino `useActivePatient()` (`src/context/ActivePatientContext.tsx`): el propio usuario, o el paciente elegido por el cuidador, que lo provee `ActivePatientProvider` en sus pestañas.
+- **Historial:** para un cuidador `GET /doses` trae las tomas de todos sus pacientes, así que se filtran las del paciente elegido a través de sus tratamientos.
+- **Notificaciones:** se programan solo para el propio paciente; lo que hace un cuidador no programa recordatorios en su celular.
+- **Textos:** en tercera persona para el cuidador ("Tomó 1 de 3", "La tomó").
+- **Vincular un cuidador** desde la app queda pendiente: el backend pide el id del cuidador, y falta poder hacerlo por email.
+
 ## Citas
 
 Cubre parte de CU-09 del lado del paciente. La pestaña Citas lista las citas propias (`GET /medical-appointments`) con el nombre del médico, que sale de la lista de médicos (`GET /users?role=DOCTOR`), en dos grupos:
@@ -142,7 +152,7 @@ frontend/
 ├── assets/                 # Íconos de la app y de las notificaciones
 │   └── sounds/             # Sonido de las notificaciones (recordatorio.wav)
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas, historial médico y su formulario, pacientes del médico, pestañas de cada rol, perfil)
+│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas, historial médico y su formulario, pacientes del médico y del cuidador, pestañas de cada rol, perfil)
 │   ├── components/         # Componentes reutilizables
 │   │   ├── AppButton, Screen, TextField, Logo
 │   │   ├── Chip, RoleSelector, ChipSelector, DaySelector # Selección entre opciones
@@ -153,8 +163,8 @@ frontend/
 │   │   ├── DoseStatusLabel # Estado de una toma con ícono y texto (Hoy e Historial)
 │   │   ├── AppointmentCard # Una cita con el médico o el paciente, su estado y acciones
 │   │   └── OfflineBanner # Aviso de que se muestran datos guardados (dentro de Screen)
-│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, ProfileStack, DoctorPatientsStack, headerOptions y lista de pantallas (types.ts)
-│   ├── context/            # AuthContext: sesión compartida por toda la app
+│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, ProfileStack, DoctorPatientsStack, CaregiverStack y las pestañas del paciente elegido (CaregiverPatientTabs), headerOptions y lista de pantallas (types.ts)
+│   ├── context/            # AuthContext (sesión) y ActivePatientContext (de qué paciente son los datos)
 │   ├── hooks/
 │   │   ├── useDoseNotificationsSync.ts # Recalcula las notificaciones al entrar y al volver a primer plano
 │   │   ├── useFlashScrollIndicators.ts # Muestra la barra de scroll al abrir una lista en iOS
@@ -173,6 +183,7 @@ frontend/
 │   │   ├── doseNotifications.ts # Qué notificaciones programar según las tomas que vienen
 │   │   ├── pushToken.ts    # Token de push del dispositivo para el backend
 │   │   ├── appointments.ts # Citas: listar, confirmar y cancelar, médicos y pacientes con cita confirmada
+│   │   ├── caregiverLinks.ts # Pacientes vinculados a un cuidador
 │   │   ├── medicalHistory.ts # Historial médico: ver y cargar registros
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios

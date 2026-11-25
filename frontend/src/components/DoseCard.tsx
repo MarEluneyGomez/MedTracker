@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors } from '../theme/colors';
 import type { Dose } from '../types/api';
 import { formatClockTime } from '../utils/dates';
+import { useActivePatient } from '../context/ActivePatientContext';
 import DoseStatusLabel from './DoseStatusLabel';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
@@ -29,7 +30,10 @@ export default function DoseCard({
   onUndo,
   isPendingSync,
 }: DoseCardProps) {
+  const { isOwn } = useActivePatient();
   const isPending = dose.status === 'PENDING';
+  const confirmLabel = isOwn ? 'La tomé' : 'La tomó';
+  const skipLabel = isOwn ? 'No la tomé' : 'No la tomó';
 
   return (
     <View style={[styles.card, !isPending && styles.cardResolved]}>
@@ -47,15 +51,21 @@ export default function DoseCard({
         <View style={styles.actions}>
           <ActionButton
             icon="checkmark"
-            label="La tomé"
+            label={confirmLabel}
             filled
             disabled={busy}
             onPress={onConfirm}
           />
-          <ActionButton icon="close" label="No la tomé" disabled={busy} onPress={onSkip} />
+          <ActionButton icon="close" label={skipLabel} disabled={busy} onPress={onSkip} />
         </View>
       ) : dose.status === 'SKIPPED' ? (
-        <ActionButton icon="checkmark" label="La tomé" filled disabled={busy} onPress={onConfirm} />
+        <ActionButton
+          icon="checkmark"
+          label={confirmLabel}
+          filled
+          disabled={busy}
+          onPress={onConfirm}
+        />
       ) : (
         <ActionButton icon="arrow-undo" label="Deshacer" disabled={busy} onPress={onUndo} />
       )}
