@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -348,5 +349,42 @@ class MedicalAppointmentServiceTest {
         assertThat(service.findByPatient(otherDoctor, patient.getId())).containsExactly(other);
         assertThat(service.findByPatient(new AuthenticatedUser(UUID.randomUUID(), User.Role.PATIENT),
                 patient.getId())).isEmpty();
+    }
+
+    // La regla de cita compartida es asimétrica: se consulta con (solicitante, id de la ruta)
+    // en ese orden, y si falla no se lee ninguna cita
+    @Test
+    void listingByPatientChecksTheSharedAppointmentWithTheCallerFirstAndThePathIdSecond() {
+        when(repository.findByPatientIdAndDeletedAtIsNull(patient.getId())).thenReturn(List.of());
+
+        service.findByPatient(doctorP, patient.getId());
+
+        verify(accessPolicy).requireSelfOrSharedAppointment(doctorP, patient.getId());
+    }
+
+    @Test
+    void listingByDoctorChecksTheSharedAppointmentWithTheCallerFirstAndThePathIdSecond() {
+        when(repository.findByDoctorIdAndDeletedAtIsNull(doctor.getId())).thenReturn(List.of());
+
+        service.findByDoctor(patientP, doctor.getId());
+
+        verify(accessPolicy).requireSelfOrSharedAppointment(patientP, doctor.getId());
+    }
+
+    @Test
+    void listingsAreRejectedBeforeReadingAnyAppointmentWhenTheRuleDenies() {
+        doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN))
+                .when(accessPolicy).requireSelfOrSharedAppointment(doctorP, patient.getId());
+        doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN))
+                .when(accessPolicy).requireSelfOrSharedAppointment(patientP, doctor.getId());
+
+        assertThatThrownBy(() -> service.findByPatient(doctorP, patient.getId()))
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+        assertThatThrownBy(() -> service.findByDoctor(patientP, doctor.getId()))
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+        verify(repository, never()).findByPatientIdAndDeletedAtIsNull(any());
+        verify(repository, never()).findByDoctorIdAndDeletedAtIsNull(any());
     }
 }
