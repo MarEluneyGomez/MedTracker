@@ -1,10 +1,12 @@
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
 import AppButton from '../components/AppButton';
 import Screen from '../components/Screen';
 import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
+import type { DoctorPatientsStackParamList } from '../navigation/types';
 import { ApiError } from '../services/api';
 import { getMedicalHistory } from '../services/medicalHistory';
 import { colors } from '../theme/colors';
@@ -13,6 +15,10 @@ import { formatDate } from '../utils/dates';
 
 export default function MedicalHistoryScreen() {
   const { user } = useAuth();
+  const navigation = useNavigation<NativeStackNavigationProp<DoctorPatientsStackParamList>>();
+  const route = useRoute();
+  const patient = route.params as { patientId: string; patientName: string } | undefined;
+  const patientId = patient?.patientId ?? user?.id;
   const [records, setRecords] = useState<MedicalHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -20,11 +26,11 @@ export default function MedicalHistoryScreen() {
   const listRef = useFlashScrollIndicators<FlatList<MedicalHistory>>(!loading);
 
   async function load() {
-    if (!user) {
+    if (!patientId) {
       return;
     }
     try {
-      const history = await getMedicalHistory(user.id);
+      const history = await getMedicalHistory(patientId);
       setRecords([...history].sort((a, b) => b.recordDate.localeCompare(a.recordDate)));
       setError(null);
     } catch (e) {
@@ -38,7 +44,7 @@ export default function MedicalHistoryScreen() {
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [user]),
+    }, [patientId]),
   );
 
   function handleRefresh() {
@@ -82,11 +88,22 @@ export default function MedicalHistoryScreen() {
         refreshing={refreshing}
         onRefresh={handleRefresh}
         contentContainerStyle={styles.list}
-        ListHeaderComponent={<Text style={styles.title}>Historial médico</Text>}
+        ListHeaderComponent={
+          <View style={styles.header}>
+            <Text style={styles.title}>{patient?.patientName ?? 'Historial médico'}</Text>
+            {patient ? (
+              <AppButton
+                title="Agregar registro"
+                onPress={() => navigation.navigate('MedicalHistoryForm', patient)}
+              />
+            ) : null}
+          </View>
+        }
         ListEmptyComponent={
           <Text style={styles.message}>
-            Todavía no tenés registros en tu historial médico. Los carga tu médico después de una
-            cita.
+            {patient
+              ? 'Todavía no hay registros en el historial de este paciente.'
+              : 'Todavía no tenés registros en tu historial médico. Los carga tu médico después de una cita.'}
           </Text>
         }
         renderItem={({ item }) => (
@@ -110,6 +127,9 @@ const styles = StyleSheet.create({
   list: {
     gap: 12,
     paddingBottom: 24,
+  },
+  header: {
+    gap: 12,
   },
   title: {
     fontSize: 28,

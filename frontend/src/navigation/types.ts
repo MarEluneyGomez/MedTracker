@@ -16,3 +16,9 @@ export type ProfileStackParamList = {
   ProfileHome: undefined;
   MedicalHistory: undefined;
 };
+
+export type DoctorPatientsStackParamList = {
+  PatientsList: undefined;
+  PatientHistory: { patientId: string; patientName: string };
+  MedicalHistoryForm: { patientId: string; patientName: string };
+};

@@ -10,7 +10,7 @@ Al abrir la app sin sesión se ve la pantalla de bienvenida, con las opciones de
 
 - **Paciente:** Hoy, Tratamientos, Historial, Citas y Perfil.
 - **Tutor:** Pacientes y Perfil.
-- **Médico:** Citas y Perfil.
+- **Médico:** Citas, Pacientes y Perfil.
 
 ## Registro e inicio de sesión
 
@@ -91,11 +91,15 @@ Cubre parte de CU-09 del lado del paciente. La pestaña Citas lista las citas pr
 - **Próximas:** no canceladas y con fecha futura, de la más cercana a la más lejana. Las que agendó el médico dicen "Esperando tu confirmación" y tienen el botón **Confirmar** (`PUT /medical-appointments/{id}/status?status=CONFIRMED`): hasta que el paciente confirma, el médico no puede ver su historial médico. Todas tienen **Cancelar cita** (`status=CANCELLED`), que pide confirmación porque una cita cancelada no se puede reabrir.
 - **Anteriores y canceladas:** de la más reciente a la más vieja, solo de lectura. Una pendiente que ya pasó dice "No se confirmó".
 
+El médico ve la misma pestaña con sus citas: el nombre del paciente aparece recién cuando el paciente confirma (antes, el backend no lo informa y se muestra "Paciente sin confirmar"), las pendientes dicen "Esperando que el paciente confirme" y solo puede cancelarlas, porque confirmar es del paciente.
+
 Agendar una cita nueva queda pendiente: va a mostrar los turnos libres del médico, y para eso hace falta que el backend informe la disponibilidad.
 
 ## Historial médico
 
 Cubre RF-13 y CU-10. Desde Perfil, el paciente abre "Mi historial médico": los diagnósticos y observaciones que cargó su médico (`GET /medical-histories/patient/{id}`), del más reciente al más viejo, con la fecha. Es de solo lectura: el historial lo carga el médico, al que el backend le da acceso solo con una cita confirmada por el paciente. El botón aparece solo para pacientes.
+
+El médico tiene la pestaña **Pacientes**: los pacientes con al menos una cita confirmada con él (no hay una relación "es mi paciente" aparte de las citas), en orden alfabético. Al tocar uno se abre su historial, con la misma pantalla, y el botón **Agregar registro** (`POST /medical-histories/register`): fecha (no futura), diagnóstico (obligatorio, hasta 255 caracteres) y observaciones (opcional, hasta 5000).
 
 ## Notificaciones
 
@@ -138,7 +142,7 @@ frontend/
 ├── assets/                 # Íconos de la app y de las notificaciones
 │   └── sounds/             # Sonido de las notificaciones (recordatorio.wav)
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas, historial médico, pestañas de cada rol, perfil)
+│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas, historial médico y su formulario, pacientes del médico, pestañas de cada rol, perfil)
 │   ├── components/         # Componentes reutilizables
 │   │   ├── AppButton, Screen, TextField, Logo
 │   │   ├── Chip, RoleSelector, ChipSelector, DaySelector # Selección entre opciones
@@ -147,9 +151,9 @@ frontend/
 │   │   ├── SchedulePicker, ScheduleSaveBar # Horarios según la frecuencia
 │   │   ├── DoseCard # Una toma del día con su estado y acciones
 │   │   ├── DoseStatusLabel # Estado de una toma con ícono y texto (Hoy e Historial)
-│   │   ├── AppointmentCard # Una cita con su médico, estado y acciones
+│   │   ├── AppointmentCard # Una cita con el médico o el paciente, su estado y acciones
 │   │   └── OfflineBanner # Aviso de que se muestran datos guardados (dentro de Screen)
-│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, ProfileStack, headerOptions y lista de pantallas (types.ts)
+│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, ProfileStack, DoctorPatientsStack, headerOptions y lista de pantallas (types.ts)
 │   ├── context/            # AuthContext: sesión compartida por toda la app
 │   ├── hooks/
 │   │   ├── useDoseNotificationsSync.ts # Recalcula las notificaciones al entrar y al volver a primer plano
@@ -168,8 +172,8 @@ frontend/
 │   │   ├── notifications.ts # Permiso, canal de Android, botón "La tomé" y programar o cancelar notificaciones
 │   │   ├── doseNotifications.ts # Qué notificaciones programar según las tomas que vienen
 │   │   ├── pushToken.ts    # Token de push del dispositivo para el backend
-│   │   ├── appointments.ts # Citas: listar, confirmar y cancelar, y la lista de médicos
-│   │   ├── medicalHistory.ts # Historial médico del paciente
+│   │   ├── appointments.ts # Citas: listar, confirmar y cancelar, médicos y pacientes con cita confirmada
+│   │   ├── medicalHistory.ts # Historial médico: ver y cargar registros
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
