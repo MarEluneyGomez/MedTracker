@@ -44,6 +44,7 @@ La pestaña Tratamientos del paciente cubre CU-03 (agregar tratamiento) y CU-08 
 - **Marcar como completado** (`PUT /treatments/{id}/complete`) y **Eliminar** (`DELETE /treatments/{id}`, porque también desactiva sus recordatorios), los dos con confirmación.
 - **Reabrir tratamiento** (`PUT /treatments/{id}/reopen`): aparece en los completados, por si se marcaron por error. El backend genera en el momento las tomas de hoy.
 - **Estado:** "En curso", "Completado" (marcado a mano) o "Finalizado" (pasó su fecha de fin). Un tratamiento finalizado lo indica en la tarjeta ("Terminó el 25/10/2026") y deja de generar tomas; para continuarlo se edita su fecha de fin.
+- **Sin horarios:** si un tratamiento en curso no tiene ningún recordatorio activo (`hasActiveReminders`, por ejemplo porque falló el guardado de los horarios), la tarjeta avisa "Sin horarios: no vas a recibir recordatorios" y al tocarlo lleva a Horarios. Se compara contra `false` para que una copia guardada de antes de este campo no muestre el aviso por error.
 
 La dosis y la frecuencia se eligen con opciones (cantidad y unidad; "Cada 8 horas", "Cada 1 día", "Varias veces por día" de 2 a 6, u otra a medida) y se guardan como texto con un formato fijo, por ejemplo "2 comprimidos", "Cada 8 horas" o "3 veces por día". Así se pueden volver a leer al editar y calcular los horarios. Las fechas se eligen con un calendario propio (`react-native-calendars`) que sigue la estética de la app; la fecha de fin es opcional y se guarda al final del día, para que el último día también cuente.
 

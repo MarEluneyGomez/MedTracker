@@ -29,6 +29,7 @@ export type Treatment = {
   startTime: string | null;
   endTime: string | null;
   completed: boolean;
+  hasActiveReminders: boolean;
 };
 
 export type WeekDay = 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' | 'SUN';

@@ -46,6 +46,10 @@ export default function TreatmentsScreen() {
     return treatment.endDate !== null && new Date(treatment.endDate) < new Date();
   }
 
+  function needsSchedule(treatment: Treatment): boolean {
+    return !treatment.completed && !hasEnded(treatment) && treatment.hasActiveReminders === false;
+  }
+
   function treatmentState(treatment: Treatment): string {
     if (treatment.completed) {
       return 'Completado';
@@ -205,6 +209,19 @@ export default function TreatmentsScreen() {
               {hasEnded(item) ? (
                 <Text style={styles.cardEnded}>Terminó el {formatDate(item.endDate ?? '')}</Text>
               ) : null}
+              {needsSchedule(item) ? (
+                <Pressable
+                  style={styles.noSchedule}
+                  onPress={() => navigation.navigate('Reminders', { treatmentId: item.id })}
+                  accessibilityRole="button"
+                  accessibilityHint="Abre los horarios del tratamiento"
+                >
+                  <Ionicons name="alert-circle-outline" size={22} color={colors.warning} />
+                  <Text style={styles.noScheduleText}>
+                    Sin horarios: no vas a recibir recordatorios. Tocá para configurarlos.
+                  </Text>
+                </Pressable>
+              ) : null}
               <Text style={styles.toggleText}>{expanded ? 'Ocultar detalle' : 'Ver detalle'}</Text>
               {expanded ? (
                 <View style={styles.details}>
@@ -311,6 +328,19 @@ const styles = StyleSheet.create({
   },
   cardEnded: {
     marginTop: 4,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.warning,
+  },
+  noSchedule: {
+    marginTop: 8,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  noScheduleText: {
+    flexShrink: 1,
     fontSize: 15,
     fontWeight: '600',
     color: colors.warning,
