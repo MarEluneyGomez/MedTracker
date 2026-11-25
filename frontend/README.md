@@ -4,7 +4,7 @@ App móvil del sistema de seguimiento de medicación, construida con **React Nat
 
 ## Estado actual
 
-Base de la app armada (Expo SDK 58): cliente de API, sesión de usuario, navegación según el rol, las pantallas de inicio de sesión y registro, la gestión de tratamientos y horarios del paciente, la pantalla "Hoy" con las tomas del día, el historial con la adherencia y las citas médicas del paciente. El resto de las pantallas de cada sección son provisorias. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
+Base de la app armada (Expo SDK 58): cliente de API, sesión de usuario, navegación según el rol, las pantallas de inicio de sesión y registro, la gestión de tratamientos y horarios del paciente, la pantalla "Hoy" con las tomas del día, el historial con la adherencia, las citas médicas y el historial médico del paciente. El resto de las pantallas de cada sección son provisorias. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
 
 Al abrir la app sin sesión se ve la pantalla de bienvenida, con las opciones de iniciar sesión (CU-02) o crear una cuenta (CU-01). Al iniciar sesión se ven las pestañas que corresponden al rol:
 
@@ -93,6 +93,10 @@ Cubre parte de CU-09 del lado del paciente. La pestaña Citas lista las citas pr
 
 Agendar una cita nueva queda pendiente: va a mostrar los turnos libres del médico, y para eso hace falta que el backend informe la disponibilidad.
 
+## Historial médico
+
+Cubre RF-13 y CU-10. Desde Perfil, el paciente abre "Mi historial médico": los diagnósticos y observaciones que cargó su médico (`GET /medical-histories/patient/{id}`), del más reciente al más viejo, con la fecha. Es de solo lectura: el historial lo carga el médico, al que el backend le da acceso solo con una cita confirmada por el paciente. El botón aparece solo para pacientes.
+
 ## Notificaciones
 
 Cubre RF-06 con notificaciones locales: el celular avisa cada toma a su hora ("Recordatorio de medicación: Es hora de tu toma"), sin depender de la conexión ni del servidor. El aviso no nombra el medicamento, igual que el push del backend, porque se ve con el teléfono bloqueado y es un dato de salud.
@@ -134,7 +138,7 @@ frontend/
 ├── assets/                 # Íconos de la app y de las notificaciones
 │   └── sounds/             # Sonido de las notificaciones (recordatorio.wav)
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas, pestañas de cada rol, perfil)
+│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas, historial médico, pestañas de cada rol, perfil)
 │   ├── components/         # Componentes reutilizables
 │   │   ├── AppButton, Screen, TextField, Logo
 │   │   ├── Chip, RoleSelector, ChipSelector, DaySelector # Selección entre opciones
@@ -145,7 +149,7 @@ frontend/
 │   │   ├── DoseStatusLabel # Estado de una toma con ícono y texto (Hoy e Historial)
 │   │   ├── AppointmentCard # Una cita con su médico, estado y acciones
 │   │   └── OfflineBanner # Aviso de que se muestran datos guardados (dentro de Screen)
-│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, headerOptions y lista de pantallas (types.ts)
+│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, ProfileStack, headerOptions y lista de pantallas (types.ts)
 │   ├── context/            # AuthContext: sesión compartida por toda la app
 │   ├── hooks/
 │   │   ├── useDoseNotificationsSync.ts # Recalcula las notificaciones al entrar y al volver a primer plano
@@ -165,6 +169,7 @@ frontend/
 │   │   ├── doseNotifications.ts # Qué notificaciones programar según las tomas que vienen
 │   │   ├── pushToken.ts    # Token de push del dispositivo para el backend
 │   │   ├── appointments.ts # Citas: listar, confirmar y cancelar, y la lista de médicos
+│   │   ├── medicalHistory.ts # Historial médico del paciente
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja

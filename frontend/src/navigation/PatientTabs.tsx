@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import AppointmentsScreen from '../screens/AppointmentsScreen';
 import HistoryScreen from '../screens/HistoryScreen';
-import ProfileScreen from '../screens/ProfileScreen';
+import ProfileStack from './ProfileStack';
 import TodayScreen from '../screens/TodayScreen';
 import { colors } from '../theme/colors';
 import TreatmentsStack from './TreatmentsStack';
@@ -70,7 +70,7 @@ export default function PatientTabs() {
 
       <Tab.Screen
         name="Profile"
-        component={ProfileScreen}
+        component={ProfileStack}
         options={{
           title: 'Perfil',
           tabBarIcon: ({ color, size }) => (
