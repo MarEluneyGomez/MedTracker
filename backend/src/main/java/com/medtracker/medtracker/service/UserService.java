@@ -104,7 +104,10 @@ public class UserService {
     }
 
     // Usuario que el solicitante puede ver: él mismo, un usuario vinculado
-    // (cuidador-paciente) o la contraparte de una cita compartida. Cualquier
+    // (cuidador-paciente) o la contraparte de una cita compartida según la regla
+    // asimétrica de AccessPolicy.shareAppointment (según la fila de la cita, el médico ve al
+    // paciente solo con una cita CONFIRMED; el paciente ve al médico con una PENDING o
+    // CONFIRMED). Cualquier
     // otro caso es un 404, igual que un usuario inexistente.
     public User findVisible(AuthenticatedUser principal, UUID id) {
         ResponseStatusException notFound = new ResponseStatusException(HttpStatus.NOT_FOUND,

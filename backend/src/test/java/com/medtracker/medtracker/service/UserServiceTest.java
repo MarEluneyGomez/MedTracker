@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -453,6 +454,21 @@ class UserServiceTest {
 
         assertThat(userService.findVisible(principal, linkedId)).isSameAs(linked);
         assertThat(userService.findVisible(principal, counterpartId)).isNotNull();
+    }
+
+    // shareAppointment es asimétrica: findVisible debe pasar (solicitante, objetivo) en ese
+    // orden. Con solo el orden inverso stubeado (objetivo, solicitante) no concede.
+    @Test
+    void findVisibleAsksShareAppointmentWithRequesterFirstAndTargetSecond() {
+        UUID targetId = UUID.randomUUID();
+        // El stub del orden inverso es lenient a propósito: no debe usarse, y con stubs
+        // estrictos el test fallaría por un stub sin usar.
+        lenient().when(accessPolicy.shareAppointment(targetId, principal.id())).thenReturn(true);
+
+        assertThatThrownBy(() -> userService.findVisible(principal, targetId))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        verify(accessPolicy).shareAppointment(principal.id(), targetId);
+        verify(userRepository, never()).findById(targetId);
     }
 
     @Test

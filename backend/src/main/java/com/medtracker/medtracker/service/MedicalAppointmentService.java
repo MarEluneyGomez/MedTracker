@@ -63,8 +63,9 @@ public class MedicalAppointmentService {
         return medicalAppointmentRepository.findByParticipant(principal.id());
     }
 
-    // Listar citas por paciente: 403 si el usuario no es ese paciente ni su médico, y
-    // nunca devuelve citas en las que no participa
+    // Lista las citas del paciente nombrado; 403 si el id no es el propio, ni de un paciente con cita CONFIRMED
+    // con el solicitante como médico, ni del médico de una cita PENDING o CONFIRMED del solicitante
+    // (AccessPolicy.shareAppointment). Nunca devuelve citas en las que el usuario no participa.
     public List<MedicalAppointment> findByPatient(AuthenticatedUser principal, UUID patientId) {
         accessPolicy.requireSelfOrSharedAppointment(principal, patientId);
         return medicalAppointmentRepository.findByPatientIdAndDeletedAtIsNull(patientId).stream()
@@ -72,8 +73,9 @@ public class MedicalAppointmentService {
                 .toList();
     }
 
-    // Listar citas por médico: 403 si el usuario no es ese médico ni uno de sus pacientes, y
-    // nunca devuelve citas en las que no participa
+    // Lista las citas del médico nombrado; 403 si el id no es el propio, ni del médico de una cita PENDING o
+    // CONFIRMED del solicitante como paciente, ni de un paciente con cita CONFIRMED con el solicitante
+    // (AccessPolicy.shareAppointment). Nunca devuelve citas en las que el usuario no participa.
     public List<MedicalAppointment> findByDoctor(AuthenticatedUser principal, UUID doctorId) {
         accessPolicy.requireSelfOrSharedAppointment(principal, doctorId);
         return medicalAppointmentRepository.findByDoctorIdAndDeletedAtIsNull(doctorId).stream()

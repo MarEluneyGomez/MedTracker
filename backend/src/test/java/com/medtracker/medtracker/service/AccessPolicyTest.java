@@ -390,8 +390,9 @@ class AccessPolicyTest {
         when(appointmentRepository.findConfirmedPatientIdsByDoctor(doctor.getId())).thenReturn(List.of(patientA.getId()));
     }
 
-    // Cita PENDING: cuenta como vigente y no cancelada, pero NO habilita el historial
-    // (los stubs de "confirmada" quedan en su valor por defecto: false / lista vacía)
+    // Cita PENDING: cuenta como vigente y no cancelada (el paciente ve al médico), pero NO
+    // habilita el historial ni que el médico vea al paciente (los stubs de "confirmada"
+    // quedan en su valor por defecto: false / lista vacía)
     private void doctorHasPendingAppointmentWithA() {
         when(appointmentRepository.existsActiveByDoctorAndPatient(doctor.getId(), patientA.getId())).thenReturn(true);
     }
@@ -406,7 +407,7 @@ class AccessPolicyTest {
     }
 
     @Test
-    void aPendingAppointmentDoesNotGiveHistoryAccessButStillCountsAsSharedAppointment() {
+    void aPendingAppointmentDoesNotGiveHistoryAccessNorLetTheDoctorSeeThePatientButThePatientSeesTheDoctor() {
         MedicalHistory history = historyOfA();
         doctorHasPendingAppointmentWithA();
 
@@ -417,9 +418,10 @@ class AccessPolicyTest {
                 .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
         assertThat(policy.historyPatientIds(asDoctor)).containsExactly(doctor.getId());
 
-        assertThat(policy.shareAppointment(doctor.getId(), patientA.getId())).isTrue();
-        assertThat(policy.shareAppointment(patientA.getId(), doctor.getId())).isTrue();
-        policy.requireSelfOrSharedAppointment(asDoctor, patientA.getId());
+        assertThat(policy.shareAppointment(doctor.getId(), patientA.getId())).isFalse();   // médico -> paciente
+        assertThat(policy.shareAppointment(patientA.getId(), doctor.getId())).isTrue();    // paciente -> médico
+        assertThatThrownBy(() -> policy.requireSelfOrSharedAppointment(asDoctor, patientA.getId()))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
         policy.requireSelfOrSharedAppointment(asA, doctor.getId());
     }
 
@@ -544,21 +546,70 @@ class AccessPolicyTest {
     }
 
     @Test
-    void sharedAppointmentAndLinkAreSymmetric() {
-        doctorHasPendingAppointmentWithA();
+    void theLinkIsSymmetric() {
         caregiverIsLinkedToA();
 
-        assertThat(policy.shareAppointment(doctor.getId(), patientA.getId())).isTrue();
-        assertThat(policy.shareAppointment(patientA.getId(), doctor.getId())).isTrue();
-        assertThat(policy.shareAppointment(otherDoctor.getId(), patientA.getId())).isFalse();
         assertThat(policy.areLinked(patientA.getId(), caregiver.getId())).isTrue();
+        assertThat(policy.areLinked(caregiver.getId(), patientA.getId())).isTrue();
         assertThat(policy.areLinked(patientB.getId(), caregiver.getId())).isFalse();
+    }
+
+    // shareAppointment(solicitante, objetivo) NO es simétrica: la dirección sale de la fila
+    // de la cita. Los stubs usan ids exactos (nunca any()) para fijar el orden de los argumentos.
+
+    @Test
+    void sharedAppointmentDoctorToPatientNeedsAConfirmedAppointment() {
+        // cita PENDING: vigente y no cancelada, pero no CONFIRMED
+        doctorHasPendingAppointmentWithA();
+        assertThat(policy.shareAppointment(doctor.getId(), patientA.getId())).isFalse();
+
+        // la confirma el paciente
+        when(appointmentRepository.existsConfirmedByDoctorAndPatient(doctor.getId(), patientA.getId())).thenReturn(true);
+        assertThat(policy.shareAppointment(doctor.getId(), patientA.getId())).isTrue();
+    }
+
+    @Test
+    void sharedAppointmentPatientToDoctorNeedsAnActiveAppointmentPendingOrConfirmed() {
+        doctorHasPendingAppointmentWithA();
+        assertThat(policy.shareAppointment(patientA.getId(), doctor.getId())).isTrue();
+
+        doctorHasConfirmedAppointmentWithA();
+        assertThat(policy.shareAppointment(patientA.getId(), doctor.getId())).isTrue();
+    }
+
+    @Test
+    void sharedAppointmentIsFalseInBothDirectionsForACancelledAppointment() {
+        // CANCELLED o dada de baja: ninguna de las dos consultas la encuentra
+        when(appointmentRepository.existsActiveByDoctorAndPatient(doctor.getId(), patientA.getId())).thenReturn(false);
+        when(appointmentRepository.existsConfirmedByDoctorAndPatient(doctor.getId(), patientA.getId())).thenReturn(false);
+
+        assertThat(policy.shareAppointment(doctor.getId(), patientA.getId())).isFalse();
+        assertThat(policy.shareAppointment(patientA.getId(), doctor.getId())).isFalse();
+    }
+
+    @Test
+    void sharedAppointmentIsFalseWithoutAnAppointmentInAnyDirection() {
+        // hay cita entre doctor y A, pero ninguna con otherDoctor ni con B
+        doctorHasConfirmedAppointmentWithA();
+
+        assertThat(policy.shareAppointment(otherDoctor.getId(), patientA.getId())).isFalse();
+        assertThat(policy.shareAppointment(patientA.getId(), otherDoctor.getId())).isFalse();
+        assertThat(policy.shareAppointment(doctor.getId(), patientB.getId())).isFalse();
+        assertThat(policy.shareAppointment(patientB.getId(), doctor.getId())).isFalse();
+    }
+
+    @Test
+    void sharedAppointmentIsFalseBetweenTwoPatients() {
+        doctorHasConfirmedAppointmentWithA();
+
+        assertThat(policy.shareAppointment(patientB.getId(), patientA.getId())).isFalse();
+        assertThat(policy.shareAppointment(patientA.getId(), patientB.getId())).isFalse();
     }
 
     @Test
     void namingAnotherUserInAListingIs403UnlessLinkedOrSharingAnAppointment() {
         caregiverIsLinkedToA();
-        doctorHasPendingAppointmentWithA();
+        doctorHasConfirmedAppointmentWithA();
 
         policy.requireSelfOrLinked(asA, patientA.getId());
         policy.requireSelfOrLinked(asCaregiver, patientA.getId());
