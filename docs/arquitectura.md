@@ -10,7 +10,7 @@ flowchart LR
     CTRL --> SRV[Service]
     SRV --> REPO[Repository]
     REPO --> DB[(PostgreSQL - Neon)]
-    SRV -->|push| FCM[Firebase Cloud Messaging]
+    SRV -->|push de respaldo| FCM[Firebase Cloud Messaging]
     FCM --> APP
 ```
 
@@ -26,10 +26,10 @@ flowchart LR
 | Frontend / App móvil | React Native | Un mismo código para Android e iOS (RNF-01), evitando mantener dos bases nativas separadas. |
 | Backend / API | Spring Boot (Java) | Framework maduro para APIs REST en capas, con soporte de primera clase para JPA, seguridad y testing. |
 | Base de datos | PostgreSQL (hosteado en Neon) | Modelo relacional con relaciones y claves foráneas explícitas entre usuario, tratamiento, horarios y tomas; Neon evita administrar infraestructura propia. |
-| Notificaciones push | Firebase Cloud Messaging (FCM) | Servicio multiplataforma (Android/iOS) para el envío de recordatorios (RF-06). |
+| Notificaciones | Notificaciones locales (app) + Firebase Cloud Messaging (FCM) | La app avisa a la hora de la toma con notificaciones locales; el backend envía un push de respaldo vía FCM (multiplataforma Android/iOS) unos 15 minutos después (por defecto; configurable con `medtracker.push.delay-minutes`), solo si la toma sigue `PENDING` (RF-06). El job de push está apagado por defecto (`medtracker.push.enabled=false`). |
 | Autenticación | JWT propio | Mecanismo *stateless*, adecuado para un cliente móvil que no mantiene sesión de servidor. |
 | Control de versiones | Git / GitHub | Repositorio único acordado para todo el equipo y el tutor. |
 
-## Alcance de esta entrega
+## Estado de la implementación
 
-Para esta entrega, `/frontend` y `/backend` contienen únicamente la estructura de carpetas propuesta, sin implementación, según lo pedido por la consigna.
+`/backend` (Spring Boot) implementa los módulos del README: autenticación con JWT y refresh token, usuarios, medicamentos, tratamientos, recordatorios, tomas, notificaciones, vínculos cuidador-paciente, citas e historial médico. `/frontend` (React Native con Expo y TypeScript) consume la API. El detalle de endpoints, reglas y configuración está en el [README](../README.md).

@@ -4,21 +4,27 @@ import com.medtracker.medtracker.model.MedicalAppointment;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.MedicalAppointmentRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -31,8 +37,15 @@ class MedicalAppointmentServiceTest {
     private UserService userService;
     @Mock
     private AccessPolicy accessPolicy;
-    @InjectMocks
+    // Reloj fijo: changeStatus fecha el UPDATE con LocalDateTime.now(clock)
+    private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 14, 9, 0);
+    private final Clock clock = Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC);
     private MedicalAppointmentService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new MedicalAppointmentService(repository, userService, accessPolicy, clock);
+    }
 
     private final User patient = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT).build();
     private final User doctor = User.builder().id(UUID.randomUUID()).role(User.Role.DOCTOR).build();
@@ -60,18 +73,35 @@ class MedicalAppointmentServiceTest {
     }
 
     @Test
-    void thePatientCanScheduleTheirOwnAppointment() {
+    void thePatientCanScheduleTheirOwnAppointmentAndItIsBornConfirmed() {
         givenUsers();
 
         assertThat(service.register(patientP, incoming()).getStatus())
-                .isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
+                .isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
     }
 
     @Test
-    void theAssignedDoctorCanScheduleTheAppointment() {
+    void theAssignedDoctorCanScheduleTheAppointmentAndItIsBornPending() {
         givenUsers();
 
-        assertThat(service.register(doctorP, incoming()).getDoctor()).isSameAs(doctor);
+        MedicalAppointment created = service.register(doctorP, incoming());
+
+        assertThat(created.getDoctor()).isSameAs(doctor);
+        assertThat(created.getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
+    }
+
+    @Test
+    void theClientCannotImposeTheInitialStatus() {
+        givenUsers();
+        MedicalAppointment byPatient = incoming();
+        byPatient.setStatus(MedicalAppointment.AppointmentStatus.CANCELLED);
+        MedicalAppointment byDoctor = incoming();
+        byDoctor.setStatus(MedicalAppointment.AppointmentStatus.CONFIRMED);
+
+        assertThat(service.register(patientP, byPatient).getStatus())
+                .isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        assertThat(service.register(doctorP, byDoctor).getStatus())
+                .isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
     }
 
     @Test
@@ -104,23 +134,193 @@ class MedicalAppointmentServiceTest {
 
         assertThatThrownBy(() -> service.changeStatus(doctorP, id, MedicalAppointment.AppointmentStatus.CONFIRMED))
                 .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        verify(repository, never()).updateStatusUnlessCancelled(any(), any(), any());
+        verify(repository, never()).findById(any());
+    }
+
+    @Test
+    void theDoctorCannotConfirmOrReopenAnAppointmentAndNothingIsSaved() {
+        MedicalAppointment pending = appointment();
+        MedicalAppointment confirmed = appointment();
+        confirmed.setStatus(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        when(accessPolicy.requireAppointment(doctorP, pending.getId())).thenReturn(pending);
+        when(accessPolicy.requireAppointment(doctorP, confirmed.getId())).thenReturn(confirmed);
+
+        assertThatThrownBy(() -> service.changeStatus(doctorP, pending.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN))
+                .hasMessageContaining("El médico solo puede cancelar la cita; la confirma el paciente");
+        assertThatThrownBy(() -> service.changeStatus(doctorP, pending.getId(),
+                MedicalAppointment.AppointmentStatus.PENDING))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+        assertThatThrownBy(() -> service.changeStatus(doctorP, confirmed.getId(),
+                MedicalAppointment.AppointmentStatus.PENDING))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+        assertThat(pending.getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
+        assertThat(confirmed.getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        verify(repository, never()).updateStatusUnlessCancelled(any(), any(), any());
+        verify(repository, never()).findById(any());
+    }
+
+    // La cita tal como la devuelve la relectura después del UPDATE
+    private MedicalAppointment reloaded(MedicalAppointment original, MedicalAppointment.AppointmentStatus status) {
+        return MedicalAppointment.builder().id(original.getId()).patient(patient).doctor(doctor)
+                .reason("x").status(status).build();
+    }
+
+    @Test
+    void theDoctorCanCancelAnAppointment() {
+        MedicalAppointment confirmed = appointment();
+        confirmed.setStatus(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        MedicalAppointment cancelled = reloaded(confirmed, MedicalAppointment.AppointmentStatus.CANCELLED);
+        when(accessPolicy.requireAppointment(doctorP, confirmed.getId())).thenReturn(confirmed);
+        when(repository.updateStatusUnlessCancelled(confirmed.getId(),
+                MedicalAppointment.AppointmentStatus.CANCELLED, NOW)).thenReturn(1);
+        when(repository.findById(confirmed.getId())).thenReturn(Optional.of(cancelled));
+
+        assertThat(service.changeStatus(doctorP, confirmed.getId(), MedicalAppointment.AppointmentStatus.CANCELLED)
+                .getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CANCELLED);
+        verify(repository).updateStatusUnlessCancelled(confirmed.getId(),
+                MedicalAppointment.AppointmentStatus.CANCELLED, NOW);
+    }
+
+    @Test
+    void thePatientCanConfirmReturnToPendingAndCancel() {
+        MedicalAppointment appointment = appointment();
+        UUID id = appointment.getId();
+        when(accessPolicy.requireAppointment(patientP, id)).thenReturn(appointment);
+        when(repository.updateStatusUnlessCancelled(eq(id), any(), eq(NOW))).thenReturn(1);
+        when(repository.findById(id)).thenReturn(
+                Optional.of(reloaded(appointment, MedicalAppointment.AppointmentStatus.CONFIRMED)),
+                Optional.of(reloaded(appointment, MedicalAppointment.AppointmentStatus.PENDING)),
+                Optional.of(reloaded(appointment, MedicalAppointment.AppointmentStatus.CANCELLED)));
+
+        assertThat(service.changeStatus(patientP, id, MedicalAppointment.AppointmentStatus.CONFIRMED)
+                .getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        assertThat(service.changeStatus(patientP, id, MedicalAppointment.AppointmentStatus.PENDING)
+                .getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
+        assertThat(service.changeStatus(patientP, id, MedicalAppointment.AppointmentStatus.CANCELLED)
+                .getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CANCELLED);
+        verify(repository).updateStatusUnlessCancelled(id, MedicalAppointment.AppointmentStatus.CONFIRMED, NOW);
+        verify(repository).updateStatusUnlessCancelled(id, MedicalAppointment.AppointmentStatus.PENDING, NOW);
+        verify(repository).updateStatusUnlessCancelled(id, MedicalAppointment.AppointmentStatus.CANCELLED, NOW);
+    }
+
+    @Test
+    void ifAnotherRequestCancelledFirstTheUpdateAffectsNothingAndThePatientGets409WithoutReloading() {
+        MedicalAppointment pending = appointment();
+        when(accessPolicy.requireAppointment(patientP, pending.getId())).thenReturn(pending);
+        // la lectura inicial la vio PENDING, pero el UPDATE condicional ya no encuentra una cita sin cancelar
+        when(repository.updateStatusUnlessCancelled(pending.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED, NOW)).thenReturn(0);
+
+        assertThatThrownBy(() -> service.changeStatus(patientP, pending.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED))
+                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT))
+                .hasMessageContaining("La cita ya fue cancelada");
+        verify(repository, never()).findById(any());
         verify(repository, never()).save(any());
     }
 
     @Test
-    void theAssignedDoctorCanConfirmButACancelledAppointmentIsDefinitive() {
+    void ifTheUpdateAffectsOneRowButTheReloadFindsNothingTheResponseIs404WithTheAppointmentId() {
         MedicalAppointment pending = appointment();
+        UUID id = pending.getId();
+        when(accessPolicy.requireAppointment(patientP, id)).thenReturn(pending);
+        when(repository.updateStatusUnlessCancelled(id,
+                MedicalAppointment.AppointmentStatus.CONFIRMED, NOW)).thenReturn(1);
+        when(repository.findById(id)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.changeStatus(patientP, id,
+                MedicalAppointment.AppointmentStatus.CONFIRMED))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND))
+                .hasMessageContaining("Cita no encontrada: " + id);
+        verify(repository, times(1)).updateStatusUnlessCancelled(id,
+                MedicalAppointment.AppointmentStatus.CONFIRMED, NOW);
+        verify(repository).findById(id);
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void thePatientRequestingCancelledWhenTheUpdateAffectsNothingGets409WithoutReloadingOrSaving() {
+        MedicalAppointment pending = appointment();
+        UUID id = pending.getId();
+        when(accessPolicy.requireAppointment(patientP, id)).thenReturn(pending);
+        when(repository.updateStatusUnlessCancelled(id,
+                MedicalAppointment.AppointmentStatus.CANCELLED, NOW)).thenReturn(0);
+
+        assertThatThrownBy(() -> service.changeStatus(patientP, id,
+                MedicalAppointment.AppointmentStatus.CANCELLED))
+                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT))
+                .hasMessageContaining("La cita ya fue cancelada");
+        verify(repository, times(1)).updateStatusUnlessCancelled(id,
+                MedicalAppointment.AppointmentStatus.CANCELLED, NOW);
+        verify(repository, never()).findById(any());
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void theDoctorIsRejectedWith403BeforeAnyUpdateIsAttempted() {
+        MedicalAppointment pending = appointment();
+        when(accessPolicy.requireAppointment(doctorP, pending.getId())).thenReturn(pending);
+
+        assertThatThrownBy(() -> service.changeStatus(doctorP, pending.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+        verify(repository, never()).updateStatusUnlessCancelled(any(), any(), any());
+    }
+
+    @Test
+    void theUpdateCarriesTheRequestedStatusAndTheClockTimeAndTheResponseComesFromTheReload() {
+        MedicalAppointment initial = appointment();
+        MedicalAppointment reloaded = reloaded(initial, MedicalAppointment.AppointmentStatus.CONFIRMED);
+        when(accessPolicy.requireAppointment(patientP, initial.getId())).thenReturn(initial);
+        when(repository.updateStatusUnlessCancelled(initial.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED, NOW)).thenReturn(1);
+        when(repository.findById(initial.getId())).thenReturn(Optional.of(reloaded));
+
+        MedicalAppointment result = service.changeStatus(patientP, initial.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED);
+
+        assertThat(result).isSameAs(reloaded).isNotSameAs(initial);
+        // la entidad leída al inicio no se modifica ni se guarda: el cambio lo hace el UPDATE
+        assertThat(initial.getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
+        verify(repository).updateStatusUnlessCancelled(initial.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED, NOW);
+        verify(repository).findById(initial.getId());
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void confirmingAnAlreadyConfirmedAppointmentIsIdempotent() {
+        MedicalAppointment confirmed = appointment();
+        confirmed.setStatus(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        when(accessPolicy.requireAppointment(patientP, confirmed.getId())).thenReturn(confirmed);
+        when(repository.updateStatusUnlessCancelled(confirmed.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED, NOW)).thenReturn(1);
+        when(repository.findById(confirmed.getId())).thenReturn(
+                Optional.of(reloaded(confirmed, MedicalAppointment.AppointmentStatus.CONFIRMED)));
+
+        assertThat(service.changeStatus(patientP, confirmed.getId(), MedicalAppointment.AppointmentStatus.CONFIRMED)
+                .getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
+    }
+
+    @Test
+    void aCancelledAppointmentIs409ForAnyActorAndAnyStatusBeforeTheRoleRule() {
         MedicalAppointment cancelled = appointment();
         cancelled.setStatus(MedicalAppointment.AppointmentStatus.CANCELLED);
-        when(accessPolicy.requireAppointment(doctorP, pending.getId())).thenReturn(pending);
+        when(accessPolicy.requireAppointment(patientP, cancelled.getId())).thenReturn(cancelled);
         when(accessPolicy.requireAppointment(doctorP, cancelled.getId())).thenReturn(cancelled);
-        when(repository.save(pending)).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThat(service.changeStatus(doctorP, pending.getId(), MedicalAppointment.AppointmentStatus.CONFIRMED)
-                .getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
-        assertThatThrownBy(() -> service.changeStatus(doctorP, cancelled.getId(),
-                MedicalAppointment.AppointmentStatus.CONFIRMED))
-                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+        for (MedicalAppointment.AppointmentStatus requested : MedicalAppointment.AppointmentStatus.values()) {
+            assertThatThrownBy(() -> service.changeStatus(patientP, cancelled.getId(), requested))
+                    .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+            // el médico pidiendo CONFIRMED o PENDING recibe 409 y no 403
+            assertThatThrownBy(() -> service.changeStatus(doctorP, cancelled.getId(), requested))
+                    .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+        }
+        verify(repository, never()).updateStatusUnlessCancelled(any(), any(), any());
+        verify(repository, never()).findById(any());
     }
 
     @Test

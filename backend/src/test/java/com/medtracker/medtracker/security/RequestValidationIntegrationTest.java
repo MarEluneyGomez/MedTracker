@@ -663,13 +663,44 @@ class RequestValidationIntegrationTest {
 
     @Test
     void doseRegisterIgnoresStatusAndConfirmationFromTheClient() throws Exception {
+        // Mañana a las 08:00 según el mismo reloj del test: una fecha fija terminaría siendo pasada
+        String tomorrow = LocalDate.now(ZoneOffset.UTC).plusDays(1).atTime(8, 0)
+                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
         mockMvc.perform(as(a, json(post("/doses/register"),
                         "{\"reminder\":{\"id\":\"" + reminderA.getId() + "\"},"
-                                + "\"scheduledAt\":\"2026-10-27T08:00:00\",\"status\":\"CONFIRMED\","
+                                + "\"scheduledAt\":\"" + tomorrow + "\",\"status\":\"CONFIRMED\","
                                 + "\"confirmedAt\":\"2026-10-27T08:01:00\"}")))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("PENDING"))
                 .andExpect(jsonPath("$.confirmedAt").doesNotExist());
+    }
+
+    @Test
+    void doseRegisterInThePastIs400() throws Exception {
+        String yesterday = LocalDate.now(ZoneOffset.UTC).minusDays(1).atTime(8, 0)
+                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+
+        assertInvalid(mockMvc.perform(as(a, json(post("/doses/register"),
+                        "{\"reminder\":{\"id\":\"" + reminderA.getId() + "\"},"
+                                + "\"scheduledAt\":\"" + yesterday + "\"}"))),
+                "/doses/register",
+                "La toma no puede ser anterior a la hora actual (se admiten hasta 5 minutos de diferencia)");
+        verify(doseRepository, never()).save(any(Dose.class));
+    }
+
+    @Test
+    void doseRegisterOnAnInactiveReminderIs400() throws Exception {
+        Reminder inactive = Reminder.builder().id(UUID.randomUUID()).treatment(treatmentA)
+                .time(LocalTime.of(8, 0)).message("Tomar").active(false).build();
+        when(reminderRepository.findByIdAndDeletedAtIsNull(inactive.getId())).thenReturn(Optional.of(inactive));
+        String tomorrow = LocalDate.now(ZoneOffset.UTC).plusDays(1).atTime(8, 0)
+                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+
+        assertInvalid(mockMvc.perform(as(a, json(post("/doses/register"),
+                        "{\"reminder\":{\"id\":\"" + inactive.getId() + "\"},"
+                                + "\"scheduledAt\":\"" + tomorrow + "\"}"))),
+                "/doses/register", "El recordatorio está desactivado");
+        verify(doseRepository, never()).save(any(Dose.class));
     }
 
     @Test
@@ -841,6 +872,22 @@ class RequestValidationIntegrationTest {
                 .andExpect(status().isConflict());
     }
 
+    @Test
+    void historyWithoutTheToParamIs400WithTheMissingParamMessage() throws Exception {
+        String path = "/doses/user/" + a.getId() + "/history";
+
+        assertInvalid(mockMvc.perform(as(a, get(path).param("from", "2026-10-01"))),
+                path, "Falta el parámetro obligatorio 'to'");
+    }
+
+    @Test
+    void adherenceWithARangeOverTheLimitIs400WithTheServiceMessage() throws Exception {
+        String path = "/doses/user/" + a.getId() + "/adherence";
+
+        assertInvalid(mockMvc.perform(as(a, get(path).param("from", "2026-01-01").param("to", "2026-06-01"))),
+                path, "El rango no puede superar los 92 días");
+    }
+
     // ------------------------------------------------- getWithRole sin enumeración
 
     @Test
@@ -868,17 +915,30 @@ class RequestValidationIntegrationTest {
 
     @Test
     void appointmentRegisterKeepsTheShapeAndIgnoresStatusIdAndDeletedAt() throws Exception {
+        // el paciente manda CANCELLED en el body: se ignora y la cita nace CONFIRMED
         mockMvc.perform(as(a, json(post("/medical-appointments/register"),
-                        appointmentBody(",\"status\":\"CONFIRMED\",\"id\":\"" + UUID.randomUUID() + "\","
+                        appointmentBody(",\"status\":\"CANCELLED\",\"id\":\"" + UUID.randomUUID() + "\","
                                 + "\"deletedAt\":\"2020-01-01T00:00:00\",\"campoDesconocido\":1"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("CONFIRMED"));
+
+        ArgumentCaptor<MedicalAppointment> saved = ArgumentCaptor.forClass(MedicalAppointment.class);
+        verify(appointmentRepository).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        assertThat(saved.getValue().getId()).isNull();
+        assertThat(saved.getValue().getDeletedAt()).isNull();
+    }
+
+    @Test
+    void anAppointmentRegisteredByTheDoctorIsBornPendingEvenIfTheBodySaysConfirmed() throws Exception {
+        mockMvc.perform(as(doctor, json(post("/medical-appointments/register"),
+                        appointmentBody(",\"status\":\"CONFIRMED\""))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("PENDING"));
 
         ArgumentCaptor<MedicalAppointment> saved = ArgumentCaptor.forClass(MedicalAppointment.class);
         verify(appointmentRepository).save(saved.capture());
         assertThat(saved.getValue().getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
-        assertThat(saved.getValue().getId()).isNull();
-        assertThat(saved.getValue().getDeletedAt()).isNull();
     }
 
     @Test
@@ -957,7 +1017,7 @@ class RequestValidationIntegrationTest {
         mockMvc.perform(as(b, json(post("/medical-histories/register"), historyBody("ok"))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.length()").value(5));
-        // el médico sin cita vigente con el paciente tampoco puede
+        // el médico sin cita CONFIRMED con el paciente tampoco puede (el mock responde false por defecto)
         mockMvc.perform(as(doctor, json(post("/medical-histories/register"), historyBody("ok"))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.length()").value(5));

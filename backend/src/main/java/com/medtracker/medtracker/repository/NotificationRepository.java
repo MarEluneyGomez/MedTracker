@@ -21,6 +21,9 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
     // Buscar notificaciones por estado de lectura
     List<Notification> findByRead(boolean read);
 
+    // Si la toma ya tiene notificación (sea de quien sea)
+    boolean existsByDoseId(UUID doseId);
+
     // Buscar notificaciones por recordatorio
     List<Notification> findByReminderId(UUID reminderId);
 }

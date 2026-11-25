@@ -285,9 +285,23 @@ class AuthorizationIntegrationTest {
             return id.equals(a.getId()) || id.equals(doctor.getId()) ? List.of(appointment) : List.of();
         });
         when(appointmentRepository.save(any(MedicalAppointment.class))).thenAnswer(inv -> inv.getArgument(0));
-        // El médico asignado tiene una cita vigente y no cancelada con A (acceso al perfil reducido y al historial)
+        // Cambiar el estado es un UPDATE condicional en la base, que el repositorio mockeado no
+        // ejecuta: se imita sobre la cita en memoria (no aplica si ya está cancelada) y la
+        // relectura devuelve la cita con el estado nuevo
+        when(appointmentRepository.updateStatusUnlessCancelled(eq(appointment.getId()), any(), any()))
+                .thenAnswer(inv -> {
+                    if (appointment.getStatus() == MedicalAppointment.AppointmentStatus.CANCELLED) {
+                        return 0;
+                    }
+                    appointment.setStatus(inv.getArgument(1));
+                    return 1;
+                });
+        when(appointmentRepository.findById(appointment.getId())).thenReturn(Optional.of(appointment));
+        // El médico asignado tiene una cita CONFIRMED con A: cuenta como vigente y no cancelada
+        // (perfil reducido y listados de citas) y además habilita el historial
         when(appointmentRepository.existsActiveByDoctorAndPatient(doctor.getId(), a.getId())).thenReturn(true);
-        when(appointmentRepository.findActivePatientIdsByDoctor(doctor.getId())).thenReturn(List.of(a.getId()));
+        when(appointmentRepository.existsConfirmedByDoctorAndPatient(doctor.getId(), a.getId())).thenReturn(true);
+        when(appointmentRepository.findConfirmedPatientIdsByDoctor(doctor.getId())).thenReturn(List.of(a.getId()));
         when(medicalHistoryRepository.findByIdAndDeletedAtIsNull(historyA.getId())).thenReturn(Optional.of(historyA));
         when(medicalHistoryRepository.findByIdAndDeletedAtIsNull(historyB.getId())).thenReturn(Optional.of(historyB));
         when(medicalHistoryRepository.findByPatientIdAndDeletedAtIsNullOrderByRecordDateDesc(a.getId()))
@@ -386,6 +400,66 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(caregiver, json(post("/treatments/register"), forA))).andExpect(status().isCreated());
     }
 
+    // ---------------------------------------------------------------- hasActiveReminders (RN-02)
+
+    @Test
+    void treatmentListingExposesHasActiveRemindersPerTreatment() throws Exception {
+        Treatment withoutReminders = Treatment.builder().id(UUID.randomUUID()).user(a)
+                .medication(medication()).dosage("2 comp").frequency("cada 12 hs")
+                .startDate(LocalDateTime.of(2026, 10, 1, 8, 0)).build();
+        when(treatmentRepository.findByUserIdInAndDeletedAtIsNull(anyCollection()))
+                .thenReturn(List.of(treatmentA, withoutReminders));
+        when(treatmentRepository.findByUserIdAndDeletedAtIsNull(a.getId()))
+                .thenReturn(List.of(treatmentA, withoutReminders));
+        when(reminderRepository.findTreatmentIdsWithActiveReminders(anyCollection()))
+                .thenReturn(Set.of(treatmentA.getId()));
+
+        mockMvc.perform(as(a, get("/treatments"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].hasActiveReminders").value(true))
+                .andExpect(jsonPath("$[1].hasActiveReminders").value(false));
+        mockMvc.perform(as(a, get("/treatments/user/" + a.getId()))).andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].hasActiveReminders").value(true))
+                .andExpect(jsonPath("$[1].hasActiveReminders").value(false));
+        // una consulta por listado, no una por tratamiento
+        verify(reminderRepository, Mockito.times(2)).findTreatmentIdsWithActiveReminders(anyCollection());
+    }
+
+    @Test
+    void singleTreatmentEndpointsExposeHasActiveReminders() throws Exception {
+        String update = "{\"dosage\":\"9\",\"frequency\":\"x\",\"startDate\":\"2026-10-01T08:00:00\"}";
+
+        // Como JPA con una entidad existente, el save conserva el id (el stub de setUp asigna uno nuevo)
+        when(treatmentRepository.save(any(Treatment.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        // Sin recordatorios activos (el mock devuelve un Set vacío): false
+        mockMvc.perform(as(a, get("/treatments/" + treatmentA.getId()))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasActiveReminders").value(false));
+
+        when(reminderRepository.findTreatmentIdsWithActiveReminders(anyCollection()))
+                .thenReturn(Set.of(treatmentA.getId()));
+        mockMvc.perform(as(a, get("/treatments/" + treatmentA.getId()))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasActiveReminders").value(true));
+        mockMvc.perform(as(a, json(put("/treatments/" + treatmentA.getId()), update))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasActiveReminders").value(true));
+        mockMvc.perform(as(a, put("/treatments/" + treatmentA.getId() + "/complete"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.completed").value(true))
+                .andExpect(jsonPath("$.hasActiveReminders").value(true));
+        mockMvc.perform(as(a, put("/treatments/" + treatmentA.getId() + "/reopen"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.completed").value(false))
+                .andExpect(jsonPath("$.hasActiveReminders").value(true));
+    }
+
+    @Test
+    void registerReturnsHasActiveRemindersFalse() throws Exception {
+        String forA = "{\"user\":{\"id\":\"" + a.getId() + "\"},\"medication\":{\"id\":1},"
+                + "\"dosage\":\"1\",\"frequency\":\"8h\",\"startDate\":\"2026-10-01T08:00:00\"}";
+
+        mockMvc.perform(as(a, json(post("/treatments/register"), forA))).andExpect(status().isCreated())
+                .andExpect(jsonPath("$.hasActiveReminders").value(false));
+        // un tratamiento nuevo no tiene recordatorios: no hace falta consultarlos
+        verify(reminderRepository, never()).findTreatmentIdsWithActiveReminders(anyCollection());
+    }
+
     // ---------------------------------------------------------------- RN-01: recordatorios
 
     @Test
@@ -427,6 +501,45 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(b, get("/doses"))).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
         mockMvc.perform(as(caregiver, get("/doses/user/" + a.getId()))).andExpect(status().isOk());
         mockMvc.perform(as(a, get("/doses/user/" + a.getId()))).andExpect(status().isOk());
+    }
+
+    @Test
+    void historyAndAdherenceOfAnotherUserAreForbidden() throws Exception {
+        for (String endpoint : List.of("history", "adherence")) {
+            mockMvc.perform(as(b, get("/doses/user/" + a.getId() + "/" + endpoint)
+                            .param("from", "2026-10-01").param("to", "2026-10-31")))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
+    void historyAndAdherenceWithATreatmentOfAnotherPatientAre404() throws Exception {
+        // b consulta lo suyo, pero el tratamiento es de a
+        for (String endpoint : List.of("history", "adherence")) {
+            mockMvc.perform(as(b, get("/doses/user/" + b.getId() + "/" + endpoint)
+                            .param("from", "2026-10-01").param("to", "2026-10-31")
+                            .param("treatmentId", treatmentA.getId().toString())))
+                    .andExpect(status().isNotFound());
+        }
+    }
+
+    @Test
+    void aCaregiverOfTwoPatientsCannotUseThePatientsTreatmentForTheOtherOne() throws Exception {
+        // El cuidador ya está vinculado a a (setUp); se lo vincula también a b
+        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), b.getId()))
+                .thenReturn(true);
+
+        for (String endpoint : List.of("history", "adherence")) {
+            mockMvc.perform(as(caregiver, get("/doses/user/" + b.getId() + "/" + endpoint)
+                            .param("from", "2026-10-01").param("to", "2026-10-31")
+                            .param("treatmentId", treatmentA.getId().toString())))
+                    .andExpect(status().isNotFound());
+        }
+        // Control: con el paciente dueño del tratamiento responde 200
+        mockMvc.perform(as(caregiver, get("/doses/user/" + a.getId() + "/history")
+                        .param("from", "2026-10-01").param("to", "2026-10-31")
+                        .param("treatmentId", treatmentA.getId().toString())))
+                .andExpect(status().isOk());
     }
 
     @Test
@@ -634,9 +747,48 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(otherDoctor, put(url).param("status", "CONFIRMED"))).andExpect(status().isNotFound());
         mockMvc.perform(as(b, put(url).param("status", "CANCELLED"))).andExpect(status().isNotFound());
         mockMvc.perform(as(caregiver, put(url).param("status", "CANCELLED"))).andExpect(status().isNotFound());
-        verify(appointmentRepository, never()).save(any());
+        verify(appointmentRepository, never()).updateStatusUnlessCancelled(any(), any(), any());
 
-        mockMvc.perform(as(doctor, put(url).param("status", "CONFIRMED"))).andExpect(status().isOk());
+        // el médico de la cita no puede confirmarla ni reabrirla: 403 y no se guarda nada
+        mockMvc.perform(as(doctor, put(url).param("status", "CONFIRMED"))).andExpect(status().isForbidden());
+        mockMvc.perform(as(doctor, put(url).param("status", "PENDING"))).andExpect(status().isForbidden());
+        verify(appointmentRepository, never()).updateStatusUnlessCancelled(any(), any(), any());
+
+        // el paciente sí, y el médico puede cancelarla
+        mockMvc.perform(as(a, put(url).param("status", "CONFIRMED"))).andExpect(status().isOk());
+        mockMvc.perform(as(doctor, put(url).param("status", "CANCELLED"))).andExpect(status().isOk());
+        // una cita cancelada es definitiva para cualquiera (409 antes que la regla por rol)
+        mockMvc.perform(as(a, put(url).param("status", "CONFIRMED"))).andExpect(status().isConflict());
+        mockMvc.perform(as(doctor, put(url).param("status", "CONFIRMED"))).andExpect(status().isConflict());
+    }
+
+    @Test
+    void thePatientConfirmsAPendingAppointmentAndTheResponseCarriesConfirmed() throws Exception {
+        String url = "/medical-appointments/" + appointment.getId() + "/status";
+
+        mockMvc.perform(as(a, put(url).param("status", "CONFIRMED")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CONFIRMED"));
+        mockMvc.perform(as(a, put(url).param("status", "PENDING")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PENDING"));
+    }
+
+    @Test
+    void ifTheAppointmentWasCancelledByAnotherRequestTheStatusChangeIs409AndItIsNotReopened() throws Exception {
+        String url = "/medical-appointments/" + appointment.getId() + "/status";
+        // la comprobación previa vio la cita sin cancelar, pero el UPDATE condicional no afecta filas
+        when(appointmentRepository.updateStatusUnlessCancelled(eq(appointment.getId()), any(), any())).thenReturn(0);
+
+        mockMvc.perform(as(a, put(url).param("status", "CONFIRMED")))
+                .andExpect(status().isConflict())
+                // este contexto no incluye GlobalExceptionHandler: el texto se comprueba en la excepción
+                .andExpect(result -> org.assertj.core.api.Assertions.assertThat(result.getResolvedException())
+                        .isInstanceOfSatisfying(org.springframework.web.server.ResponseStatusException.class,
+                                ex -> org.assertj.core.api.Assertions.assertThat(ex.getReason())
+                                        .isEqualTo("La cita ya fue cancelada")));
+        verify(appointmentRepository, never()).findById(any());
+        verify(appointmentRepository, never()).save(any());
     }
 
     @Test
@@ -872,7 +1024,7 @@ class AuthorizationIntegrationTest {
     }
 
     @Test
-    void aDoctorWithAnActiveAppointmentReadsAndCreatesTheHistory() throws Exception {
+    void aDoctorWithAConfirmedAppointmentReadsAndCreatesTheHistory() throws Exception {
         mockMvc.perform(as(doctor, get("/medical-histories/" + historyA.getId()))).andExpect(status().isOk());
         mockMvc.perform(as(doctor, get("/medical-histories/patient/" + a.getId()))).andExpect(status().isOk());
         mockMvc.perform(as(doctor, get("/medical-histories")))
@@ -897,14 +1049,37 @@ class AuthorizationIntegrationTest {
 
     @Test
     void aDoctorWhoseOnlyAppointmentIsCancelledHasNoHistoryAccessAndNoLongerSeesTheProfile() throws Exception {
-        // la única cita está CANCELLED: existsActiveByDoctorAndPatient (que excluye canceladas y
-        // eliminadas) responde false, que es el valor por defecto del mock para este médico
+        // la única cita está CANCELLED: existsActiveByDoctorAndPatient y existsConfirmedByDoctorAndPatient
+        // (que excluyen canceladas y eliminadas) responden false, el valor por defecto del mock para este médico
         mockMvc.perform(as(otherDoctor, get("/medical-histories/" + historyA.getId()))).andExpect(status().isNotFound());
         mockMvc.perform(as(otherDoctor, get("/medical-histories/patient/" + a.getId()))).andExpect(status().isForbidden());
         mockMvc.perform(as(otherDoctor, json(post("/medical-histories/register"), historyBody(a, "\"Falso\""))))
                 .andExpect(status().isForbidden());
         mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isNotFound());
         verify(medicalHistoryRepository, never()).save(any());
+    }
+
+    @Test
+    void aDoctorWhoseOnlyAppointmentIsPendingHasNoHistoryAccessButStillSeesTheProfile() throws Exception {
+        // cita PENDING (la agendó el médico y el paciente no la confirmó): existsActiveByDoctorAndPatient
+        // responde true, pero existsConfirmedByDoctorAndPatient sigue en false (valor por defecto del mock)
+        when(appointmentRepository.existsActiveByDoctorAndPatient(otherDoctor.getId(), a.getId())).thenReturn(true);
+
+        mockMvc.perform(as(otherDoctor, get("/medical-histories/patient/" + a.getId())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(as(otherDoctor, json(post("/medical-histories/register"), historyBody(a, "\"Falso\""))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(as(otherDoctor, get("/medical-histories/" + historyA.getId())))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(as(otherDoctor, get("/medical-histories")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+        verify(medicalHistoryRepository, never()).save(any());
+
+        // el perfil reducido y los listados de citas siguen abiertos con una cita PENDING
+        mockMvc.perform(as(otherDoctor, get("/users/" + a.getId()))).andExpect(status().isOk());
+        mockMvc.perform(as(otherDoctor, get("/medical-appointments/patient/" + a.getId())))
+                .andExpect(status().isOk());
     }
 
     @Test

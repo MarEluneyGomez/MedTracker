@@ -9,6 +9,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -19,9 +21,11 @@ public class MedicalAppointmentService {
     private final MedicalAppointmentRepository medicalAppointmentRepository;
     private final UserService userService;
     private final AccessPolicy accessPolicy;
+    private final Clock clock;
 
     // Registrar una nueva cita médica (CU-09) entre un paciente y un médico;
-    // siempre arranca en PENDING. RN-09: solo la crea el paciente involucrado
+    // arranca CONFIRMED si la agenda el paciente y PENDING si la agenda el médico
+    // (la confirma después el paciente). RN-09: solo la crea el paciente involucrado
     // o el médico asignado, nunca un tercero (403).
     public MedicalAppointment register(AuthenticatedUser principal, MedicalAppointment appointment) {
         UUID patientId = requireReferencedId(appointment.getPatient(), User.Role.PATIENT);
@@ -32,7 +36,9 @@ public class MedicalAppointmentService {
         }
         appointment.setPatient(userService.getWithRole(appointment.getPatient(), User.Role.PATIENT));
         appointment.setDoctor(userService.getWithRole(appointment.getDoctor(), User.Role.DOCTOR));
-        appointment.setStatus(MedicalAppointment.AppointmentStatus.PENDING);
+        appointment.setStatus(principal.id().equals(patientId)
+                ? MedicalAppointment.AppointmentStatus.CONFIRMED
+                : MedicalAppointment.AppointmentStatus.PENDING);
         // Evita pisar una cita existente por id o resucitar una eliminada
         appointment.setId(null);
         appointment.setDeletedAt(null);
@@ -75,14 +81,29 @@ public class MedicalAppointmentService {
                 .toList();
     }
 
-    // Cambiar estado de la cita. Una cita cancelada es definitiva.
+    // Cambiar estado de la cita. Una cita cancelada es definitiva. El paciente puede dejarla
+    // en cualquier estado; el médico solo puede cancelarla (la confirma el paciente).
     public MedicalAppointment changeStatus(AuthenticatedUser principal, UUID id,
                                            MedicalAppointment.AppointmentStatus status) {
         MedicalAppointment appointment = accessPolicy.requireAppointment(principal, id);
         if (appointment.getStatus() == MedicalAppointment.AppointmentStatus.CANCELLED) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "La cita ya fue cancelada");
         }
-        appointment.setStatus(status);
-        return medicalAppointmentRepository.save(appointment);
+        // Que "si no es el paciente, se lo trata como médico" es intencional: requireAppointment
+        // solo deja pasar a participantes. La forma por exclusión falla del lado seguro
+        // (restringe) si ese filtro cambiara.
+        if (!principal.id().equals(appointment.getPatient().getId())
+                && status != MedicalAppointment.AppointmentStatus.CANCELLED) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "El médico solo puede cancelar la cita; la confirma el paciente");
+        }
+        // UPDATE atómico: si otra petición canceló la cita entre la comprobación y acá,
+        // no se la reabre (0 filas)
+        int updated = medicalAppointmentRepository.updateStatusUnlessCancelled(id, status, LocalDateTime.now(clock));
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La cita ya fue cancelada");
+        }
+        return medicalAppointmentRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Cita no encontrada: " + id));
     }
 }

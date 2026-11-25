@@ -14,7 +14,8 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 // Body de POST /medical-appointments/register. El estado, el id y el borrado
-// lógico no se aceptan: una cita nueva nace PENDING.
+// lógico no se aceptan: la cita nace CONFIRMED si la agenda el paciente y PENDING
+// si la agenda el médico.
 @Getter
 @Setter
 @NoArgsConstructor

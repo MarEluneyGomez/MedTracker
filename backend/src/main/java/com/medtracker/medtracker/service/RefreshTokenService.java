@@ -18,6 +18,7 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Optional;
@@ -129,9 +130,24 @@ public class RefreshTokenService {
     }
 
     // Logout: idempotente. Un token desconocido o ya revocado no es un error.
+    // Además, si el token existía, estaba vigente (ni revocado ni vencido) y
+    // esta llamada fue la que lo revocó, el dispositivo deja de recibir avisos
+    // del usuario (fcmToken en null). En cualquier otro caso no se toca el
+    // fcmToken: si no, quien tenga un token viejo ya rotado podría borrarle el
+    // token push a otra persona. Todo en la misma transacción.
     @Transactional
     public void revoke(String rawToken) {
-        refreshTokenRepository.revokeByHash(hash(rawToken), clock.instant());
+        Instant now = clock.instant();
+        String hash = hash(rawToken);
+        // El UPDATE vacía el contexto de persistencia: se leen antes los datos que hacen falta
+        UUID ownerId = refreshTokenRepository.findByTokenHash(hash)
+                .filter(token -> token.getRevokedAt() == null && token.getExpiresAt().isAfter(now))
+                .map(RefreshToken::getUserId)
+                .orElse(null);
+        int revoked = refreshTokenRepository.revokeByHash(hash, now);
+        if (ownerId != null && revoked > 0) {
+            userRepository.clearFcmToken(ownerId, LocalDateTime.now(clock));
+        }
     }
 
     // Borra los vencidos hace más de RETENTION (limpieza diaria). Devuelve cuántos eliminó.

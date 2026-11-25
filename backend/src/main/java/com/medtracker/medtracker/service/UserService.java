@@ -4,17 +4,22 @@ import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.UserRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class UserService {
@@ -23,6 +28,7 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final LoginAttemptService loginAttemptService;
     private final AccessPolicy accessPolicy;
+    private final Clock clock;
 
     // Roles que se pueden elegir al registrarse. DOCTOR no: lo da de alta
     // un operador (ver "Alta de médicos" en el README), si no cualquiera
@@ -56,7 +62,25 @@ public class UserService {
         user.setId(null);
         user.setDeletedAt(null);
         user.setPasswordHash(passwordEncoder.encode(user.getPasswordHash()));
-        return userRepository.save(user);
+        // El token se guarda recortado; vacío o solo espacios es "sin token"
+        String fcmToken = user.getFcmToken() == null ? "" : user.getFcmToken().trim();
+        user.setFcmToken(fcmToken.isEmpty() ? null : fcmToken);
+        User saved = userRepository.save(user);
+        // Mejor esfuerzo posterior al guardado (register no es transaccional, para
+        // no cambiar el manejo del email duplicado): los otros usuarios con ese
+        // mismo token lo pierden. Si la limpieza falla el usuario ya está guardado:
+        // se registra solo el nombre de la clase de la excepción (sin mensaje, id
+        // ni token) y el registro responde igual, para que el cliente no vea un
+        // 500 y al reintentar un 409 por email duplicado.
+        if (saved.getFcmToken() != null) {
+            try {
+                userRepository.clearFcmTokenFromOthers(saved.getId(), saved.getFcmToken(), LocalDateTime.now(clock));
+            } catch (RuntimeException e) {
+                log.warn("No se pudo quitar el token push a otros usuarios al registrar ({})",
+                        e.getClass().getSimpleName());
+            }
+        }
+        return saved;
     }
 
     // Buscar usuario por ID
@@ -101,7 +125,11 @@ public class UserService {
     // (por ejemplo solo caracteres de control, que pasan @NotBlank pero trim()
     // recorta) responde 400 como el resto de las validaciones. Si es igual al
     // que ya tiene no se guarda, para no tocar updated_at. El valor del token
-    // no se loguea ni va en ningún mensaje.
+    // no se loguea ni va en ningún mensaje. Después de guardarlo (o de comprobar
+    // que ya era el suyo) se lo quita a los demás usuarios: el dispositivo es de
+    // quien lo registró último. Ese UPDATE masivo va al final: vacía el contexto
+    // de persistencia y dejaría desvinculada la entidad cargada.
+    @Transactional
     public void updateFcmToken(AuthenticatedUser principal, String fcmToken) {
         String normalized = fcmToken == null ? "" : fcmToken.trim();
         if (normalized.isEmpty()) {
@@ -111,11 +139,11 @@ public class UserService {
                 .filter(found -> found.getDeletedAt() == null)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Usuario no encontrado: " + principal.id()));
-        if (normalized.equals(user.getFcmToken())) {
-            return;
+        if (!normalized.equals(user.getFcmToken())) {
+            user.setFcmToken(normalized);
+            userRepository.save(user);
         }
-        user.setFcmToken(normalized);
-        userRepository.save(user);
+        userRepository.clearFcmTokenFromOthers(user.getId(), normalized, LocalDateTime.now(clock));
     }
 
     // Médicos vigentes, para elegir con quién agendar una cita (CU-09)

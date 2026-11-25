@@ -1,10 +1,13 @@
 package com.medtracker.medtracker.service;
 
 import com.medtracker.medtracker.DoseRepositoryStubs;
+import com.medtracker.medtracker.dto.DoseAdherenceDTO;
 import com.medtracker.medtracker.model.Dose;
 import com.medtracker.medtracker.model.Reminder;
+import com.medtracker.medtracker.model.Treatment;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.DoseRepository;
+import com.medtracker.medtracker.repository.TreatmentRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
@@ -29,8 +33,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,6 +48,8 @@ class DoseServiceTest {
     private DoseRepository doseRepository;
     @Mock
     private AccessPolicy accessPolicy;
+    @Mock
+    private TreatmentRepository treatmentRepository;
 
     private final AuthenticatedUser principal = new AuthenticatedUser(UUID.randomUUID(), User.Role.PATIENT);
     private DoseService service;
@@ -49,12 +57,38 @@ class DoseServiceTest {
     @BeforeEach
     void setUp() {
         service = new DoseService(doseRepository, accessPolicy,
-                Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC));
+                Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC), treatmentRepository);
     }
 
     private Dose dose(Dose.DoseStatus status) {
         return Dose.builder().id(UUID.randomUUID()).scheduledAt(NOW).status(status).build();
     }
+
+    // Recordatorio activo con un tratamiento vigente (sin baja, no completado, ya iniciado y sin fin)
+    private Reminder reminderWithValidTreatment() {
+        Treatment treatment = Treatment.builder().id(UUID.randomUUID())
+                .user(User.builder().id(UUID.randomUUID()).build())
+                .startDate(NOW.minusDays(10))
+                .build();
+        return Reminder.builder().id(UUID.randomUUID()).treatment(treatment).active(true).build();
+    }
+
+    private Dose incomingFor(Reminder reminder, LocalDateTime scheduledAt) {
+        Dose incoming = dose(Dose.DoseStatus.PENDING);
+        incoming.setReminder(Reminder.builder().id(reminder.getId()).build());
+        incoming.setScheduledAt(scheduledAt);
+        return incoming;
+    }
+
+    private void assertRejected(Throwable e, HttpStatus status, String message) {
+        assertThat(e).isInstanceOfSatisfying(ResponseStatusException.class, ex -> {
+            assertThat(ex.getStatusCode()).isEqualTo(status);
+            assertThat(ex.getReason()).isEqualTo(message);
+        });
+    }
+
+    private static final String PAST_MESSAGE =
+            "La toma no puede ser anterior a la hora actual (se admiten hasta 5 minutos de diferencia)";
 
     private void assertStatus(Throwable e, HttpStatus status) {
         assertThat(e).isInstanceOfSatisfying(ResponseStatusException.class,
@@ -567,7 +601,7 @@ class DoseServiceTest {
         // 00:30 del día 14 en Buenos Aires: "ayer" es el 13, aunque en UTC todavía sea el 13
         java.time.ZoneId zone = java.time.ZoneId.of("America/Argentina/Buenos_Aires");
         Clock zoned = Clock.fixed(LocalDateTime.of(2026, 10, 14, 0, 30).atZone(zone).toInstant(), zone);
-        DoseService zonedService = new DoseService(doseRepository, accessPolicy, zoned);
+        DoseService zonedService = new DoseService(doseRepository, accessPolicy, zoned, treatmentRepository);
         Dose twoDaysAgo = doseAt(Dose.DoseStatus.CONFIRMED, LocalDateTime.of(2026, 10, 12, 23, 0));
         when(accessPolicy.requireDose(principal, twoDaysAgo.getId())).thenReturn(twoDaysAgo);
 
@@ -601,9 +635,10 @@ class DoseServiceTest {
 
     @Test
     void registerIgnoresClientSuppliedIdAndDeletedAt() {
-        Reminder reminder = Reminder.builder().id(UUID.randomUUID()).build();
+        Reminder reminder = reminderWithValidTreatment();
         Dose incoming = dose(Dose.DoseStatus.PENDING);
         incoming.setReminder(Reminder.builder().id(reminder.getId()).build());
+        incoming.setScheduledAt(NOW.plusHours(1));
         incoming.setDeletedAt(NOW);
         when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
         when(doseRepository.save(incoming)).thenAnswer(inv -> inv.getArgument(0));
@@ -617,10 +652,11 @@ class DoseServiceTest {
 
     @Test
     void registerForcesPendingStatusAndIgnoresClientConfirmation() {
-        Reminder reminder = Reminder.builder().id(UUID.randomUUID()).build();
+        Reminder reminder = reminderWithValidTreatment();
         Dose incoming = dose(Dose.DoseStatus.CONFIRMED);
         incoming.setConfirmedAt(NOW);
         incoming.setReminder(Reminder.builder().id(reminder.getId()).build());
+        incoming.setScheduledAt(NOW.plusHours(1));
         when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
         when(doseRepository.save(incoming)).thenAnswer(inv -> inv.getArgument(0));
 
@@ -632,9 +668,10 @@ class DoseServiceTest {
 
     @Test
     void registerADuplicatedScheduleIs409AndNothingIsSaved() {
-        Reminder reminder = Reminder.builder().id(UUID.randomUUID()).build();
+        Reminder reminder = reminderWithValidTreatment();
         Dose incoming = dose(Dose.DoseStatus.PENDING);
         incoming.setReminder(Reminder.builder().id(reminder.getId()).build());
+        incoming.setScheduledAt(NOW.plusHours(1));
         when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
         when(doseRepository.existsByReminderIdAndScheduledAt(reminder.getId(), incoming.getScheduledAt()))
                 .thenReturn(true);
@@ -642,6 +679,254 @@ class DoseServiceTest {
         assertThatThrownBy(() -> service.register(principal, incoming))
                 .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
         verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerBeforeNowMinusMarginTheSameDayIs400AndNothingIsSaved() {
+        Reminder reminder = reminderWithValidTreatment();
+        Dose incoming = incomingFor(reminder, NOW.minusMinutes(6));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.BAD_REQUEST, PAST_MESSAGE));
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerExactlyNowMinusMarginIsAccepted() {
+        Reminder reminder = reminderWithValidTreatment();
+        Dose incoming = incomingFor(reminder, NOW.minusMinutes(5));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+        when(doseRepository.save(incoming)).thenAnswer(inv -> inv.getArgument(0));
+
+        Dose saved = service.register(principal, incoming);
+
+        assertThat(saved.getScheduledAt()).isEqualTo(NOW.minusMinutes(5));
+        assertThat(saved.getStatus()).isEqualTo(Dose.DoseStatus.PENDING);
+        assertThat(saved.getConfirmedAt()).isNull();
+    }
+
+    @Test
+    void registerAPreviousDayIs400() {
+        Reminder reminder = reminderWithValidTreatment();
+        Dose incoming = incomingFor(reminder, NOW.minusDays(3));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.BAD_REQUEST, PAST_MESSAGE));
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerThirtyDaysAheadIsAccepted() {
+        Reminder reminder = reminderWithValidTreatment();
+        Dose incoming = incomingFor(reminder, NOW.plusDays(30));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+        when(doseRepository.save(incoming)).thenAnswer(inv -> inv.getArgument(0));
+
+        Dose saved = service.register(principal, incoming);
+
+        assertThat(saved.getScheduledAt()).isEqualTo(NOW.plusDays(30));
+        assertThat(saved.getStatus()).isEqualTo(Dose.DoseStatus.PENDING);
+        assertThat(saved.getConfirmedAt()).isNull();
+    }
+
+    @Test
+    void registerOnAnInactiveReminderIs400AndNothingIsSaved() {
+        Reminder reminder = reminderWithValidTreatment();
+        reminder.setActive(false);
+        Dose incoming = incomingFor(reminder, NOW.plusHours(1));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.BAD_REQUEST, "El recordatorio está desactivado"));
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerOnACompletedTreatmentIs400AndNothingIsSaved() {
+        Reminder reminder = reminderWithValidTreatment();
+        reminder.getTreatment().setCompleted(true);
+        Dose incoming = incomingFor(reminder, NOW.plusHours(1));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.BAD_REQUEST,
+                        "El tratamiento no está vigente en esa fecha y hora"));
+        verify(doseRepository, never()).save(any());
+    }
+
+    private static final String NOT_ACTIVE_MESSAGE = "El tratamiento no está vigente en esa fecha y hora";
+
+    @Test
+    void registerAnInactiveReminderWithAnInactiveTreatmentReportsTheReminderFirst() {
+        Reminder reminder = reminderWithValidTreatment();
+        reminder.setActive(false);
+        reminder.getTreatment().setCompleted(true);
+        Dose incoming = incomingFor(reminder, NOW.plusHours(1));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.BAD_REQUEST, "El recordatorio está desactivado"));
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerAnInactiveTreatmentWithAnExactDuplicateReportsTheTreatmentFirst() {
+        Reminder reminder = reminderWithValidTreatment();
+        reminder.getTreatment().setCompleted(true);
+        Dose incoming = incomingFor(reminder, NOW.plusHours(1));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+        lenient().when(doseRepository.existsByReminderIdAndScheduledAt(reminder.getId(), incoming.getScheduledAt()))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.BAD_REQUEST, NOT_ACTIVE_MESSAGE));
+        verify(doseRepository, never()).existsByReminderIdAndScheduledAt(any(), any());
+        verify(doseRepository, never())
+                .existsByReminderIdAndScheduledAtGreaterThanEqualAndScheduledAtLessThanAndDeletedAtIsNull(
+                        any(), any(), any());
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerWithBothExistsChecksTrueReportsTheSameScheduleConflict() {
+        Reminder reminder = reminderWithValidTreatment();
+        Dose incoming = incomingFor(reminder, NOW.plusHours(1));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+        when(doseRepository.existsByReminderIdAndScheduledAt(reminder.getId(), incoming.getScheduledAt()))
+                .thenReturn(true);
+        lenient().when(doseRepository
+                        .existsByReminderIdAndScheduledAtGreaterThanEqualAndScheduledAtLessThanAndDeletedAtIsNull(
+                                reminder.getId(), LocalDateTime.of(2026, 10, 13, 0, 0),
+                                LocalDateTime.of(2026, 10, 14, 0, 0)))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.CONFLICT,
+                        "Ya existe una toma de ese recordatorio en ese horario"));
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerADayBeforeTheTreatmentStartDateIs400() {
+        Reminder reminder = reminderWithValidTreatment();
+        reminder.getTreatment().setStartDate(NOW.plusDays(2));
+        Dose incoming = incomingFor(reminder, NOW.plusDays(1));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.BAD_REQUEST, NOT_ACTIVE_MESSAGE));
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerADayAfterTheTreatmentEndDateIs400() {
+        Reminder reminder = reminderWithValidTreatment();
+        reminder.getTreatment().setEndDate(NOW.plusDays(5));
+        Dose incoming = incomingFor(reminder, NOW.plusDays(6));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.BAD_REQUEST, NOT_ACTIVE_MESSAGE));
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerTheFirstDayBeforeStartTimeIs400() {
+        Reminder reminder = reminderWithValidTreatment();
+        reminder.getTreatment().setStartDate(NOW.plusDays(1));
+        reminder.getTreatment().setStartTime(LocalTime.of(9, 0));
+        Dose incoming = incomingFor(reminder, LocalDateTime.of(2026, 10, 14, 8, 59));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.BAD_REQUEST, NOT_ACTIVE_MESSAGE));
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerTheLastDayAfterEndTimeIs400() {
+        Reminder reminder = reminderWithValidTreatment();
+        reminder.getTreatment().setEndDate(NOW.plusDays(5));
+        reminder.getTreatment().setEndTime(LocalTime.of(18, 0));
+        Dose incoming = incomingFor(reminder, LocalDateTime.of(2026, 10, 18, 18, 1));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.BAD_REQUEST, NOT_ACTIVE_MESSAGE));
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerUsesTheScheduledAtTimeAndNotTheReminderTimeForTheTreatmentHours() {
+        Reminder reminder = reminderWithValidTreatment();
+        reminder.setTime(LocalTime.of(10, 0));
+        reminder.getTreatment().setStartDate(NOW.plusDays(1));
+        reminder.getTreatment().setStartTime(LocalTime.of(9, 0));
+        Dose incoming = incomingFor(reminder, LocalDateTime.of(2026, 10, 14, 8, 0));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.BAD_REQUEST, NOT_ACTIVE_MESSAGE));
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerASecondDoseOfTheDayIs409AndChecksTheWholeDay() {
+        Reminder reminder = reminderWithValidTreatment();
+        Dose incoming = incomingFor(reminder, NOW.plusHours(1));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+        when(doseRepository.existsByReminderIdAndScheduledAtGreaterThanEqualAndScheduledAtLessThanAndDeletedAtIsNull(
+                reminder.getId(), LocalDateTime.of(2026, 10, 13, 0, 0), LocalDateTime.of(2026, 10, 14, 0, 0)))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.CONFLICT,
+                        "Ese recordatorio ya tiene una toma ese día"));
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerAnExactDuplicateIs409AndDoesNotCheckTheDayRule() {
+        Reminder reminder = reminderWithValidTreatment();
+        Dose incoming = incomingFor(reminder, NOW.plusHours(1));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+        when(doseRepository.existsByReminderIdAndScheduledAt(reminder.getId(), incoming.getScheduledAt()))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.CONFLICT,
+                        "Ya existe una toma de ese recordatorio en ese horario"));
+        verify(doseRepository, never())
+                .existsByReminderIdAndScheduledAtGreaterThanEqualAndScheduledAtLessThanAndDeletedAtIsNull(
+                        any(), any(), any());
+        verify(doseRepository, never()).save(any());
+    }
+
+    @Test
+    void registerAPastTimeOnAForeignReminderIs404AndChecksNoRule() {
+        UUID reminderId = UUID.randomUUID();
+        Dose incoming = dose(Dose.DoseStatus.PENDING);
+        incoming.setReminder(Reminder.builder().id(reminderId).build());
+        incoming.setScheduledAt(NOW.minusDays(1));
+        when(accessPolicy.requireReminder(principal, reminderId))
+                .thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND));
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        verifyNoInteractions(doseRepository);
+    }
+
+    @Test
+    void registerAPastTimeOnAnInactiveReminderReportsThePastRuleFirst() {
+        Reminder reminder = reminderWithValidTreatment();
+        reminder.setActive(false);
+        Dose incoming = incomingFor(reminder, NOW.minusDays(1));
+        when(accessPolicy.requireReminder(principal, reminder.getId())).thenReturn(reminder);
+
+        assertThatThrownBy(() -> service.register(principal, incoming))
+                .satisfies(e -> assertRejected(e, HttpStatus.BAD_REQUEST, PAST_MESSAGE));
     }
 
     @Test
@@ -691,6 +976,178 @@ class DoseServiceTest {
                 LocalDate.of(2026, 10, 15).atStartOfDay())).thenReturn(List.of(dose(Dose.DoseStatus.PENDING)));
 
         assertThat(service.findByUserAndDate(principal, principal.id(), LocalDate.of(2026, 10, 14))).hasSize(1);
+    }
+
+    private static final LocalDate FROM = LocalDate.of(2026, 10, 1);
+    private static final LocalDate TO = LocalDate.of(2026, 10, 31);
+
+    private void stubHistory(List<Dose> doses) {
+        when(doseRepository.findHistory(eq(principal.id()), any(), any(), eq(Dose.DoseStatus.PENDING)))
+                .thenReturn(doses);
+    }
+
+    private Treatment treatmentOf(UUID treatmentId, UUID ownerId) {
+        return Treatment.builder().id(treatmentId).user(User.builder().id(ownerId).build()).build();
+    }
+
+    @Test
+    void adherenceCountsEachStateAndKeepsUpcomingOutOfTheTotal() {
+        stubHistory(List.of(
+                doseAt(Dose.DoseStatus.CONFIRMED, NOW.minusDays(1)),
+                doseAt(Dose.DoseStatus.CONFIRMED, NOW.minusHours(5)),
+                doseAt(Dose.DoseStatus.SKIPPED, NOW.minusHours(6)),
+                doseAt(Dose.DoseStatus.PENDING, NOW),
+                doseAt(Dose.DoseStatus.PENDING, NOW.plusMinutes(1))));
+
+        DoseAdherenceDTO result = service.getAdherence(principal, principal.id(), FROM, TO, null);
+
+        assertThat(result.getTotal()).isEqualTo(4);
+        assertThat(result.getConfirmed()).isEqualTo(2);
+        assertThat(result.getSkipped()).isEqualTo(1);
+        assertThat(result.getOverduePending()).isEqualTo(1);
+        assertThat(result.getUpcoming()).isEqualTo(1);
+        assertThat(result.getPercentage()).isEqualTo(50);
+        assertThat(result.getFrom()).isEqualTo(FROM);
+        assertThat(result.getTo()).isEqualTo(TO);
+        assertThat(result.getTreatmentId()).isNull();
+    }
+
+    @Test
+    void adherenceWithoutDosesIsAllZerosAndNullPercentage() {
+        stubHistory(List.of());
+
+        DoseAdherenceDTO result = service.getAdherence(principal, principal.id(), FROM, TO, null);
+
+        assertThat(result.getTotal()).isZero();
+        assertThat(result.getConfirmed()).isZero();
+        assertThat(result.getSkipped()).isZero();
+        assertThat(result.getOverduePending()).isZero();
+        assertThat(result.getUpcoming()).isZero();
+        assertThat(result.getPercentage()).isNull();
+    }
+
+    @Test
+    void adherencePercentageRoundsHalfUp() {
+        // 1 de 8 = 12,5 % -> 13
+        List<Dose> doses = new java.util.ArrayList<>();
+        doses.add(doseAt(Dose.DoseStatus.CONFIRMED, NOW.minusDays(1)));
+        for (int i = 0; i < 7; i++) {
+            doses.add(doseAt(Dose.DoseStatus.SKIPPED, NOW.minusDays(1)));
+        }
+        stubHistory(doses);
+
+        assertThat(service.getAdherence(principal, principal.id(), FROM, TO, null).getPercentage())
+                .isEqualTo(13);
+    }
+
+    @Test
+    void historyRangeEndingBeforeItStartsIs400() {
+        assertThatThrownBy(() -> service.getHistory(principal, principal.id(), TO, FROM, null))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        verify(doseRepository, never()).findHistory(any(), any(), any(), any());
+    }
+
+    @Test
+    void historyRangeOf93DaysIs400() {
+        assertThatThrownBy(() -> service.getHistory(principal, principal.id(), FROM, FROM.plusDays(93), null))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        verify(doseRepository, never()).findHistory(any(), any(), any(), any());
+    }
+
+    @Test
+    void historyRangeOf92DaysIsAccepted() {
+        stubHistory(List.of());
+
+        assertThat(service.getHistory(principal, principal.id(), FROM, FROM.plusDays(92), null)).isEmpty();
+    }
+
+    @Test
+    void historyQueriesFromStartOfFromUntilStartOfDayAfterTo() {
+        stubHistory(List.of());
+
+        service.getHistory(principal, principal.id(), FROM, TO, null);
+
+        verify(doseRepository).findHistory(principal.id(), LocalDateTime.of(2026, 10, 1, 0, 0),
+                LocalDateTime.of(2026, 11, 1, 0, 0), Dose.DoseStatus.PENDING);
+    }
+
+    @Test
+    void historyWithoutTreatmentDoesNotLookUpTreatments() {
+        stubHistory(List.of());
+
+        service.getHistory(principal, principal.id(), FROM, TO, null);
+
+        verify(doseRepository).findHistory(any(), any(), any(), any());
+        verify(doseRepository, never()).findHistoryByTreatment(any(), any(), any(), any(), any());
+        verifyNoInteractions(treatmentRepository);
+    }
+
+    @Test
+    void historyWithAnOwnTreatmentUsesTheTreatmentQuery() {
+        UUID treatmentId = UUID.randomUUID();
+        when(treatmentRepository.findByIdAndDeletedAtIsNull(treatmentId))
+                .thenReturn(Optional.of(treatmentOf(treatmentId, principal.id())));
+        when(doseRepository.findHistoryByTreatment(principal.id(), treatmentId,
+                LocalDateTime.of(2026, 10, 1, 0, 0), LocalDateTime.of(2026, 11, 1, 0, 0),
+                Dose.DoseStatus.PENDING)).thenReturn(List.of());
+
+        assertThat(service.getHistory(principal, principal.id(), FROM, TO, treatmentId)).isEmpty();
+        verify(doseRepository, never()).findHistory(any(), any(), any(), any());
+    }
+
+    @Test
+    void historyWithATreatmentOfAnotherUserIs404() {
+        UUID treatmentId = UUID.randomUUID();
+        when(treatmentRepository.findByIdAndDeletedAtIsNull(treatmentId))
+                .thenReturn(Optional.of(treatmentOf(treatmentId, UUID.randomUUID())));
+
+        assertThatThrownBy(() -> service.getHistory(principal, principal.id(), FROM, TO, treatmentId))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        verifyNoInteractions(doseRepository);
+    }
+
+    @Test
+    void historyAndAdherenceWithAMissingOrDeletedTreatmentAre404() {
+        UUID treatmentId = UUID.randomUUID();
+        when(treatmentRepository.findByIdAndDeletedAtIsNull(treatmentId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getHistory(principal, principal.id(), FROM, TO, treatmentId))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        assertThatThrownBy(() -> service.getAdherence(principal, principal.id(), FROM, TO, treatmentId))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND));
+        verifyNoInteractions(doseRepository);
+    }
+
+    @Test
+    void adherencePercentageWithAnOddTotalRoundsToTheNearestInteger() {
+        // 2 de 3 = 66,67 % -> 67
+        stubHistory(List.of(
+                doseAt(Dose.DoseStatus.CONFIRMED, NOW.minusDays(1)),
+                doseAt(Dose.DoseStatus.CONFIRMED, NOW.minusDays(2)),
+                doseAt(Dose.DoseStatus.SKIPPED, NOW.minusDays(3))));
+        assertThat(service.getAdherence(principal, principal.id(), FROM, TO, null).getPercentage())
+                .isEqualTo(67);
+
+        // 1 de 3 = 33,33 % -> 33
+        stubHistory(List.of(
+                doseAt(Dose.DoseStatus.CONFIRMED, NOW.minusDays(1)),
+                doseAt(Dose.DoseStatus.SKIPPED, NOW.minusDays(2)),
+                doseAt(Dose.DoseStatus.SKIPPED, NOW.minusDays(3))));
+        assertThat(service.getAdherence(principal, principal.id(), FROM, TO, null).getPercentage())
+                .isEqualTo(33);
+    }
+
+    @Test
+    void historyOfSomeoneElseIs403AndTouchesNoRepository() {
+        UUID other = UUID.randomUUID();
+        doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN))
+                .when(accessPolicy).requireCanManagePatient(principal, other);
+
+        assertThatThrownBy(() -> service.getHistory(principal, other, FROM, TO, UUID.randomUUID()))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+        assertThatThrownBy(() -> service.getAdherence(principal, other, FROM, TO, null))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+        verifyNoInteractions(doseRepository, treatmentRepository);
     }
 
     @Test
