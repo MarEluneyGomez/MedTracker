@@ -8,12 +8,14 @@ import { colors } from '../theme/colors';
 import TreatmentsStack from './TreatmentsStack';
 import { useDoseNotificationsSync } from '../hooks/useDoseNotificationsSync';
 import { useOpenTodayOnNotificationTap } from '../hooks/useOpenTodayOnNotificationTap';
+import { usePushTokenRegistration } from '../hooks/usePushTokenRegistration';
 
 const Tab = createBottomTabNavigator();
 
 export default function PatientTabs() {
   useDoseNotificationsSync();
   useOpenTodayOnNotificationTap();
+  usePushTokenRegistration();
   return (
     <Tab.Navigator
       screenOptions={{
