@@ -85,7 +85,7 @@ Cuentan las tomas ya marcadas, aunque se hayan marcado antes de hora, y las pend
 
 ## Notificaciones
 
-Cubre RF-06 con notificaciones locales: el celular avisa cada toma a su hora con el texto del recordatorio ("Hora de tu medicación: Tomar 400 mg de Ibuprofeno"), sin depender de la conexión ni del servidor.
+Cubre RF-06 con notificaciones locales: el celular avisa cada toma a su hora ("Recordatorio de medicación: Es hora de tu toma"), sin depender de la conexión ni del servidor. El aviso no nombra el medicamento, igual que el push del backend, porque se ve con el teléfono bloqueado y es un dato de salud.
 
 - **Qué se programa:** la app calcula las tomas que vienen con las mismas reglas con las que el backend las genera (días de la semana, cada N días, fechas e horas de inicio y fin del tratamiento, tratamientos completados) en `src/utils/upcomingDoses.ts`. Cada una es una notificación de un solo disparo, sin repeticiones del sistema, así nunca suena un horario que ya no existe.
 - **Tomas ya marcadas:** las de hoy que ya están confirmadas u omitidas no suenan, incluidas las marcadas sin conexión.
