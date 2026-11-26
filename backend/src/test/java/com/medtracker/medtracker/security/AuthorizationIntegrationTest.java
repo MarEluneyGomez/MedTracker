@@ -169,6 +169,11 @@ class AuthorizationIntegrationTest {
         RefreshTokenService refreshTokenService() {
             return Mockito.mock(RefreshTokenService.class);
         }
+
+        @Bean
+        com.medtracker.medtracker.service.AccountDeactivationService accountDeactivationService() {
+            return Mockito.mock(com.medtracker.medtracker.service.AccountDeactivationService.class);
+        }
     }
 
     @Autowired
@@ -239,8 +244,8 @@ class AuthorizationIntegrationTest {
         Mockito.reset(userRepository, treatmentRepository, medicationRepository, reminderRepository, doseRepository,
                 appointmentRepository, caregiverLinkRepository, medicalHistoryRepository, notificationRepository);
         // Todos los usuarios figuran vigentes: lo usa el filtro JWT (el usuario del token debe
-        // seguir vigente) y también AccessPolicy (el paciente de un cuidador no debe estar dado
-        // de baja). Los tests de baja lo pisan solo para el id del paciente.
+        // seguir vigente). La baja de un lado del vínculo la filtran las consultas de vínculos:
+        // los tests de baja las pisan con deactivatePatientA().
         when(userRepository.existsByIdAndDeletedAtIsNull(any())).thenReturn(true);
         when(medicationRepository.findById(1)).thenReturn(Optional.of(medication()));
         mockMvc =MockMvcBuilders.webAppContextSetup(context)
@@ -326,8 +331,11 @@ class AuthorizationIntegrationTest {
         when(notificationRepository.save(any(Notification.class))).thenAnswer(inv -> inv.getArgument(0));
         CaregiverLink link = CaregiverLink.builder().id(new CaregiverLinkId(caregiver.getId(), a.getId()))
                 .caregiver(caregiver).patient(a).build();
-        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), a.getId()))
+        when(caregiverLinkRepository.existsActiveBetweenActiveUsers(caregiver.getId(), a.getId()))
                 .thenReturn(true);
+        when(caregiverLinkRepository.findByCaregiverBetweenActiveUsers(caregiver.getId())).thenReturn(List.of(link));
+        when(caregiverLinkRepository.findByPatientBetweenActiveUsers(a.getId())).thenReturn(List.of(link));
+        // GET /caregiver-links sigue usando las consultas que solo miran la baja del vínculo
         when(caregiverLinkRepository.findByCaregiver_IdAndDeletedAtIsNull(caregiver.getId())).thenReturn(List.of(link));
         when(caregiverLinkRepository.findByPatient_IdAndDeletedAtIsNull(a.getId())).thenReturn(List.of(link));
         when(caregiverLinkRepository.findById(link.getId())).thenReturn(Optional.of(link));
@@ -526,7 +534,7 @@ class AuthorizationIntegrationTest {
     @Test
     void aCaregiverOfTwoPatientsCannotUseThePatientsTreatmentForTheOtherOne() throws Exception {
         // El cuidador ya está vinculado a a (setUp); se lo vincula también a b
-        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), b.getId()))
+        when(caregiverLinkRepository.existsActiveBetweenActiveUsers(caregiver.getId(), b.getId()))
                 .thenReturn(true);
 
         for (String endpoint : List.of("history", "adherence")) {
@@ -589,7 +597,7 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(b, put("/treatments/" + treatmentA.getId() + "/reopen"))).andExpect(status().isNotFound());
         mockMvc.perform(as(doctor, put("/treatments/" + treatmentA.getId() + "/reopen")))
                 .andExpect(status().isNotFound());
-        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), a.getId()))
+        when(caregiverLinkRepository.existsActiveBetweenActiveUsers(caregiver.getId(), a.getId()))
                 .thenReturn(false);
         mockMvc.perform(as(caregiver, put("/treatments/" + treatmentA.getId() + "/reopen")))
                 .andExpect(status().isNotFound());
@@ -627,7 +635,7 @@ class AuthorizationIntegrationTest {
         doseA.setScheduledAt(LocalDateTime.now(java.time.ZoneOffset.UTC));
         mockMvc.perform(as(b, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isNotFound());
         mockMvc.perform(as(doctor, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isNotFound());
-        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), a.getId()))
+        when(caregiverLinkRepository.existsActiveBetweenActiveUsers(caregiver.getId(), a.getId()))
                 .thenReturn(false);
         mockMvc.perform(as(caregiver, put("/doses/" + doseA.getId() + "/undo"))).andExpect(status().isNotFound());
         mockMvc.perform(put("/doses/" + doseA.getId() + "/undo")).andExpect(status().isUnauthorized());
@@ -654,7 +662,7 @@ class AuthorizationIntegrationTest {
     void aCaregiverWhoseLinkWasRemovedCannotReadNorWriteTheTreatment() throws Exception {
         String body = "{\"dosage\":\"9\",\"frequency\":\"x\",\"startDate\":\"2026-10-01T08:00:00\","
                 + "\"completed\":false}";
-        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), a.getId()))
+        when(caregiverLinkRepository.existsActiveBetweenActiveUsers(caregiver.getId(), a.getId()))
                 .thenReturn(false);
 
         mockMvc.perform(as(caregiver, get("/treatments/" + treatmentA.getId()))).andExpect(status().isNotFound());
@@ -669,7 +677,7 @@ class AuthorizationIntegrationTest {
 
     @Test
     void aCaregiverWhoseLinkWasRemovedGets404OnTheirFormerPatientsTreatment() throws Exception {
-        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiver.getId(), a.getId()))
+        when(caregiverLinkRepository.existsActiveBetweenActiveUsers(caregiver.getId(), a.getId()))
                 .thenReturn(false);
 
         mockMvc.perform(as(caregiver, get("/treatments/" + treatmentA.getId()))).andExpect(status().isNotFound());
@@ -677,15 +685,22 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(caregiver, put("/doses/" + doseA.getId() + "/confirm"))).andExpect(status().isNotFound());
     }
 
-    // El vínculo sigue activo, pero el paciente está dado de baja (user.deleted_at no nulo).
-    // El stub específico gana sobre el any() global solo para ese id: el cuidador sigue vigente.
+    // La baja del paciente A se simula con las consultas de vínculos, que filtran la baja y dejan
+    // de devolverlo: acá es equivalente a un vínculo eliminado. Los tests "WhoWasDeactivated"
+    // comprueban las respuestas ante eso, no el filtro por user.deleted_at de las consultas.
+    private void deactivatePatientA() {
+        when(caregiverLinkRepository.existsActiveBetweenActiveUsers(caregiver.getId(), a.getId())).thenReturn(false);
+        when(caregiverLinkRepository.findByCaregiverBetweenActiveUsers(caregiver.getId())).thenReturn(List.of());
+        when(caregiverLinkRepository.findByPatientBetweenActiveUsers(a.getId())).thenReturn(List.of());
+    }
+
     @Test
     void aCaregiverGets403OnTheUserListingsOfAPatientWhoWasDeactivated() throws Exception {
         // control: con el paciente activo, las mismas rutas responden 200
         mockMvc.perform(as(caregiver, get("/treatments/user/" + a.getId()))).andExpect(status().isOk());
         mockMvc.perform(as(caregiver, get("/doses/user/" + a.getId()))).andExpect(status().isOk());
 
-        when(userRepository.existsByIdAndDeletedAtIsNull(a.getId())).thenReturn(false);
+        deactivatePatientA();
 
         mockMvc.perform(as(caregiver, get("/treatments/user/" + a.getId()))).andExpect(status().isForbidden());
         mockMvc.perform(as(caregiver, get("/doses/user/" + a.getId()))).andExpect(status().isForbidden());
@@ -696,7 +711,7 @@ class AuthorizationIntegrationTest {
         // control: con el paciente activo la misma ruta responde 200
         mockMvc.perform(as(caregiver, get("/treatments/" + treatmentA.getId()))).andExpect(status().isOk());
 
-        when(userRepository.existsByIdAndDeletedAtIsNull(a.getId())).thenReturn(false);
+        deactivatePatientA();
 
         mockMvc.perform(as(caregiver, get("/treatments/" + treatmentA.getId()))).andExpect(status().isNotFound());
     }
@@ -707,7 +722,7 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(caregiver, get("/reminders/" + reminderA.getId()))).andExpect(status().isOk());
         mockMvc.perform(as(caregiver, get("/doses/" + doseA.getId()))).andExpect(status().isOk());
 
-        when(userRepository.existsByIdAndDeletedAtIsNull(a.getId())).thenReturn(false);
+        deactivatePatientA();
 
         mockMvc.perform(as(caregiver, get("/reminders/" + reminderA.getId()))).andExpect(status().isNotFound());
         mockMvc.perform(as(caregiver, get("/doses/" + doseA.getId()))).andExpect(status().isNotFound());
@@ -720,11 +735,12 @@ class AuthorizationIntegrationTest {
         // control: con el paciente activo el alta responde 201
         mockMvc.perform(as(caregiver, json(post("/treatments/register"), forA))).andExpect(status().isCreated());
 
-        when(userRepository.existsByIdAndDeletedAtIsNull(a.getId())).thenReturn(false);
+        deactivatePatientA();
 
         mockMvc.perform(as(caregiver, json(post("/treatments/register"), forA))).andExpect(status().isForbidden());
-        // el 403 se debe a la baja: el paciente fue consultado y la alta rechazada no persiste
-        verify(userRepository, Mockito.atLeastOnce()).existsByIdAndDeletedAtIsNull(a.getId());
+        // el 403 sale de la consulta de vínculos que filtra la baja y la alta rechazada no persiste
+        verify(caregiverLinkRepository, Mockito.atLeastOnce())
+                .existsActiveBetweenActiveUsers(caregiver.getId(), a.getId());
         verify(treatmentRepository, Mockito.times(1)).save(any());
     }
 

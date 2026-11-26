@@ -15,7 +15,6 @@ import com.medtracker.medtracker.repository.MedicalHistoryRepository;
 import com.medtracker.medtracker.repository.NotificationRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
-import com.medtracker.medtracker.repository.UserRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -30,9 +29,9 @@ import java.util.UUID;
 // token (AuthenticatedUser), nunca con un id que mande el cliente. Un recurso
 // ajeno, inexistente o eliminado lógicamente responde igual: 404. Un id de
 // usuario ajeno nombrado explícitamente (registro, listados por usuario)
-// responde 403. Un paciente dado de baja deja de ser accesible para sus cuidadores
-// (cuenta como "sin vínculo"): 403 donde se nombra al usuario (listados por usuario
-// y altas), 404 por id de recurso.
+// responde 403. Un vínculo con el cuidador o el paciente dado de baja cuenta como
+// "sin vínculo": 403 donde se nombra al usuario (listados por usuario y altas),
+// 404 por id de recurso.
 @Component
 @RequiredArgsConstructor
 public class AccessPolicy {
@@ -44,10 +43,9 @@ public class AccessPolicy {
     private final CaregiverLinkRepository caregiverLinkRepository;
     private final MedicalHistoryRepository medicalHistoryRepository;
     private final NotificationRepository notificationRepository;
-    private final UserRepository userRepository;
 
     // El propio usuario, o un cuidador con vínculo activo con ese paciente. Un
-    // paciente dado de baja cuenta como "sin vínculo" (ver hasActiveLink). El propio
+    // usuario dado de baja cuenta como "sin vínculo" (ver hasActiveLink). El propio
     // usuario no consulta la base: el filtro JWT ya rechaza tokens de usuarios dados de baja.
     public boolean canManagePatient(AuthenticatedUser principal, UUID patientId) {
         return principal.id().equals(patientId) || hasActiveLink(principal.id(), patientId);
@@ -63,9 +61,7 @@ public class AccessPolicy {
     public Set<UUID> manageablePatientIds(AuthenticatedUser principal) {
         Set<UUID> ids = new HashSet<>();
         ids.add(principal.id());
-        caregiverLinkRepository.findByCaregiver_IdAndDeletedAtIsNull(principal.id())
-                .stream()
-                .filter(link -> link.getPatient().getDeletedAt() == null)
+        caregiverLinkRepository.findByCaregiverBetweenActiveUsers(principal.id())
                 .forEach(link -> ids.add(link.getPatient().getId()));
         return ids;
     }
@@ -74,16 +70,14 @@ public class AccessPolicy {
     // cualquier sentido (sus pacientes si es cuidador, sus cuidadores si es paciente)
     public Set<UUID> relatedUserIds(AuthenticatedUser principal) {
         Set<UUID> ids = manageablePatientIds(principal);
-        caregiverLinkRepository.findByPatient_IdAndDeletedAtIsNull(principal.id())
+        caregiverLinkRepository.findByPatientBetweenActiveUsers(principal.id())
                 .forEach(link -> ids.add(link.getCaregiver().getId()));
         return ids;
     }
 
-    // Vínculo cuidador-paciente activo Y paciente no dado de baja (user.deleted_at nulo).
-    // Se chequea primero el vínculo: sin vínculo no se consulta al usuario.
+    // Vínculo cuidador-paciente activo y ninguno de los dos dado de baja (user.deleted_at nulo)
     public boolean hasActiveLink(UUID caregiverId, UUID patientId) {
-        return caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(caregiverId, patientId)
-                && userRepository.existsByIdAndDeletedAtIsNull(patientId);
+        return caregiverLinkRepository.existsActiveBetweenActiveUsers(caregiverId, patientId);
     }
 
     // ¿Los dos usuarios tienen un vínculo cuidador-paciente activo, en cualquier sentido?
@@ -202,9 +196,8 @@ public class AccessPolicy {
     }
 
     // Vínculo vigente del que el usuario forma parte (como cuidador o como paciente).
-    // NO considera la baja del paciente, a propósito: así un cuidador puede quitarse un
-    // vínculo hacia un paciente dado de baja (el endpoint de baja de usuarios futuro
-    // revocará esos vínculos).
+    // NO considera la baja de los usuarios, a propósito: así un cuidador puede quitarse un
+    // vínculo hacia un paciente dado de baja (la baja de usuario ya revoca sus vínculos).
     public CaregiverLink requireLink(AuthenticatedUser principal, UUID caregiverId, UUID patientId) {
         return caregiverLinkRepository.findById(new CaregiverLinkId(caregiverId, patientId))
                 .filter(link -> link.getDeletedAt() == null)

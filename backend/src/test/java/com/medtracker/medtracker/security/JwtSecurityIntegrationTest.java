@@ -82,6 +82,11 @@ class JwtSecurityIntegrationTest {
         UserRepository userRepository() {
             return Mockito.mock(UserRepository.class);
         }
+
+        @Bean
+        com.medtracker.medtracker.service.AccountDeactivationService accountDeactivationService() {
+            return Mockito.mock(com.medtracker.medtracker.service.AccountDeactivationService.class);
+        }
     }
 
     @RestController

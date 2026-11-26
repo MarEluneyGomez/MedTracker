@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -162,13 +163,44 @@ class CaregiverLinkServiceTest {
         CaregiverLink notMine = CaregiverLink.builder().caregiver(caregiver).patient(otherPatient).build();
         mine.setCaregiver(caregiver);
         mine.setPatient(patient);
-        when(caregiverLinkRepository.findByCaregiver_IdAndDeletedAtIsNull(caregiver.getId()))
+        when(caregiverLinkRepository.findByCaregiverBetweenActiveUsers(caregiver.getId()))
                 .thenReturn(List.of(mine, notMine));
         AuthenticatedUser stranger = new AuthenticatedUser(UUID.randomUUID(), User.Role.PATIENT);
 
         assertThat(service.findByCaregiver(patientPrincipal, caregiver.getId())).containsExactly(mine);
         assertThat(service.findByCaregiver(caregiverPrincipal, caregiver.getId())).hasSize(2);
         assertThat(service.findByCaregiver(stranger, caregiver.getId())).isEmpty();
+    }
+
+    // El vínculo sigue en las consultas sin filtro de baja, pero la que filtra no lo devuelve
+    @Test
+    void listingByCaregiverLeavesOutLinksWithADeactivatedUser() {
+        CaregiverLink link = CaregiverLink.builder().caregiver(caregiver).patient(patient).build();
+        lenient().when(caregiverLinkRepository.findByCaregiver_IdAndDeletedAtIsNull(caregiver.getId()))
+                .thenReturn(List.of(link));
+        when(caregiverLinkRepository.findByCaregiverBetweenActiveUsers(caregiver.getId())).thenReturn(List.of());
+
+        assertThat(service.findByCaregiver(caregiverPrincipal, caregiver.getId())).isEmpty();
+        verify(caregiverLinkRepository, never()).findByCaregiver_IdAndDeletedAtIsNull(any());
+    }
+
+    @Test
+    void listingByPatientLeavesOutLinksWithADeactivatedUser() {
+        CaregiverLink link = CaregiverLink.builder().caregiver(caregiver).patient(patient).build();
+        lenient().when(caregiverLinkRepository.findByPatient_IdAndDeletedAtIsNull(patient.getId()))
+                .thenReturn(List.of(link));
+        when(caregiverLinkRepository.findByPatientBetweenActiveUsers(patient.getId())).thenReturn(List.of());
+
+        assertThat(service.findByPatient(patientPrincipal, patient.getId())).isEmpty();
+        verify(caregiverLinkRepository, never()).findByPatient_IdAndDeletedAtIsNull(any());
+    }
+
+    @Test
+    void listingByPatientReturnsTheLinksOfTheFilteredQuery() {
+        CaregiverLink link = CaregiverLink.builder().caregiver(caregiver).patient(patient).build();
+        when(caregiverLinkRepository.findByPatientBetweenActiveUsers(patient.getId())).thenReturn(List.of(link));
+
+        assertThat(service.findByPatient(patientPrincipal, patient.getId())).containsExactly(link);
     }
 
     @Test

@@ -52,7 +52,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.junit.jupiter.web.SpringJUnitWebConfig;
@@ -79,8 +81,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -179,6 +184,11 @@ class RequestValidationIntegrationTest {
         RefreshTokenService refreshTokenService() {
             return Mockito.mock(RefreshTokenService.class);
         }
+
+        @Bean
+        com.medtracker.medtracker.service.AccountDeactivationService accountDeactivationService() {
+            return Mockito.mock(com.medtracker.medtracker.service.AccountDeactivationService.class);
+        }
     }
 
     @Autowired
@@ -205,6 +215,8 @@ class RequestValidationIntegrationTest {
     private CaregiverLinkRepository caregiverLinkRepository;
     @Autowired
     private DoseGenerationService doseGenerationService;
+    @Autowired
+    private com.medtracker.medtracker.service.AccountDeactivationService accountDeactivationService;
 
     private MockMvc mockMvc;
 
@@ -232,7 +244,20 @@ class RequestValidationIntegrationTest {
     @BeforeEach
     void setUp() {
         Mockito.reset(userRepository, treatmentRepository, medicationRepository, reminderRepository,
-                doseRepository, appointmentRepository, medicalHistoryRepository, caregiverLinkRepository);
+                doseRepository, appointmentRepository, medicalHistoryRepository, caregiverLinkRepository,
+                accountDeactivationService);
+        // Guardar el token push es un UPDATE condicional en la base, que el repositorio mockeado
+        // no ejecuta: se imita sobre los usuarios en memoria
+        when(userRepository.updateFcmTokenIfActive(any(), any(), any())).thenAnswer(inv -> {
+            UUID id = inv.getArgument(0);
+            for (User u : List.of(a, b, doctor, caregiver)) {
+                if (u.getId().equals(id)) {
+                    u.setFcmToken(inv.getArgument(1));
+                    return 1;
+                }
+            }
+            return 0;
+        });
         // El filtro JWT comprueba que el usuario del token siga vigente
         when(userRepository.existsByIdAndDeletedAtIsNull(any())).thenReturn(true);
         mockMvc = MockMvcBuilders.webAppContextSetup(context)
@@ -335,8 +360,8 @@ class RequestValidationIntegrationTest {
                 .andExpect(status().isNoContent())
                 .andExpect(content().string(""));
 
-        assertThat(a.getFcmToken()).isEqualTo("token-nuevo");
-        verify(userRepository).save(a);
+        verify(userRepository).updateFcmTokenIfActive(eq(a.getId()), eq("token-nuevo"), any());
+        verify(userRepository, never()).save(any(User.class));
     }
 
     @Test
@@ -344,6 +369,7 @@ class RequestValidationIntegrationTest {
         mockMvc.perform(json(put("/users/me/fcm-token"), "{\"fcmToken\":\"token-nuevo\"}"))
                 .andExpect(status().isUnauthorized());
         verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).updateFcmTokenIfActive(any(), any(), any());
     }
 
     @Test
@@ -354,6 +380,7 @@ class RequestValidationIntegrationTest {
                     "/users/me/fcm-token", "Campos inválidos: fcmToken");
         }
         verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).updateFcmTokenIfActive(any(), any(), any());
     }
 
     @Test
@@ -363,6 +390,7 @@ class RequestValidationIntegrationTest {
                         "{\"fcmToken\":\"" + tooLong + "\"}")),
                 "/users/me/fcm-token", "Campos inválidos: fcmToken", tooLong);
         verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).updateFcmTokenIfActive(any(), any(), any());
 
         String maxLength = "y".repeat(255);
         mockMvc.perform(json(as(a, put("/users/me/fcm-token")), "{\"fcmToken\":\"" + maxLength + "\"}"))
@@ -378,6 +406,7 @@ class RequestValidationIntegrationTest {
                         "{\"fcmToken\":\"token-ilegible")),
                 "/users/me/fcm-token", "El cuerpo de la solicitud no es válido", "token-ilegible");
         verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).updateFcmTokenIfActive(any(), any(), any());
     }
 
     // El límite de 255 se mide sobre el valor enviado, antes de quitar los espacios
@@ -388,6 +417,7 @@ class RequestValidationIntegrationTest {
                         "{\"fcmToken\":\"" + padded + "\"}")),
                 "/users/me/fcm-token", "Campos inválidos: fcmToken", "z".repeat(255));
         verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).updateFcmTokenIfActive(any(), any(), any());
     }
 
     // \u0001 no es un espacio para @NotBlank, pero trim() lo recorta: queda vacío
@@ -399,6 +429,7 @@ class RequestValidationIntegrationTest {
                 "/users/me/fcm-token", "Campos inválidos: fcmToken");
         assertThat(a.getFcmToken()).isEqualTo("token-viejo");
         verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).updateFcmTokenIfActive(any(), any(), any());
     }
 
     @Test
@@ -408,13 +439,112 @@ class RequestValidationIntegrationTest {
                         "{\"fcmToken\":\"token-nuevo\",\"id\":\"" + b.getId() + "\",\"role\":\"DOCTOR\"}"))
                 .andExpect(status().isNoContent());
 
-        assertThat(a.getFcmToken()).isEqualTo("token-nuevo");
         assertThat(a.getRole()).isEqualTo(User.Role.PATIENT);
         assertThat(a.getId()).isNotEqualTo(b.getId());
         assertThat(b.getFcmToken()).isEqualTo("token-de-b");
         assertThat(b.getRole()).isEqualTo(User.Role.PATIENT);
-        verify(userRepository).save(a);
-        verify(userRepository, never()).save(b);
+        verify(userRepository).updateFcmTokenIfActive(eq(a.getId()), eq("token-nuevo"), any());
+        verify(userRepository, never()).updateFcmTokenIfActive(eq(b.getId()), any(), any());
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    // ---------------------------------------------------------------- baja de usuario
+
+    private static String deactivation(String password) {
+        return "{\"password\":\"" + password + "\"}";
+    }
+
+    @Test
+    void deactivatingWithAValidBodyAnswers204WithoutBody() throws Exception {
+        mockMvc.perform(json(as(a, post("/users/me/deactivate")), deactivation("clave-de-prueba")))
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        verify(accountDeactivationService).deactivate(eq(new AuthenticatedUser(a.getId(), User.Role.PATIENT)),
+                eq("clave-de-prueba"), any());
+    }
+
+    @Test
+    void deactivatingWithoutABodyIs400() throws Exception {
+        assertInvalid(mockMvc.perform(as(a, post("/users/me/deactivate")).contentType(MediaType.APPLICATION_JSON)),
+                "/users/me/deactivate", "El cuerpo de la solicitud no es válido");
+        verifyNoInteractions(accountDeactivationService);
+    }
+
+    @Test
+    void deactivatingWithAMissingOrBlankPasswordIs400() throws Exception {
+        for (String body : new String[] {"{}", "{\"password\":null}", "{\"password\":\"\"}",
+                "{\"password\":\"     \"}"}) {
+            assertInvalid(mockMvc.perform(json(as(a, post("/users/me/deactivate")), body)),
+                    "/users/me/deactivate", "Campos inválidos: password");
+        }
+        verifyNoInteractions(accountDeactivationService);
+    }
+
+    @Test
+    void deactivatingWithAPasswordOver128CharactersIs400AndExactly128IsAccepted() throws Exception {
+        String tooLong = "x".repeat(129);
+        assertInvalid(mockMvc.perform(json(as(a, post("/users/me/deactivate")), deactivation(tooLong))),
+                "/users/me/deactivate", "Campos inválidos: password", tooLong);
+        verifyNoInteractions(accountDeactivationService);
+
+        mockMvc.perform(json(as(a, post("/users/me/deactivate")), deactivation("y".repeat(128))))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void deactivatingWithoutBearerIs401() throws Exception {
+        mockMvc.perform(json(post("/users/me/deactivate"), deactivation("clave-de-prueba")))
+                .andExpect(status().isUnauthorized());
+        verifyNoInteractions(accountDeactivationService);
+    }
+
+    // Lo que lance el servicio sale con su status y su mensaje en el formato común de error
+    private void assertDeactivationError(HttpStatus thrown, String error, String message) throws Exception {
+        doThrow(new ResponseStatusException(thrown, message))
+                .when(accountDeactivationService).deactivate(any(), any(), any());
+
+        mockMvc.perform(json(as(a, post("/users/me/deactivate")), deactivation("clave-de-prueba")))
+                .andExpect(status().is(thrown.value()))
+                .andExpect(jsonPath("$.length()").value(5))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.status").value(thrown.value()))
+                .andExpect(jsonPath("$.error").value(error))
+                .andExpect(jsonPath("$.message").value(message))
+                .andExpect(jsonPath("$.path").value("/users/me/deactivate"))
+                .andExpect(content().string(not(containsString("clave-de-prueba"))));
+    }
+
+    @Test
+    void aWrongPasswordOnDeactivationIs403WithItsMessage() throws Exception {
+        assertDeactivationError(HttpStatus.FORBIDDEN, "Forbidden", "La contraseña actual no es correcta");
+    }
+
+    @Test
+    void aDoctorDeactivatingIs403WithItsMessage() throws Exception {
+        assertDeactivationError(HttpStatus.FORBIDDEN, "Forbidden",
+                "Los médicos no pueden darse de baja desde la aplicación");
+    }
+
+    @Test
+    void aLockedDeactivationIs429WithItsMessage() throws Exception {
+        assertDeactivationError(HttpStatus.TOO_MANY_REQUESTS, "Too Many Requests",
+                "Demasiados intentos fallidos. Probá de nuevo más tarde");
+    }
+
+    @Test
+    void deactivatingWithANonJsonContentTypeIs415WithTheCommonErrorBody() throws Exception {
+        mockMvc.perform(as(a, post("/users/me/deactivate")).contentType(MediaType.TEXT_PLAIN)
+                        .content(deactivation("clave-de-prueba")))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.length()").value(5))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.status").value(415))
+                .andExpect(jsonPath("$.error").value("Unsupported Media Type"))
+                .andExpect(jsonPath("$.message").value("Tipo de contenido no soportado"))
+                .andExpect(jsonPath("$.path").value("/users/me/deactivate"))
+                .andExpect(content().string(not(containsString("clave-de-prueba"))));
+        verifyNoInteractions(accountDeactivationService);
     }
 
     @Test

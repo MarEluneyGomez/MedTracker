@@ -1,5 +1,6 @@
 package com.medtracker.medtracker.controller;
 
+import com.medtracker.medtracker.dto.AccountDeactivationRequestDTO;
 import com.medtracker.medtracker.dto.DoctorSummaryDTO;
 import com.medtracker.medtracker.dto.FcmTokenUpdateRequestDTO;
 import com.medtracker.medtracker.dto.UserDTO;
@@ -7,7 +8,9 @@ import com.medtracker.medtracker.dto.UserRegisterRequestDTO;
 import com.medtracker.medtracker.dto.UserSummaryDTO;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.security.AuthenticatedUser;
+import com.medtracker.medtracker.service.AccountDeactivationService;
 import com.medtracker.medtracker.service.UserService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,8 +26,11 @@ public class UserController {
 
     private final UserService userService;
 
-    public UserController(UserService userService) {
+    private final AccountDeactivationService accountDeactivationService;
+
+    public UserController(UserService userService, AccountDeactivationService accountDeactivationService) {
         this.userService = userService;
+        this.accountDeactivationService = accountDeactivationService;
     }
 
     // Registrar usuario (público). Solo PATIENT o CAREGIVER; sin rol, PATIENT.
@@ -41,6 +47,16 @@ public class UserController {
     public void updateFcmToken(@AuthenticationPrincipal AuthenticatedUser principal,
                                @Valid @RequestBody FcmTokenUpdateRequestDTO request) {
         userService.updateFcmToken(principal, request.getFcmToken());
+    }
+
+    // Baja de la propia cuenta (la del Bearer; no se acepta ningún id). Pide la
+    // contraseña actual y responde 204 sin body.
+    @PostMapping("/me/deactivate")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deactivate(@AuthenticationPrincipal AuthenticatedUser principal,
+                           @Valid @RequestBody AccountDeactivationRequestDTO request,
+                           HttpServletRequest httpRequest) {
+        accountDeactivationService.deactivate(principal, request.getPassword(), httpRequest.getRemoteAddr());
     }
 
     // Buscar usuario por ID. El propio perfil es completo; el de un vinculado

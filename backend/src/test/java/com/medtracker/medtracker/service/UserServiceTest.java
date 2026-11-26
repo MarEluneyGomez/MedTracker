@@ -101,15 +101,17 @@ class UserServiceTest {
         User current = User.builder().id(UUID.randomUUID()).name("Ana").email("ana@mail.com")
                 .passwordHash("hash").role(User.Role.PATIENT).fcmToken("token-viejo").build();
         when(userRepository.findById(current.getId())).thenReturn(Optional.of(current));
+        when(userRepository.updateFcmTokenIfActive(current.getId(), "token-nuevo", NOW)).thenReturn(1);
 
         userService.updateFcmToken(new AuthenticatedUser(current.getId(), User.Role.PATIENT), "  token-nuevo  ");
 
-        assertThat(current.getFcmToken()).isEqualTo("token-nuevo");
+        // El valor se guarda con el UPDATE condicional; la entidad leída no se modifica ni se guarda
+        verify(userRepository).updateFcmTokenIfActive(current.getId(), "token-nuevo", NOW);
         assertThat(current.getName()).isEqualTo("Ana");
         assertThat(current.getEmail()).isEqualTo("ana@mail.com");
         assertThat(current.getPasswordHash()).isEqualTo("hash");
         assertThat(current.getRole()).isEqualTo(User.Role.PATIENT);
-        verify(userRepository).save(current);
+        verify(userRepository, never()).save(any(User.class));
     }
 
     @Test
@@ -122,30 +124,50 @@ class UserServiceTest {
 
         assertThat(current.getFcmToken()).isEqualTo("token-1");
         verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).updateFcmTokenIfActive(any(), any(), any());
     }
 
     @Test
     void updateFcmTokenWithADifferentTokenSavesTheNormalizedValue() {
         User current = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT).fcmToken("token-1").build();
         when(userRepository.findById(current.getId())).thenReturn(Optional.of(current));
+        when(userRepository.updateFcmTokenIfActive(current.getId(), "token-2", NOW)).thenReturn(1);
 
         userService.updateFcmToken(new AuthenticatedUser(current.getId(), User.Role.PATIENT), "  token-2 ");
 
-        assertThat(current.getFcmToken()).isEqualTo("token-2");
-        verify(userRepository).save(current);
+        verify(userRepository).updateFcmTokenIfActive(current.getId(), "token-2", NOW);
+        verify(userRepository, never()).save(any(User.class));
     }
 
     @Test
     void updateFcmTokenWithADifferentTokenSavesFirstAndThenClearsItFromOtherUsers() {
         User current = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT).fcmToken("token-1").build();
         when(userRepository.findById(current.getId())).thenReturn(Optional.of(current));
+        when(userRepository.updateFcmTokenIfActive(current.getId(), "token-2", NOW)).thenReturn(1);
 
         userService.updateFcmToken(new AuthenticatedUser(current.getId(), User.Role.PATIENT), "  token-2 ");
 
-        // El UPDATE masivo vacía el contexto de persistencia: va después del guardado
+        // Primero se guarda el propio y después se le quita a los demás
         InOrder order = inOrder(userRepository);
-        order.verify(userRepository).save(current);
+        order.verify(userRepository).updateFcmTokenIfActive(current.getId(), "token-2", NOW);
         order.verify(userRepository).clearFcmTokenFromOthers(current.getId(), "token-2", NOW);
+    }
+
+    // Una baja concurrente entre la lectura y el UPDATE: 404 y a nadie más se le quita el token
+    @Test
+    void updateFcmTokenWhenTheConditionalUpdateAffectsNothingIs404AndClearsNothing() {
+        User current = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT).fcmToken("token-1").build();
+        when(userRepository.findById(current.getId())).thenReturn(Optional.of(current));
+        when(userRepository.updateFcmTokenIfActive(current.getId(), "token-secreto", NOW)).thenReturn(0);
+
+        assertThatThrownBy(() -> userService.updateFcmToken(
+                new AuthenticatedUser(current.getId(), User.Role.PATIENT), "token-secreto"))
+                .satisfies(e -> assertStatus(e, HttpStatus.NOT_FOUND))
+                .hasMessageContaining("Usuario no encontrado: " + current.getId())
+                .hasMessageNotContaining("token-secreto");
+
+        verify(userRepository, never()).clearFcmTokenFromOthers(any(), any(), any());
+        verify(userRepository, never()).save(any(User.class));
     }
 
     @Test
@@ -156,6 +178,7 @@ class UserServiceTest {
         userService.updateFcmToken(new AuthenticatedUser(current.getId(), User.Role.PATIENT), "  token-1 ");
 
         verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).updateFcmTokenIfActive(any(), any(), any());
         verify(userRepository).clearFcmTokenFromOthers(current.getId(), "token-1", NOW);
     }
 
@@ -247,6 +270,7 @@ class UserServiceTest {
         }
         assertThat(current.getFcmToken()).isEqualTo("token-viejo");
         verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).updateFcmTokenIfActive(any(), any(), any());
     }
 
     @Test
@@ -265,6 +289,8 @@ class UserServiceTest {
         }
         assertThat(deleted.getFcmToken()).isEqualTo("token-viejo");
         verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).updateFcmTokenIfActive(any(), any(), any());
+        verify(userRepository, never()).clearFcmTokenFromOthers(any(), any(), any());
     }
 
     @Test
