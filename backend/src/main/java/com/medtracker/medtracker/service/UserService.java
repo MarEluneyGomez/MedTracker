@@ -18,6 +18,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 @Slf4j
 @Service
@@ -130,23 +131,28 @@ public class UserService {
     // que ya tiene no se guarda, para no tocar updated_at. El valor del token
     // no se loguea ni va en ningún mensaje. Después de guardarlo (o de comprobar
     // que ya era el suyo) se lo quita a los demás usuarios: el dispositivo es de
-    // quien lo registró último. Ese UPDATE masivo va al final: vacía el contexto
-    // de persistencia y dejaría desvinculada la entidad cargada.
+    // quien lo registró último. Se guarda con un UPDATE condicional (no con save de
+    // la entidad leída), así una baja concurrente no queda pisada: 0 filas es 404.
+    // Los UPDATE masivos vacían el contexto de persistencia: después no se usa la
+    // entidad cargada.
     @Transactional
     public void updateFcmToken(AuthenticatedUser principal, String fcmToken) {
         String normalized = fcmToken == null ? "" : fcmToken.trim();
         if (normalized.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Campos inválidos: fcmToken");
         }
+        Supplier<ResponseStatusException> notFound = () -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "Usuario no encontrado: " + principal.id());
         User user = userRepository.findById(principal.id())
                 .filter(found -> found.getDeletedAt() == null)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "Usuario no encontrado: " + principal.id()));
-        if (!normalized.equals(user.getFcmToken())) {
-            user.setFcmToken(normalized);
-            userRepository.save(user);
+                .orElseThrow(notFound);
+        UUID userId = user.getId();
+        LocalDateTime now = LocalDateTime.now(clock);
+        if (!normalized.equals(user.getFcmToken())
+                && userRepository.updateFcmTokenIfActive(userId, normalized, now) == 0) {
+            throw notFound.get();
         }
-        userRepository.clearFcmTokenFromOthers(user.getId(), normalized, LocalDateTime.now(clock));
+        userRepository.clearFcmTokenFromOthers(userId, normalized, now);
     }
 
     // Médicos vigentes, para elegir con quién agendar una cita (CU-09)

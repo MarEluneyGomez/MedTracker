@@ -6,6 +6,7 @@ import com.medtracker.medtracker.model.Reminder;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import com.medtracker.medtracker.security.JwtService;
+import com.medtracker.medtracker.service.AccountDeactivationService;
 import com.medtracker.medtracker.service.DoseGenerationService;
 import com.medtracker.medtracker.service.DoseService;
 import com.medtracker.medtracker.service.RefreshTokenService;
@@ -41,6 +42,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -57,6 +59,8 @@ class ReadAndAuthControllersTest {
     private DoseService doseService;
     @Mock
     private DoseGenerationService doseGenerationService;
+    @Mock
+    private AccountDeactivationService accountDeactivationService;
 
     private MockMvc mockMvc;
     private MockMvc mockMvcWithDevTools;
@@ -70,7 +74,7 @@ class ReadAndAuthControllersTest {
         mockMvc = MockMvcBuilders.standaloneSetup(
                 new AuthController(userService, new JwtService(
                         "secreto-de-prueba-con-al-menos-32-caracteres", 60, Clock.systemUTC()), refreshTokenService),
-                new UserController(userService),
+                new UserController(userService, accountDeactivationService),
                 new DoseController(doseService, doseGenerationService, false))
                 .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
                 .build();
@@ -106,6 +110,21 @@ class ReadAndAuthControllersTest {
                 .andExpect(jsonPath("$.refreshExpiresIn").value(172800))
                 .andExpect(jsonPath("$.user.email").value("ana@mail.com"))
                 .andExpect(jsonPath("$.user.passwordHash").doesNotExist());
+    }
+
+    @Test
+    void deactivateAnswers204AndPassesThePrincipalThePasswordAndTheRemoteAddress() throws Exception {
+        mockMvc.perform(post("/users/me/deactivate").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"clave-de-prueba\",\"id\":\"" + UUID.randomUUID() + "\"}")
+                        .with(request -> {
+                            request.setRemoteAddr("10.2.3.4");
+                            return request;
+                        }))
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        // El usuario sale del token: el id del body se ignora
+        verify(accountDeactivationService).deactivate(principal, "clave-de-prueba", "10.2.3.4");
     }
 
     @Test

@@ -324,6 +324,82 @@ class MedicalAppointmentServiceTest {
         verify(repository, never()).findById(any());
     }
 
+    // ---- contraparte dada de baja
+
+    private static final String COUNTERPART_GONE =
+            "La otra persona de la cita ya no está activa; la cita solo se puede cancelar";
+
+    private MedicalAppointment appointmentWith(User appointmentPatient, User appointmentDoctor) {
+        return MedicalAppointment.builder().id(UUID.randomUUID()).patient(appointmentPatient)
+                .doctor(appointmentDoctor).reason("x").build();
+    }
+
+    private User deactivated(User user) {
+        return User.builder().id(user.getId()).role(user.getRole()).deletedAt(NOW.minusDays(1)).build();
+    }
+
+    @Test
+    void thePatientCannotConfirmOrReturnToPendingWhenTheDoctorIsDeactivated() {
+        MedicalAppointment appointment = appointmentWith(patient, deactivated(doctor));
+        when(accessPolicy.requireAppointment(patientP, appointment.getId())).thenReturn(appointment);
+
+        for (MedicalAppointment.AppointmentStatus requested : List.of(
+                MedicalAppointment.AppointmentStatus.CONFIRMED, MedicalAppointment.AppointmentStatus.PENDING)) {
+            assertThatThrownBy(() -> service.changeStatus(patientP, appointment.getId(), requested))
+                    .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                        assertThat(e.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getReason()).isEqualTo(COUNTERPART_GONE);
+                    });
+        }
+        verify(repository, never()).updateStatusUnlessCancelled(any(), any(), any());
+    }
+
+    @Test
+    void anAppointmentWithADeactivatedCounterpartCanStillBeCancelledByEitherSide() {
+        MedicalAppointment goneDoctor = appointmentWith(patient, deactivated(doctor));
+        MedicalAppointment gonePatient = appointmentWith(deactivated(patient), doctor);
+        when(accessPolicy.requireAppointment(patientP, goneDoctor.getId())).thenReturn(goneDoctor);
+        when(accessPolicy.requireAppointment(doctorP, gonePatient.getId())).thenReturn(gonePatient);
+        when(repository.updateStatusUnlessCancelled(any(), eq(MedicalAppointment.AppointmentStatus.CANCELLED),
+                eq(NOW))).thenReturn(1);
+        when(repository.findById(goneDoctor.getId())).thenReturn(Optional.of(goneDoctor));
+        when(repository.findById(gonePatient.getId())).thenReturn(Optional.of(gonePatient));
+
+        service.changeStatus(patientP, goneDoctor.getId(), MedicalAppointment.AppointmentStatus.CANCELLED);
+        service.changeStatus(doctorP, gonePatient.getId(), MedicalAppointment.AppointmentStatus.CANCELLED);
+
+        verify(repository).updateStatusUnlessCancelled(goneDoctor.getId(),
+                MedicalAppointment.AppointmentStatus.CANCELLED, NOW);
+        verify(repository).updateStatusUnlessCancelled(gonePatient.getId(),
+                MedicalAppointment.AppointmentStatus.CANCELLED, NOW);
+    }
+
+    @Test
+    void aCancelledAppointmentWithADeactivatedCounterpartAnswersAlreadyCancelledFirst() {
+        MedicalAppointment appointment = appointmentWith(patient, deactivated(doctor));
+        appointment.setStatus(MedicalAppointment.AppointmentStatus.CANCELLED);
+        when(accessPolicy.requireAppointment(patientP, appointment.getId())).thenReturn(appointment);
+
+        assertThatThrownBy(() -> service.changeStatus(patientP, appointment.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED))
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getReason()).isEqualTo("La cita ya fue cancelada");
+                });
+        verify(repository, never()).updateStatusUnlessCancelled(any(), any(), any());
+    }
+
+    @Test
+    void theDoctorAskingToConfirmWithADeactivatedPatientGets403BeforeTheDeactivationConflict() {
+        MedicalAppointment appointment = appointmentWith(deactivated(patient), doctor);
+        when(accessPolicy.requireAppointment(doctorP, appointment.getId())).thenReturn(appointment);
+
+        assertThatThrownBy(() -> service.changeStatus(doctorP, appointment.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+        verify(repository, never()).updateStatusUnlessCancelled(any(), any(), any());
+    }
+
     @Test
     void findAllAsksForTheAppointmentsOfTheAuthenticatedUserOnly() {
         when(repository.findByParticipant(doctor.getId())).thenReturn(List.of(appointment()));

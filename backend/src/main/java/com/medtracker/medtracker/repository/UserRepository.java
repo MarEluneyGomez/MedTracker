@@ -60,4 +60,19 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("update User u set u.fcmToken = null, u.updatedAt = :now where u.id = :id")
     int clearFcmToken(@Param("id") UUID id, @Param("now") LocalDateTime now);
+
+    // Baja lógica, solo si todavía está vigente; también quita el token push.
+    // Devuelve las filas afectadas (0 = ya estaba dado de baja).
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update User u set u.deletedAt = :now, u.fcmToken = null, u.updatedAt = :now "
+            + "where u.id = :id and u.deletedAt is null")
+    int deactivateIfActive(@Param("id") UUID id, @Param("now") LocalDateTime now);
+
+    // Guarda el token push solo si el usuario sigue vigente, para que una baja
+    // concurrente no quede pisada. Devuelve las filas afectadas.
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update User u set u.fcmToken = :token, u.updatedAt = :now where u.id = :id and u.deletedAt is null")
+    int updateFcmTokenIfActive(@Param("id") UUID id, @Param("token") String token, @Param("now") LocalDateTime now);
 }

@@ -99,6 +99,13 @@ public class MedicalAppointmentService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "El médico solo puede cancelar la cita; la confirma el paciente");
         }
+        // Con el paciente o el médico dado de baja la cita solo se puede cancelar
+        if (status != MedicalAppointment.AppointmentStatus.CANCELLED
+                && (appointment.getPatient().getDeletedAt() != null
+                || appointment.getDoctor().getDeletedAt() != null)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "La otra persona de la cita ya no está activa; la cita solo se puede cancelar");
+        }
         // UPDATE atómico: si otra petición canceló la cita entre la comprobación y acá,
         // no se la reabre (0 filas)
         int updated = medicalAppointmentRepository.updateStatusUnlessCancelled(id, status, LocalDateTime.now(clock));
