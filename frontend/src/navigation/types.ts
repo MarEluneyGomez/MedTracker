@@ -11,3 +11,19 @@ export type TreatmentsStackParamList = {
   Reminders: { treatmentId: string };
   ReminderForm: { treatmentId: string; reminderId?: string };
 };
+
+export type ProfileStackParamList = {
+  ProfileHome: undefined;
+  MedicalHistory: undefined;
+};
+
+export type DoctorPatientsStackParamList = {
+  PatientsList: undefined;
+  PatientHistory: { patientId: string; patientName: string };
+  MedicalHistoryForm: { patientId: string; patientName: string };
+};
+
+export type CaregiverStackParamList = {
+  CaregiverHome: undefined;
+  PatientDetail: { patientId: string; patientName: string };
+};

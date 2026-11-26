@@ -39,3 +39,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Firebase: va como archivo secreto en EAS, no en el repo público
+google-services.json

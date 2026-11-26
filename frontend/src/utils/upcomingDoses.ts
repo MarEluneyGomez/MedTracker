@@ -12,7 +12,6 @@ const DAY_CODES: WeekDay[] = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 export type UpcomingDose = {
   reminderId: string;
   at: Date;
-  message: string;
 };
 
 export type UpcomingDosesSource = {
@@ -48,7 +47,7 @@ export function upcomingDoses({
         isDueOn(reminder, treatment, day) &&
         !marked.has(doseKey(reminder.id, toDayString(day)))
       ) {
-        upcoming.push({ reminderId: reminder.id, at, message: reminder.message });
+        upcoming.push({ reminderId: reminder.id, at });
       }
     }
   }

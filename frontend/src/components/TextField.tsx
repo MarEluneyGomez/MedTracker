@@ -14,6 +14,7 @@ type TextFieldProps = {
   autoCapitalize?: 'none' | 'sentences' | 'words';
   placeholder?: string;
   icon?: ComponentProps<typeof Ionicons>['name'];
+  multiline?: boolean;
 };
 
 export default function TextField({
@@ -26,6 +27,7 @@ export default function TextField({
   autoCapitalize,
   placeholder,
   icon,
+  multiline,
 }: TextFieldProps) {
   return (
     <View style={styles.container}>
@@ -33,7 +35,7 @@ export default function TextField({
       <View style={[styles.box, error ? styles.boxError : null]}>
         {icon ? <Ionicons name={icon} size={20} color={colors.textSecondary} /> : null}
         <TextInput
-          style={styles.input}
+          style={[styles.input, multiline ? styles.multiline : null]}
           value={value}
           onChangeText={onChangeText}
           secureTextEntry={secureTextEntry}
@@ -41,6 +43,7 @@ export default function TextField({
           autoCapitalize={autoCapitalize}
           placeholder={placeholder}
           placeholderTextColor={colors.textSecondary}
+          multiline={multiline}
         />
       </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -71,6 +74,10 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 16,
     color: colors.text,
+  },
+  multiline: {
+    minHeight: 120,
+    textAlignVertical: 'top',
   },
   error: { ...fieldError, marginTop: 4 },
 });

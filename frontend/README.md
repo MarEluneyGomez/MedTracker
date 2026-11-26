@@ -4,13 +4,13 @@ App móvil del sistema de seguimiento de medicación, construida con **React Nat
 
 ## Estado actual
 
-Base de la app armada (Expo SDK 58): cliente de API, sesión de usuario, navegación según el rol, las pantallas de inicio de sesión y registro, la gestión de tratamientos y horarios del paciente, la pantalla "Hoy" con las tomas del día y el historial con la adherencia. El resto de las pantallas de cada sección son provisorias. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
+Base de la app armada (Expo SDK 58): cliente de API, sesión de usuario, navegación según el rol, las pantallas de inicio de sesión y registro, la gestión de tratamientos y horarios del paciente, la pantalla "Hoy" con las tomas del día, el historial con la adherencia, las citas médicas y el historial médico del paciente. El resto de las pantallas de cada sección son provisorias. Ver [`/docs/arquitectura.md`](../docs/arquitectura.md) para la justificación de por qué se eligió React Native (RNF-01: una misma base de código para Android e iOS).
 
 Al abrir la app sin sesión se ve la pantalla de bienvenida, con las opciones de iniciar sesión (CU-02) o crear una cuenta (CU-01). Al iniciar sesión se ven las pestañas que corresponden al rol:
 
 - **Paciente:** Hoy, Tratamientos, Historial, Citas y Perfil.
 - **Tutor:** Pacientes y Perfil.
-- **Médico:** Citas y Perfil.
+- **Médico:** Citas, Pacientes y Perfil.
 
 ## Registro e inicio de sesión
 
@@ -44,6 +44,7 @@ La pestaña Tratamientos del paciente cubre CU-03 (agregar tratamiento) y CU-08 
 - **Marcar como completado** (`PUT /treatments/{id}/complete`) y **Eliminar** (`DELETE /treatments/{id}`, porque también desactiva sus recordatorios), los dos con confirmación.
 - **Reabrir tratamiento** (`PUT /treatments/{id}/reopen`): aparece en los completados, por si se marcaron por error. El backend genera en el momento las tomas de hoy.
 - **Estado:** "En curso", "Completado" (marcado a mano) o "Finalizado" (pasó su fecha de fin). Un tratamiento finalizado lo indica en la tarjeta ("Terminó el 25/10/2026") y deja de generar tomas; para continuarlo se edita su fecha de fin.
+- **Sin horarios:** si un tratamiento en curso no tiene ningún recordatorio activo (`hasActiveReminders`, por ejemplo porque falló el guardado de los horarios), la tarjeta avisa "Sin horarios: no vas a recibir recordatorios" y al tocarlo lleva a Horarios. Se compara contra `false` para que una copia guardada de antes de este campo no muestre el aviso por error.
 
 La dosis y la frecuencia se eligen con opciones (cantidad y unidad; "Cada 8 horas", "Cada 1 día", "Varias veces por día" de 2 a 6, u otra a medida) y se guardan como texto con un formato fijo, por ejemplo "2 comprimidos", "Cada 8 horas" o "3 veces por día". Así se pueden volver a leer al editar y calcular los horarios. Las fechas se eligen con un calendario propio (`react-native-calendars`) que sigue la estética de la app; la fecha de fin es opcional y se guarda al final del día, para que el último día también cuente.
 
@@ -83,17 +84,48 @@ Cubre CU-07, RF-08 y RF-09. La pestaña Historial trae todas las tomas del usuar
 
 Cuentan las tomas ya marcadas, aunque se hayan marcado antes de hora, y las pendientes cuya hora ya pasó: una toma que todavía no toca no es un incumplimiento. El backend no devuelve las tomas de tratamientos o recordatorios eliminados, así que no aparecen en el historial; las de tratamientos completados sí. El cálculo se hace en la app (`src/utils/adherence.ts`), así que cambiar de período no vuelve a pedir datos.
 
+## Cuidadores
+
+El cuidador (tutor) ve en la pestaña **Pacientes** a los pacientes vinculados con él (`GET /caregiver-links/caregiver/{id}`, con el nombre de cada uno del perfil reducido). Al tocar uno se abre, encima, una pantalla con su nombre arriba y sus pestañas **Hoy, Tratamientos e Historial**: las mismas pantallas del paciente, con los datos de ese paciente. Puede hacer lo mismo que el paciente (marcar tomas, crear y editar tratamientos y horarios, ver la adherencia), como permite el backend (RN-08); no ve citas ni historial médico.
+
+- **Paciente activo:** las pantallas no usan el usuario de la sesión sino `useActivePatient()` (`src/context/ActivePatientContext.tsx`): el propio usuario, o el paciente elegido por el cuidador, que lo provee `ActivePatientProvider` en sus pestañas.
+- **Historial:** para un cuidador `GET /doses` trae las tomas de todos sus pacientes, así que se filtran las del paciente elegido a través de sus tratamientos.
+- **Notificaciones:** se programan solo para el propio paciente; lo que hace un cuidador no programa recordatorios en su celular.
+- **Textos:** en tercera persona para el cuidador ("Tomó 1 de 3", "La tomó").
+- **Vincular un cuidador** desde la app queda pendiente: el backend pide el id del cuidador, y falta poder hacerlo por email.
+
+## Citas
+
+Cubre parte de CU-09 del lado del paciente. La pestaña Citas lista las citas propias (`GET /medical-appointments`) con el nombre del médico, que sale de la lista de médicos (`GET /users?role=DOCTOR`), en dos grupos:
+
+- **Próximas:** no canceladas y con fecha futura, de la más cercana a la más lejana. Las que agendó el médico dicen "Esperando tu confirmación" y tienen el botón **Confirmar** (`PUT /medical-appointments/{id}/status?status=CONFIRMED`): hasta que el paciente confirma, el médico no puede ver su historial médico. Todas tienen **Cancelar cita** (`status=CANCELLED`), que pide confirmación porque una cita cancelada no se puede reabrir.
+- **Anteriores y canceladas:** de la más reciente a la más vieja, solo de lectura. Una pendiente que ya pasó dice "No se confirmó".
+
+El médico ve la misma pestaña con sus citas: el nombre del paciente aparece recién cuando el paciente confirma (antes, el backend no lo informa y se muestra "Paciente sin confirmar"), las pendientes dicen "Esperando que el paciente confirme" y solo puede cancelarlas, porque confirmar es del paciente.
+
+Agendar una cita nueva queda pendiente: va a mostrar los turnos libres del médico, y para eso hace falta que el backend informe la disponibilidad.
+
+## Historial médico
+
+Cubre RF-13 y CU-10. Desde Perfil, el paciente abre "Mi historial médico": los diagnósticos y observaciones que cargó su médico (`GET /medical-histories/patient/{id}`), del más reciente al más viejo, con la fecha. Es de solo lectura: el historial lo carga el médico, al que el backend le da acceso solo con una cita confirmada por el paciente. El botón aparece solo para pacientes.
+
+El médico tiene la pestaña **Pacientes**: los pacientes con al menos una cita confirmada con él (no hay una relación "es mi paciente" aparte de las citas), en orden alfabético. Al tocar uno se abre su historial, con la misma pantalla, y el botón **Agregar registro** (`POST /medical-histories/register`): fecha (no futura), diagnóstico (obligatorio, hasta 255 caracteres) y observaciones (opcional, hasta 5000).
+
 ## Notificaciones
 
-Cubre RF-06 con notificaciones locales: el celular avisa cada toma a su hora con el texto del recordatorio ("Hora de tu medicación: Tomar 400 mg de Ibuprofeno"), sin depender de la conexión ni del servidor.
+Cubre RF-06 con notificaciones locales: el celular avisa cada toma a su hora ("Recordatorio de medicación: Es hora de tu toma"), sin depender de la conexión ni del servidor. El aviso no nombra el medicamento, igual que el push del backend, porque se ve con el teléfono bloqueado y es un dato de salud.
 
 - **Qué se programa:** la app calcula las tomas que vienen con las mismas reglas con las que el backend las genera (días de la semana, cada N días, fechas e horas de inicio y fin del tratamiento, tratamientos completados) en `src/utils/upcomingDoses.ts`. Cada una es una notificación de un solo disparo, sin repeticiones del sistema, así nunca suena un horario que ya no existe.
 - **Tomas ya marcadas:** las de hoy que ya están confirmadas u omitidas no suenan, incluidas las marcadas sin conexión.
 - **Límite:** iOS admite hasta 64 notificaciones programadas por app, así que se programan las 60 más próximas. Si hay más, un minuto después de la última llega "Abrí MedTracker para seguir recibiendo los avisos de tus tomas".
 - **Cuándo se recalculan:** al iniciar sesión o abrir la app, cada vez que vuelve a primer plano, al volver a la lista de Tratamientos (después de crear, editar o borrar tratamientos y horarios) y después de marcar una toma. Cada recálculo cancela todas y programa la lista nueva, de a uno por vez para que no se mezclen.
 - **Al tocar una notificación** se abre Hoy, donde está la toma para marcarla.
+- **Botón "La tomé"** en la notificación: abre la app, confirma la toma de ese día (con la cola de acciones sin conexión si hace falta) y muestra Hoy con la toma marcada. Abre la app a propósito: así la persona ve la confirmación y se usa la sesión con su renovación habitual. No hay botón de "recordarme más tarde": si la toma sigue pendiente, el push de respaldo del backend vuelve a avisar a los 15 minutos.
 - **Al cerrar sesión** se cancelan todas: son datos de salud y no deben sonar en el celular de otra persona.
-- **Permiso:** se pide la primera vez que se programan. Si la persona lo niega, la app funciona igual, sin avisos. En Android las notificaciones van en el canal "Recordatorios de medicación", con importancia alta para que suenen y aparezcan arriba de la pantalla.
+- **Permiso:** se pide la primera vez que se programan. Si la persona lo niega, la app funciona igual, sin avisos. En Android las notificaciones van en el canal "Recordatorios de medicación" (`dose-reminders`), con importancia alta para que suenen y aparezcan arriba de la pantalla, y con un sonido propio (`assets/sounds/recordatorio.wav`, de [Mixkit](https://mixkit.co/free-sound-effects/notification/), con licencia de uso libre sin atribución, recortado a 3 segundos). Android no deja cambiar el sonido de un canal ya creado, por eso un sonido nuevo requiere otro id de canal.
+- **Ícono:** el de la app es una cápsula sobre el violeta de la app; el de las notificaciones es su silueta, que Android pinta de un solo color.
+- **Push de respaldo:** el backend manda un push ("Tenés una toma pendiente") si la toma sigue pendiente 15 minutos después. Para eso la app manda el token del dispositivo con `PUT /users/me/fcm-token` al entrar, al volver a primer plano y cuando Firebase lo cambia (`src/hooks/usePushTokenRegistration.ts`); el backend lo borra al cerrar sesión. Usa el token nativo de Firebase, así que por ahora funciona solo en Android. Los push llegan al mismo canal que las notificaciones locales (`defaultChannel` en `app.json`).
+- **Configuración de Firebase:** la app necesita el `google-services.json` del proyecto de Firebase. Como el repo es público, no se versiona: en EAS está como archivo secreto (`GOOGLE_SERVICES_JSON`) y `app.config.js` lo toma de ahí, o de `frontend/google-services.json` en la PC.
 - **A horario exacto en Android:** sin el permiso de alarmas exactas, Android trata los avisos como aproximados y puede entregarlos hasta una hora tarde, y algunas marcas los demoran más para ahorrar batería. Por eso la app declara `USE_EXACT_ALARM` (Android 13 o superior, se concede al instalar) y `SCHEDULE_EXACT_ALARM` (Android 12) y programa cada aviso como alarma (`delivery: 'alarmClock'`), que el sistema no posterga. Probado en un Xiaomi: llega a horario con la app cerrada y el teléfono bloqueado.
 
 **Limitaciones de Expo Go en Android:** no puede crear el canal (la app sigue igual y Android usa un canal genérico) y se cierra al tocar una notificación. Por eso la app se prueba con un development build (ver "Ejecución").
@@ -117,9 +149,10 @@ Cubre RNF-05 (ver los datos ya cargados sin conexión). Cada lectura que respond
 
 ```
 frontend/
-├── assets/                 # Íconos y splash de la app
+├── assets/                 # Íconos de la app y de las notificaciones
+│   └── sounds/             # Sonido de las notificaciones (recordatorio.wav)
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, pestañas de cada rol, perfil)
+│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas, historial médico y su formulario, pacientes del médico y del cuidador, pestañas de cada rol, perfil)
 │   ├── components/         # Componentes reutilizables
 │   │   ├── AppButton, Screen, TextField, Logo
 │   │   ├── Chip, RoleSelector, ChipSelector, DaySelector # Selección entre opciones
@@ -128,23 +161,30 @@ frontend/
 │   │   ├── SchedulePicker, ScheduleSaveBar # Horarios según la frecuencia
 │   │   ├── DoseCard # Una toma del día con su estado y acciones
 │   │   ├── DoseStatusLabel # Estado de una toma con ícono y texto (Hoy e Historial)
+│   │   ├── AppointmentCard # Una cita con el médico o el paciente, su estado y acciones
 │   │   └── OfflineBanner # Aviso de que se muestran datos guardados (dentro de Screen)
-│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, headerOptions y lista de pantallas (types.ts)
-│   ├── context/            # AuthContext: sesión compartida por toda la app
+│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, ProfileStack, DoctorPatientsStack, CaregiverStack y las pestañas del paciente elegido (CaregiverPatientTabs), headerOptions y lista de pantallas (types.ts)
+│   ├── context/            # AuthContext (sesión) y ActivePatientContext (de qué paciente son los datos)
 │   ├── hooks/
 │   │   ├── useDoseNotificationsSync.ts # Recalcula las notificaciones al entrar y al volver a primer plano
 │   │   ├── useFlashScrollIndicators.ts # Muestra la barra de scroll al abrir una lista en iOS
 │   │   ├── useOfflineDataSavedAt.ts # Fecha de los datos guardados que se muestran sin conexión
-│   │   └── useOpenTodayOnNotificationTap.ts # Abre Hoy al tocar una notificación
+│   │   ├── useOpenTodayOnNotificationTap.ts # Al tocar una notificación abre Hoy; con "La tomé" además marca la toma
+│   │   └── usePushTokenRegistration.ts # Manda el token de push al backend al entrar, al volver a primer plano y si cambia
 │   ├── services/
 │   │   ├── api.ts          # Cliente HTTP: token en cada pedido, renovación de la sesión, copias sin conexión y errores (ApiError)
 │   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión
 │   │   ├── cache.ts        # Copias de las lecturas en el dispositivo (AsyncStorage)
 │   │   ├── connection.ts   # Si se están mostrando datos guardados y de cuándo
 │   │   ├── pendingDoseActions.ts # Acciones sobre tomas hechas sin conexión, en espera de mandarse
-│   │   ├── doses.ts        # Tomas: todas, las de hoy, confirmar, omitir y deshacer
-│   │   ├── notifications.ts # Permiso, canal de Android y programar o cancelar notificaciones
+│   │   ├── doses.ts        # Tomas: todas, las de hoy, confirmar (también desde la notificación), omitir y deshacer
+│   │   ├── doseEvents.ts   # Aviso de que cambió una toma fuera de Hoy, para que se recargue
+│   │   ├── notifications.ts # Permiso, canal de Android, botón "La tomé" y programar o cancelar notificaciones
 │   │   ├── doseNotifications.ts # Qué notificaciones programar según las tomas que vienen
+│   │   ├── pushToken.ts    # Token de push del dispositivo para el backend
+│   │   ├── appointments.ts # Citas: listar, confirmar y cancelar, médicos y pacientes con cita confirmada
+│   │   ├── caregiverLinks.ts # Pacientes vinculados a un cuidador
+│   │   ├── medicalHistory.ts # Historial médico: ver y cargar registros
 │   │   ├── medications.ts  # Catálogo de medicamentos
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
@@ -154,6 +194,7 @@ frontend/
 │   │   └── typography.ts   # Estilos de texto compartidos (etiquetas y errores de campos)
 │   └── utils/
 │       ├── adherence.ts    # Período, porcentaje de adherencia (RN-05) y agrupación por día
+│       ├── appointments.ts # Citas próximas y anteriores
 │       ├── dates.ts        # Conversión y formato de fechas y horas, nombres de días y meses
 │       ├── doseDetails.ts  # Medicamento y dosis de cada toma, a partir de su recordatorio
 │       ├── dosage.ts       # Formato y lectura de la dosis
@@ -165,6 +206,7 @@ frontend/
 ├── App.tsx                 # Componente raíz
 ├── index.ts                # Punto de entrada
 ├── app.json                # Configuración de Expo
+├── app.config.js           # Ubicación del google-services.json (secreto de EAS o archivo local, no versionado)
 ├── eas.json                # Perfiles de compilación con EAS Build
 ├── .prettierrc             # Reglas de formato del código
 ├── tsconfig.json

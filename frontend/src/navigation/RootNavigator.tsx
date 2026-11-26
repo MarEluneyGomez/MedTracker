@@ -4,10 +4,10 @@ import { ActivityIndicator, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { colors } from '../theme/colors';
 import type { UserRole } from '../types/api';
+import CaregiverStack from './CaregiverStack';
 import type { RootStackParamList } from './types';
 import { backHeaderOptions } from './headerOptions';
 import PatientTabs from './PatientTabs';
-import CaregiverTabs from './CaregiverTabs';
 import DoctorTabs from './DoctorTabs';
 import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
@@ -20,7 +20,7 @@ function tabsForRole(role: UserRole) {
     case 'PATIENT':
       return PatientTabs;
     case 'CAREGIVER':
-      return CaregiverTabs;
+      return CaregiverStack;
     case 'DOCTOR':
       return DoctorTabs;
   }

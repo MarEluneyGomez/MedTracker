@@ -29,6 +29,7 @@ export type Treatment = {
   startTime: string | null;
   endTime: string | null;
   completed: boolean;
+  hasActiveReminders: boolean;
 };
 
 export type WeekDay = 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' | 'SUN';
@@ -79,6 +80,18 @@ export type MedicalAppointment = {
   dateTime: string;
   reason: string;
   status: AppointmentStatus;
+};
+
+export type Doctor = {
+  id: string;
+  name: string;
+};
+
+export type UserSummary = {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
 };
 
 export type MedicalHistory = {

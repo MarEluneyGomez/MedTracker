@@ -3,6 +3,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import AppointmentsScreen from '../screens/AppointmentsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import { colors } from '../theme/colors';
+import DoctorPatientsStack from './DoctorPatientsStack';
 
 const Tab = createBottomTabNavigator();
 
@@ -22,6 +23,16 @@ export default function DoctorTabs() {
           title: 'Citas',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="calendar-outline" color={color} size={size} />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Patients"
+        component={DoctorPatientsStack}
+        options={{
+          title: 'Pacientes',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="people-outline" color={color} size={size} />
           ),
         }}
       />

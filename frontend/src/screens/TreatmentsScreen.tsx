@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import AppButton from '../components/AppButton';
 import Screen from '../components/Screen';
-import { useAuth } from '../context/AuthContext';
+import { useActivePatient } from '../context/ActivePatientContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import { ApiError } from '../services/api';
 import { syncDoseNotifications } from '../services/doseNotifications';
@@ -31,7 +31,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { TreatmentsStackParamList } from '../navigation/types';
 
 export default function TreatmentsScreen() {
-  const { user } = useAuth();
+  const patient = useActivePatient();
   const navigation = useNavigation<NativeStackNavigationProp<TreatmentsStackParamList>>();
   const [treatments, setTreatments] = useState<Treatment[]>([]);
   const [medications, setMedications] = useState<Record<number, Medication>>({});
@@ -46,6 +46,10 @@ export default function TreatmentsScreen() {
     return treatment.endDate !== null && new Date(treatment.endDate) < new Date();
   }
 
+  function needsSchedule(treatment: Treatment): boolean {
+    return !treatment.completed && !hasEnded(treatment) && treatment.hasActiveReminders === false;
+  }
+
   function treatmentState(treatment: Treatment): string {
     if (treatment.completed) {
       return 'Completado';
@@ -54,12 +58,12 @@ export default function TreatmentsScreen() {
   }
 
   async function load() {
-    if (!user) {
+    if (!patient.id) {
       return;
     }
     try {
       const [userTreatments, catalog] = await Promise.all([
-        getTreatmentsByUser(user.id),
+        getTreatmentsByUser(patient.id),
         getMedications(),
       ]);
       const byId: Record<number, Medication> = {};
@@ -68,7 +72,9 @@ export default function TreatmentsScreen() {
       }
       setTreatments(userTreatments);
       setMedications(byId);
-      syncDoseNotifications(user.id);
+      if (patient.isOwn) {
+        syncDoseNotifications(patient.id);
+      }
       setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudieron cargar los tratamientos.');
@@ -81,7 +87,7 @@ export default function TreatmentsScreen() {
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [user]),
+    }, [patient.id]),
   );
 
   function handleRefresh() {
@@ -131,7 +137,9 @@ export default function TreatmentsScreen() {
   function confirmComplete(treatment: Treatment, medicationName: string) {
     Alert.alert(
       'Marcar como completado',
-      `¿Terminaste el tratamiento de ${medicationName}? Vas a dejar de recibir sus recordatorios. Si te equivocaste, lo podés reabrir.`,
+      patient.isOwn
+        ? `¿Terminaste el tratamiento de ${medicationName}? Vas a dejar de recibir sus recordatorios. Si te equivocaste, lo podés reabrir.`
+        : `¿Terminó el tratamiento de ${medicationName}? Se van a dejar de generar sus tomas. Si te equivocaste, lo podés reabrir.`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -165,7 +173,7 @@ export default function TreatmentsScreen() {
 
   return (
     <Screen>
-      <Text style={styles.title}>Mis tratamientos</Text>
+      <Text style={styles.title}>{patient.isOwn ? 'Mis tratamientos' : 'Tratamientos'}</Text>
       <View style={styles.newButton}>
         <AppButton title="Nuevo tratamiento" onPress={() => navigation.navigate('TreatmentForm')} />
       </View>
@@ -178,7 +186,9 @@ export default function TreatmentsScreen() {
         onRefresh={handleRefresh}
         contentContainerStyle={styles.list}
         ListEmptyComponent={
-          <Text style={styles.message}>Todavía no tenés tratamientos cargados.</Text>
+          <Text style={styles.message}>
+            Todavía no {patient.isOwn ? 'tenés' : 'tiene'} tratamientos cargados.
+          </Text>
         }
         renderItem={({ item }) => {
           const medication = medications[item.medicationId];
@@ -204,6 +214,22 @@ export default function TreatmentsScreen() {
               </Text>
               {hasEnded(item) ? (
                 <Text style={styles.cardEnded}>Terminó el {formatDate(item.endDate ?? '')}</Text>
+              ) : null}
+              {needsSchedule(item) ? (
+                <Pressable
+                  style={styles.noSchedule}
+                  onPress={() => navigation.navigate('Reminders', { treatmentId: item.id })}
+                  accessibilityRole="button"
+                  accessibilityHint="Abre los horarios del tratamiento"
+                >
+                  <Ionicons name="alert-circle-outline" size={22} color={colors.warning} />
+                  <Text style={styles.noScheduleText}>
+                    {patient.isOwn
+                      ? 'Sin horarios: no vas a recibir recordatorios.'
+                      : 'Sin horarios: no se van a generar sus tomas.'}{' '}
+                    Tocá para configurarlos.
+                  </Text>
+                </Pressable>
               ) : null}
               <Text style={styles.toggleText}>{expanded ? 'Ocultar detalle' : 'Ver detalle'}</Text>
               {expanded ? (
@@ -311,6 +337,19 @@ const styles = StyleSheet.create({
   },
   cardEnded: {
     marginTop: 4,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.warning,
+  },
+  noSchedule: {
+    marginTop: 8,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  noScheduleText: {
+    flexShrink: 1,
     fontSize: 15,
     fontWeight: '600',
     color: colors.warning,

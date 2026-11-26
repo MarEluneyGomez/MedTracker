@@ -1,4 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { ProfileStackParamList } from '../navigation/types';
 import AppButton from '../components/AppButton';
 import Screen from '../components/Screen';
 import { useAuth } from '../context/AuthContext';
@@ -13,6 +16,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
 
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();
+  const navigation = useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
 
   if (!user) {
     return null;
@@ -25,6 +29,12 @@ export default function ProfileScreen() {
         <Text style={styles.subtitle}>Rol: {ROLE_LABELS[user.role]}</Text>
         <Text style={styles.subtitle}>Mail: {user?.email}</Text>
         <View style={styles.actions}>
+          {user.role === 'PATIENT' ? (
+            <AppButton
+              title="Mi historial médico"
+              onPress={() => navigation.navigate('MedicalHistory')}
+            />
+          ) : null}
           <AppButton title="Cerrar sesión" onPress={signOut} />
         </View>
       </View>
@@ -50,5 +60,6 @@ const styles = StyleSheet.create({
   },
   actions: {
     marginTop: 32,
+    gap: 12,
   },
 });
