@@ -3,10 +3,12 @@ package com.medtracker.medtracker.service;
 import com.medtracker.medtracker.model.MedicalAppointment;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.MedicalAppointmentRepository;
+import com.medtracker.medtracker.repository.UserRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Clock;
@@ -18,15 +20,22 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class MedicalAppointmentService {
 
+    // Duración fija de toda cita: la tabla no guarda hora de fin
+    private static final int APPOINTMENT_DURATION_MINUTES = 30;
+
     private final MedicalAppointmentRepository medicalAppointmentRepository;
     private final UserService userService;
     private final AccessPolicy accessPolicy;
     private final Clock clock;
+    private final UserRepository userRepository;
 
     // Registrar una nueva cita médica (CU-09) entre un paciente y un médico;
     // arranca CONFIRMED si la agenda el paciente y PENDING si la agenda el médico
     // (la confirma después el paciente). RN-09: solo la crea el paciente involucrado
-    // o el médico asignado, nunca un tercero (403).
+    // o el médico asignado, nunca un tercero (403). El médico no puede tener dos citas
+    // superpuestas (409): el candado sobre su fila dura hasta el commit, así que otra alta
+    // para el mismo médico espera y después ve esta cita.
+    @Transactional
     public MedicalAppointment register(AuthenticatedUser principal, MedicalAppointment appointment) {
         UUID patientId = requireReferencedId(appointment.getPatient(), User.Role.PATIENT);
         UUID doctorId = requireReferencedId(appointment.getDoctor(), User.Role.DOCTOR);
@@ -36,6 +45,15 @@ public class MedicalAppointmentService {
         }
         appointment.setPatient(userService.getWithRole(appointment.getPatient(), User.Role.PATIENT));
         appointment.setDoctor(userService.getWithRole(appointment.getDoctor(), User.Role.DOCTOR));
+        // El candado va antes de consultar la agenda
+        userRepository.lockById(doctorId);
+        if (medicalAppointmentRepository.existsOverlappingByDoctor(doctorId,
+                appointment.getDateTime().minusMinutes(APPOINTMENT_DURATION_MINUTES),
+                appointment.getDateTime().plusMinutes(APPOINTMENT_DURATION_MINUTES))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "El médico ya tiene una cita en ese horario; las citas duran "
+                            + APPOINTMENT_DURATION_MINUTES + " minutos");
+        }
         appointment.setStatus(principal.id().equals(patientId)
                 ? MedicalAppointment.AppointmentStatus.CONFIRMED
                 : MedicalAppointment.AppointmentStatus.PENDING);
@@ -98,6 +116,13 @@ public class MedicalAppointmentService {
                 && status != MedicalAppointment.AppointmentStatus.CANCELLED) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "El médico solo puede cancelar la cita; la confirma el paciente");
+        }
+        // Con el paciente o el médico dado de baja la cita solo se puede cancelar
+        if (status != MedicalAppointment.AppointmentStatus.CANCELLED
+                && (appointment.getPatient().getDeletedAt() != null
+                || appointment.getDoctor().getDeletedAt() != null)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "La otra persona de la cita ya no está activa; la cita solo se puede cancelar");
         }
         // UPDATE atómico: si otra petición canceló la cita entre la comprobación y acá,
         // no se la reabre (0 filas)

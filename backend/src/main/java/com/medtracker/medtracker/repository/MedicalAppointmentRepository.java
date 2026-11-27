@@ -41,6 +41,7 @@ public interface MedicalAppointmentRepository extends JpaRepository<MedicalAppoi
             select count(a) > 0 from MedicalAppointment a
             where a.doctor.id = :doctorId and a.patient.id = :patientId
               and a.deletedAt is null and a.status <> com.medtracker.medtracker.model.MedicalAppointment.AppointmentStatus.CANCELLED
+              and a.patient.deletedAt is null and a.doctor.deletedAt is null
             """)
     boolean existsActiveByDoctorAndPatient(@Param("doctorId") UUID doctorId, @Param("patientId") UUID patientId);
 
@@ -49,6 +50,7 @@ public interface MedicalAppointmentRepository extends JpaRepository<MedicalAppoi
             select count(a) > 0 from MedicalAppointment a
             where a.doctor.id = :doctorId and a.patient.id = :patientId
               and a.deletedAt is null and a.status = com.medtracker.medtracker.model.MedicalAppointment.AppointmentStatus.CONFIRMED
+              and a.patient.deletedAt is null and a.doctor.deletedAt is null
             """)
     boolean existsConfirmedByDoctorAndPatient(@Param("doctorId") UUID doctorId, @Param("patientId") UUID patientId);
 
@@ -57,8 +59,25 @@ public interface MedicalAppointmentRepository extends JpaRepository<MedicalAppoi
             select distinct a.patient.id from MedicalAppointment a
             where a.doctor.id = :doctorId
               and a.deletedAt is null and a.status = com.medtracker.medtracker.model.MedicalAppointment.AppointmentStatus.CONFIRMED
+              and a.patient.deletedAt is null and a.doctor.deletedAt is null
             """)
     List<UUID> findConfirmedPatientIdsByDoctor(@Param("doctorId") UUID doctorId);
+
+    // ¿El médico tiene una cita vigente y no cancelada dentro de la ventana? Los dos extremos son
+    // estrictos: dos citas separadas por la duración exacta no se superponen. Las de un paciente
+    // dado de baja no bloquean el horario.
+    @Query("""
+            select count(a) > 0 from MedicalAppointment a
+            where a.doctor.id = :doctorId
+              and a.deletedAt is null
+              and a.status <> com.medtracker.medtracker.model.MedicalAppointment.AppointmentStatus.CANCELLED
+              and a.patient.deletedAt is null
+              and a.dateTime > :windowStart
+              and a.dateTime < :windowEnd
+            """)
+    boolean existsOverlappingByDoctor(@Param("doctorId") UUID doctorId,
+                                      @Param("windowStart") LocalDateTime windowStart,
+                                      @Param("windowEnd") LocalDateTime windowEnd);
 
     // Buscar citas por estado
     List<MedicalAppointment> findByStatus(MedicalAppointment.AppointmentStatus status);
@@ -67,9 +86,11 @@ public interface MedicalAppointmentRepository extends JpaRepository<MedicalAppoi
     // filas afectadas (0 = otra petición la canceló antes). No comprueba quién llama:
     // hay que autorizar antes con requireAppointment. Un UPDATE masivo no dispara
     // @UpdateTimestamp, por eso se asigna updatedAt a mano.
-    // Ojo: flushAutomatically y clearAutomatically se acoplan a una transacción externa si algún
-    // día el servicio abre una (hoy no la hay): desligarían todas las entidades gestionadas y
-    // vaciarían cambios pendientes antes de tiempo. Es el mismo patrón que DoseRepository.
+    // Ojo: flushAutomatically y clearAutomatically se acoplan a la transacción externa, si la hay.
+    // En MedicalAppointmentService, register abre una propia (@Transactional) pero no usa este
+    // método; changeStatus, que sí lo usa, no abre ninguna. Si algún día la abriera, se
+    // desligarían todas las entidades gestionadas y se vaciarían cambios pendientes antes de
+    // tiempo. Es el mismo patrón que DoseRepository.
     @Transactional
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
@@ -80,4 +101,19 @@ public interface MedicalAppointmentRepository extends JpaRepository<MedicalAppoi
     int updateStatusUnlessCancelled(@Param("id") UUID id,
                                     @Param("status") MedicalAppointment.AppointmentStatus status,
                                     @Param("now") LocalDateTime now);
+
+    // Baja de usuario: cancela todas las citas vigentes y no canceladas en las que
+    // es paciente o médico. No las elimina: siguen visibles como CANCELLED. Un
+    // UPDATE masivo no dispara @UpdateTimestamp, por eso se asigna updatedAt a mano.
+    // Devuelve las filas afectadas.
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update MedicalAppointment a
+            set a.status = com.medtracker.medtracker.model.MedicalAppointment.AppointmentStatus.CANCELLED, a.updatedAt = :now
+            where a.deletedAt is null
+              and a.status <> com.medtracker.medtracker.model.MedicalAppointment.AppointmentStatus.CANCELLED
+              and (a.patient.id = :userId or a.doctor.id = :userId)
+            """)
+    int cancelAllByUser(@Param("userId") UUID userId, @Param("now") LocalDateTime now);
 }

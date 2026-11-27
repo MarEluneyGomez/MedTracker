@@ -81,7 +81,7 @@ public class CaregiverLinkService {
     // vinculado con él, y solo los vínculos en los que participa
     public List<CaregiverLink> findByCaregiver(AuthenticatedUser principal, UUID caregiverId) {
         accessPolicy.requireSelfOrLinked(principal, caregiverId);
-        return caregiverLinkRepository.findByCaregiver_IdAndDeletedAtIsNull(caregiverId).stream()
+        return caregiverLinkRepository.findByCaregiverBetweenActiveUsers(caregiverId).stream()
                 .filter(link -> isParticipant(principal, link))
                 .toList();
     }
@@ -90,7 +90,7 @@ public class CaregiverLinkService {
     // vinculado con él, y solo los vínculos en los que participa
     public List<CaregiverLink> findByPatient(AuthenticatedUser principal, UUID patientId) {
         accessPolicy.requireSelfOrLinked(principal, patientId);
-        return caregiverLinkRepository.findByPatient_IdAndDeletedAtIsNull(patientId).stream()
+        return caregiverLinkRepository.findByPatientBetweenActiveUsers(patientId).stream()
                 .filter(link -> isParticipant(principal, link))
                 .toList();
     }

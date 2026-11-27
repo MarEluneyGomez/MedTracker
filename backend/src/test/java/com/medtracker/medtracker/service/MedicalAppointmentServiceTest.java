@@ -3,10 +3,12 @@ package com.medtracker.medtracker.service;
 import com.medtracker.medtracker.model.MedicalAppointment;
 import com.medtracker.medtracker.model.User;
 import com.medtracker.medtracker.repository.MedicalAppointmentRepository;
+import com.medtracker.medtracker.repository.UserRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -24,9 +26,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -38,6 +42,8 @@ class MedicalAppointmentServiceTest {
     private UserService userService;
     @Mock
     private AccessPolicy accessPolicy;
+    @Mock
+    private UserRepository userRepository;
     // Reloj fijo: changeStatus fecha el UPDATE con LocalDateTime.now(clock)
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 14, 9, 0);
     private final Clock clock = Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC);
@@ -45,7 +51,7 @@ class MedicalAppointmentServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MedicalAppointmentService(repository, userService, accessPolicy, clock);
+        service = new MedicalAppointmentService(repository, userService, accessPolicy, clock, userRepository);
     }
 
     private final User patient = User.builder().id(UUID.randomUUID()).role(User.Role.PATIENT).build();
@@ -53,9 +59,14 @@ class MedicalAppointmentServiceTest {
     private final AuthenticatedUser patientP = new AuthenticatedUser(patient.getId(), User.Role.PATIENT);
     private final AuthenticatedUser doctorP = new AuthenticatedUser(doctor.getId(), User.Role.DOCTOR);
 
+    // Horario de la cita entrante y los bordes de la ventana de superposición, escritos a mano
+    private static final LocalDateTime DATE_TIME = LocalDateTime.of(2026, 12, 1, 10, 0);
+    private static final LocalDateTime WINDOW_START = LocalDateTime.of(2026, 12, 1, 9, 30);
+    private static final LocalDateTime WINDOW_END = LocalDateTime.of(2026, 12, 1, 10, 30);
+
     private MedicalAppointment incoming() {
         return MedicalAppointment.builder().patient(User.builder().id(patient.getId()).build())
-                .doctor(User.builder().id(doctor.getId()).build()).reason("control").build();
+                .doctor(User.builder().id(doctor.getId()).build()).dateTime(DATE_TIME).reason("control").build();
     }
 
     private MedicalAppointment appointment() {
@@ -67,28 +78,102 @@ class MedicalAppointmentServiceTest {
                 ex -> assertThat(ex.getStatusCode()).isEqualTo(status));
     }
 
-    private void givenUsers() {
+    private void givenUserLookups() {
         when(userService.getWithRole(any(), org.mockito.ArgumentMatchers.eq(User.Role.PATIENT))).thenReturn(patient);
         when(userService.getWithRole(any(), org.mockito.ArgumentMatchers.eq(User.Role.DOCTOR))).thenReturn(doctor);
+    }
+
+    private void givenUsers() {
+        givenUserLookups();
         when(repository.save(any(MedicalAppointment.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     @Test
     void thePatientCanScheduleTheirOwnAppointmentAndItIsBornConfirmed() {
         givenUsers();
+        when(repository.existsOverlappingByDoctor(doctor.getId(), WINDOW_START, WINDOW_END)).thenReturn(false);
 
-        assertThat(service.register(patientP, incoming()).getStatus())
-                .isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        MedicalAppointment created = service.register(patientP, incoming());
+
+        assertThat(created.getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.CONFIRMED);
+        verify(repository).save(created);
     }
 
     @Test
     void theAssignedDoctorCanScheduleTheAppointmentAndItIsBornPending() {
         givenUsers();
+        when(repository.existsOverlappingByDoctor(doctor.getId(), WINDOW_START, WINDOW_END)).thenReturn(false);
 
         MedicalAppointment created = service.register(doctorP, incoming());
 
         assertThat(created.getDoctor()).isSameAs(doctor);
         assertThat(created.getStatus()).isEqualTo(MedicalAppointment.AppointmentStatus.PENDING);
+        verify(repository).save(created);
+    }
+
+    // ---- superposición de citas del médico
+
+    @Test
+    void theScheduleIsSearchedThirtyMinutesAroundTheNewAppointmentForItsDoctor() {
+        givenUsers();
+
+        service.register(patientP, incoming());
+
+        verify(repository).existsOverlappingByDoctor(doctor.getId(), WINDOW_START, WINDOW_END);
+    }
+
+    @Test
+    void theDoctorIsLockedBeforeTheScheduleIsReadAndTheAppointmentIsSavedAfterwards() {
+        givenUsers();
+
+        service.register(patientP, incoming());
+
+        InOrder order = inOrder(userRepository, repository);
+        order.verify(userRepository).lockById(doctor.getId());
+        order.verify(repository).existsOverlappingByDoctor(doctor.getId(), WINDOW_START, WINDOW_END);
+        order.verify(repository).save(any(MedicalAppointment.class));
+    }
+
+    @Test
+    void anOverlapWithAnotherAppointmentOfTheDoctorIs409ForEitherSideAndNothingIsSaved() {
+        givenUserLookups();
+        when(repository.existsOverlappingByDoctor(doctor.getId(), WINDOW_START, WINDOW_END)).thenReturn(true);
+
+        for (AuthenticatedUser who : List.of(patientP, doctorP)) {
+            assertThatThrownBy(() -> service.register(who, incoming()))
+                    .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                        assertThat(e.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getReason())
+                                .isEqualTo("El médico ya tiene una cita en ese horario; las citas duran 30 minutos");
+                    });
+        }
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void aWrongRoleIs400WithoutLockingOrReadingTheSchedule() {
+        when(userService.getWithRole(any(), eq(User.Role.PATIENT))).thenReturn(patient);
+        when(userService.getWithRole(any(), eq(User.Role.DOCTOR)))
+                .thenThrow(new ResponseStatusException(HttpStatus.BAD_REQUEST));
+
+        assertThatThrownBy(() -> service.register(patientP, incoming()))
+                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+        verifyNoInteractions(userRepository, repository);
+    }
+
+    @Test
+    void aWrongPatientRoleIs400WithoutLockingOrReadingTheSchedule() {
+        // el texto es el de UserService.getWithRole: acá se comprueba que register no lo reemplaza
+        String message = "El usuario indicado no existe o no tiene el rol requerido (PATIENT)";
+        when(userService.getWithRole(any(), eq(User.Role.PATIENT)))
+                .thenThrow(new ResponseStatusException(HttpStatus.BAD_REQUEST, message));
+
+        assertThatThrownBy(() -> service.register(patientP, incoming()))
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(e.getReason()).isEqualTo(message);
+                });
+        verifyNoInteractions(userRepository, repository);
     }
 
     @Test
@@ -114,7 +199,8 @@ class MedicalAppointmentServiceTest {
                 .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
         assertThatThrownBy(() -> service.register(otherPatient, incoming()))
                 .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
-        verify(repository, never()).save(any());
+        // ni candado, ni lectura de la agenda, ni guardado
+        verifyNoInteractions(userRepository, repository);
     }
 
     @Test
@@ -322,6 +408,82 @@ class MedicalAppointmentServiceTest {
         }
         verify(repository, never()).updateStatusUnlessCancelled(any(), any(), any());
         verify(repository, never()).findById(any());
+    }
+
+    // ---- contraparte dada de baja
+
+    private static final String COUNTERPART_GONE =
+            "La otra persona de la cita ya no está activa; la cita solo se puede cancelar";
+
+    private MedicalAppointment appointmentWith(User appointmentPatient, User appointmentDoctor) {
+        return MedicalAppointment.builder().id(UUID.randomUUID()).patient(appointmentPatient)
+                .doctor(appointmentDoctor).reason("x").build();
+    }
+
+    private User deactivated(User user) {
+        return User.builder().id(user.getId()).role(user.getRole()).deletedAt(NOW.minusDays(1)).build();
+    }
+
+    @Test
+    void thePatientCannotConfirmOrReturnToPendingWhenTheDoctorIsDeactivated() {
+        MedicalAppointment appointment = appointmentWith(patient, deactivated(doctor));
+        when(accessPolicy.requireAppointment(patientP, appointment.getId())).thenReturn(appointment);
+
+        for (MedicalAppointment.AppointmentStatus requested : List.of(
+                MedicalAppointment.AppointmentStatus.CONFIRMED, MedicalAppointment.AppointmentStatus.PENDING)) {
+            assertThatThrownBy(() -> service.changeStatus(patientP, appointment.getId(), requested))
+                    .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                        assertThat(e.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getReason()).isEqualTo(COUNTERPART_GONE);
+                    });
+        }
+        verify(repository, never()).updateStatusUnlessCancelled(any(), any(), any());
+    }
+
+    @Test
+    void anAppointmentWithADeactivatedCounterpartCanStillBeCancelledByEitherSide() {
+        MedicalAppointment goneDoctor = appointmentWith(patient, deactivated(doctor));
+        MedicalAppointment gonePatient = appointmentWith(deactivated(patient), doctor);
+        when(accessPolicy.requireAppointment(patientP, goneDoctor.getId())).thenReturn(goneDoctor);
+        when(accessPolicy.requireAppointment(doctorP, gonePatient.getId())).thenReturn(gonePatient);
+        when(repository.updateStatusUnlessCancelled(any(), eq(MedicalAppointment.AppointmentStatus.CANCELLED),
+                eq(NOW))).thenReturn(1);
+        when(repository.findById(goneDoctor.getId())).thenReturn(Optional.of(goneDoctor));
+        when(repository.findById(gonePatient.getId())).thenReturn(Optional.of(gonePatient));
+
+        service.changeStatus(patientP, goneDoctor.getId(), MedicalAppointment.AppointmentStatus.CANCELLED);
+        service.changeStatus(doctorP, gonePatient.getId(), MedicalAppointment.AppointmentStatus.CANCELLED);
+
+        verify(repository).updateStatusUnlessCancelled(goneDoctor.getId(),
+                MedicalAppointment.AppointmentStatus.CANCELLED, NOW);
+        verify(repository).updateStatusUnlessCancelled(gonePatient.getId(),
+                MedicalAppointment.AppointmentStatus.CANCELLED, NOW);
+    }
+
+    @Test
+    void aCancelledAppointmentWithADeactivatedCounterpartAnswersAlreadyCancelledFirst() {
+        MedicalAppointment appointment = appointmentWith(patient, deactivated(doctor));
+        appointment.setStatus(MedicalAppointment.AppointmentStatus.CANCELLED);
+        when(accessPolicy.requireAppointment(patientP, appointment.getId())).thenReturn(appointment);
+
+        assertThatThrownBy(() -> service.changeStatus(patientP, appointment.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED))
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getReason()).isEqualTo("La cita ya fue cancelada");
+                });
+        verify(repository, never()).updateStatusUnlessCancelled(any(), any(), any());
+    }
+
+    @Test
+    void theDoctorAskingToConfirmWithADeactivatedPatientGets403BeforeTheDeactivationConflict() {
+        MedicalAppointment appointment = appointmentWith(deactivated(patient), doctor);
+        when(accessPolicy.requireAppointment(doctorP, appointment.getId())).thenReturn(appointment);
+
+        assertThatThrownBy(() -> service.changeStatus(doctorP, appointment.getId(),
+                MedicalAppointment.AppointmentStatus.CONFIRMED))
+                .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN));
+        verify(repository, never()).updateStatusUnlessCancelled(any(), any(), any());
     }
 
     @Test

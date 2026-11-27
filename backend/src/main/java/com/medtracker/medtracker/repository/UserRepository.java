@@ -1,7 +1,9 @@
 package com.medtracker.medtracker.repository;
 
 import com.medtracker.medtracker.model.User;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -34,6 +36,13 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     // Verificar si el usuario existe y no está dado de baja (filtro JWT)
     boolean existsByIdAndDeletedAtIsNull(UUID id);
 
+    // Candado de escritura sobre la fila del usuario, hasta el fin de la transacción del que
+    // llama (exige una abierta). El alta de citas lo toma sobre el médico para que dos altas
+    // simultáneas no pasen a la vez el chequeo de superposición.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select u from User u where u.id = :id")
+    Optional<User> lockById(@Param("id") UUID id);
+
     // Pone el fcmToken en null solo si el usuario todavía tiene ese token (ya
     // recortado): si la app registró uno nuevo mientras tanto, no se pisa. Un
     // UPDATE masivo no dispara @UpdateTimestamp, por eso se setea updatedAt.
@@ -60,4 +69,19 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("update User u set u.fcmToken = null, u.updatedAt = :now where u.id = :id")
     int clearFcmToken(@Param("id") UUID id, @Param("now") LocalDateTime now);
+
+    // Baja lógica, solo si todavía está vigente; también quita el token push.
+    // Devuelve las filas afectadas (0 = ya estaba dado de baja).
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update User u set u.deletedAt = :now, u.fcmToken = null, u.updatedAt = :now "
+            + "where u.id = :id and u.deletedAt is null")
+    int deactivateIfActive(@Param("id") UUID id, @Param("now") LocalDateTime now);
+
+    // Guarda el token push solo si el usuario sigue vigente, para que una baja
+    // concurrente no quede pisada. Devuelve las filas afectadas.
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update User u set u.fcmToken = :token, u.updatedAt = :now where u.id = :id and u.deletedAt is null")
+    int updateFcmTokenIfActive(@Param("id") UUID id, @Param("token") String token, @Param("now") LocalDateTime now);
 }

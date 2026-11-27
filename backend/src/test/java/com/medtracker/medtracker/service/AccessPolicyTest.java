@@ -16,7 +16,6 @@ import com.medtracker.medtracker.repository.MedicalHistoryRepository;
 import com.medtracker.medtracker.repository.NotificationRepository;
 import com.medtracker.medtracker.repository.ReminderRepository;
 import com.medtracker.medtracker.repository.TreatmentRepository;
-import com.medtracker.medtracker.repository.UserRepository;
 import com.medtracker.medtracker.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,10 +35,9 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -60,8 +58,6 @@ class AccessPolicyTest {
     private MedicalHistoryRepository medicalHistoryRepository;
     @Mock
     private NotificationRepository notificationRepository;
-    @Mock
-    private UserRepository userRepository;
 
     private AccessPolicy policy;
 
@@ -84,21 +80,19 @@ class AccessPolicyTest {
     @BeforeEach
     void setUp() {
         policy = new AccessPolicy(treatmentRepository, reminderRepository, doseRepository,
-                appointmentRepository, caregiverLinkRepository, medicalHistoryRepository, notificationRepository,
-                userRepository);
+                appointmentRepository, caregiverLinkRepository, medicalHistoryRepository, notificationRepository);
     }
 
     private void caregiverIsLinkedToA() {
-        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(
-                caregiver.getId(), patientA.getId())).thenReturn(true);
-        when(userRepository.existsByIdAndDeletedAtIsNull(patientA.getId())).thenReturn(true);
+        when(caregiverLinkRepository.existsActiveBetweenActiveUsers(caregiver.getId(), patientA.getId()))
+                .thenReturn(true);
     }
 
-    // El paciente A está dado de baja (user.deleted_at no nulo): el vínculo sigue en la base
+    // El paciente A está dado de baja (user.deleted_at no nulo): se simula con la consulta que
+    // filtra la baja respondiendo false, igual que un vínculo eliminado
     private void caregiverIsLinkedToDeletedA() {
-        when(caregiverLinkRepository.existsByCaregiver_IdAndPatient_IdAndDeletedAtIsNull(
-                caregiver.getId(), patientA.getId())).thenReturn(true);
-        when(userRepository.existsByIdAndDeletedAtIsNull(patientA.getId())).thenReturn(false);
+        when(caregiverLinkRepository.existsActiveBetweenActiveUsers(caregiver.getId(), patientA.getId()))
+                .thenReturn(false);
     }
 
     private void assertStatus(Throwable e, HttpStatus status) {
@@ -243,8 +237,6 @@ class AccessPolicyTest {
     @Test
     void anActivePatientWithoutALinkIsNotManageableNorLinked() {
         // el paciente está activo, pero no se stubea el vínculo (el repository responde false)
-        when(userRepository.existsByIdAndDeletedAtIsNull(patientA.getId())).thenReturn(true);
-
         assertAll(
                 () -> assertThat(policy.canManagePatient(asCaregiver, patientA.getId())).isFalse(),
                 () -> assertThatThrownBy(() -> policy.requireCanManagePatient(asCaregiver, patientA.getId()))
@@ -254,18 +246,19 @@ class AccessPolicyTest {
     }
 
     @Test
-    void withoutALinkTheUserRepositoryIsNotQueried() {
-        // sin vínculo (el repository responde false por defecto): no se consulta al usuario
+    void withoutALinkOnlyTheActiveUsersLinkQueryIsMade() {
+        // sin vínculo (el repository responde false por defecto): una sola consulta, la que
+        // filtra la baja
         assertThat(policy.canManagePatient(asCaregiver, patientA.getId())).isFalse();
 
-        verify(userRepository, never()).existsByIdAndDeletedAtIsNull(any());
+        verify(caregiverLinkRepository).existsActiveBetweenActiveUsers(caregiver.getId(), patientA.getId());
+        verifyNoMoreInteractions(caregiverLinkRepository);
     }
 
     @Test
-    void thePrincipalOnTheirOwnIdCanManageWithoutQueryingTheUserRepository() {
+    void thePrincipalCanManageTheirOwnIdWithoutQueryingTheLinks() {
         assertThat(policy.canManagePatient(asA, patientA.getId())).isTrue();
 
-        verifyNoInteractions(userRepository);
         verifyNoInteractions(caregiverLinkRepository);
     }
 
@@ -273,7 +266,7 @@ class AccessPolicyTest {
     void manageablePatientIdsAreTheUserPlusThePatientsTheyCare() {
         CaregiverLink link = CaregiverLink.builder().id(new CaregiverLinkId(caregiver.getId(), patientA.getId()))
                 .caregiver(caregiver).patient(patientA).build();
-        when(caregiverLinkRepository.findByCaregiver_IdAndDeletedAtIsNull(caregiver.getId())).thenReturn(List.of(link));
+        when(caregiverLinkRepository.findByCaregiverBetweenActiveUsers(caregiver.getId())).thenReturn(List.of(link));
 
         assertThat(policy.manageablePatientIds(asCaregiver)).containsExactlyInAnyOrder(caregiver.getId(), patientA.getId());
         assertThat(policy.manageablePatientIds(asB)).containsExactly(patientB.getId());
@@ -288,12 +281,59 @@ class AccessPolicyTest {
         CaregiverLink linkToDeleted = CaregiverLink.builder()
                 .id(new CaregiverLinkId(caregiver.getId(), deletedPatient.getId()))
                 .caregiver(caregiver).patient(deletedPatient).build();
+        // La consulta sin filtro de baja devolvería los dos; la que filtra la baja, solo el activo
         when(caregiverLinkRepository.findByCaregiver_IdAndDeletedAtIsNull(caregiver.getId()))
                 .thenReturn(List.of(activeLink, linkToDeleted));
+        when(caregiverLinkRepository.findByCaregiverBetweenActiveUsers(caregiver.getId()))
+                .thenReturn(List.of(activeLink));
 
         assertThat(policy.manageablePatientIds(asCaregiver))
                 .containsExactlyInAnyOrder(caregiver.getId(), patientA.getId())
                 .doesNotContain(deletedPatient.getId());
+    }
+
+    // ---- baja de cualquiera de los dos lados del vínculo
+
+    // La fila del vínculo sigue en los listados sin filtro de baja, pero no en las consultas
+    // que filtran (los mocks devuelven false o vacío): así se ve cuál usa AccessPolicy
+    private void linkOnlyVisibleWithoutTheDeactivationFilter() {
+        CaregiverLink link = CaregiverLink.builder().id(new CaregiverLinkId(caregiver.getId(), patientA.getId()))
+                .caregiver(caregiver).patient(patientA).build();
+        when(caregiverLinkRepository.findByCaregiver_IdAndDeletedAtIsNull(caregiver.getId())).thenReturn(List.of(link));
+        when(caregiverLinkRepository.findByPatient_IdAndDeletedAtIsNull(patientA.getId())).thenReturn(List.of(link));
+    }
+
+    @Test
+    void aLinkWithADeactivatedUserIsNotActiveNorLinkedInEitherDirection() {
+        linkOnlyVisibleWithoutTheDeactivationFilter();
+
+        assertAll(
+                () -> assertThat(policy.hasActiveLink(caregiver.getId(), patientA.getId())).isFalse(),
+                () -> assertThat(policy.areLinked(caregiver.getId(), patientA.getId())).isFalse(),
+                () -> assertThat(policy.areLinked(patientA.getId(), caregiver.getId())).isFalse(),
+                () -> assertThatThrownBy(() -> policy.requireSelfOrLinked(asA, caregiver.getId()))
+                        .satisfies(e -> assertStatus(e, HttpStatus.FORBIDDEN)));
+    }
+
+    @Test
+    void relatedUserIdsLeaveOutTheOtherSideOfALinkWithADeactivatedUser() {
+        linkOnlyVisibleWithoutTheDeactivationFilter();
+
+        // en los dos sentidos: ni el paciente para el cuidador ni el cuidador para el paciente
+        assertThat(policy.relatedUserIds(asCaregiver)).containsExactly(caregiver.getId());
+        assertThat(policy.relatedUserIds(asA)).containsExactly(patientA.getId());
+    }
+
+    @Test
+    void relatedUserIdsComeFromTheQueriesThatFilterDeactivatedUsers() {
+        CaregiverLink link = CaregiverLink.builder().id(new CaregiverLinkId(caregiver.getId(), patientA.getId()))
+                .caregiver(caregiver).patient(patientA).build();
+        when(caregiverLinkRepository.findByCaregiverBetweenActiveUsers(caregiver.getId())).thenReturn(List.of(link));
+        when(caregiverLinkRepository.findByPatientBetweenActiveUsers(patientA.getId())).thenReturn(List.of(link));
+
+        assertThat(policy.relatedUserIds(asCaregiver))
+                .containsExactlyInAnyOrder(caregiver.getId(), patientA.getId());
+        assertThat(policy.relatedUserIds(asA)).containsExactlyInAnyOrder(caregiver.getId(), patientA.getId());
     }
 
     // ---- RN-01: recordatorios y dosis
