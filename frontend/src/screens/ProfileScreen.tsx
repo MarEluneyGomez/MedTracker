@@ -36,6 +36,9 @@ export default function ProfileScreen() {
               onPress={() => navigation.navigate('MedicalHistory')}
             />
           ) : null}
+          {user.role === 'PATIENT' ? (
+            <AppButton title="Mis cuidadores" onPress={() => navigation.navigate('Caregivers')} />
+          ) : null}
           <AppButton title="Cerrar sesión" onPress={signOut} />
         </View>
       </View>

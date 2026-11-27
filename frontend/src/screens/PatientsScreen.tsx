@@ -2,7 +2,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import AppButton from '../components/AppButton';
 import EmptyState from '../components/EmptyState';
 import Screen from '../components/Screen';
@@ -10,7 +18,7 @@ import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import type { CaregiverStackParamList } from '../navigation/types';
 import { ApiError } from '../services/api';
-import { getCaregiverPatients } from '../services/caregiverLinks';
+import { getCaregiverPatients, removeCaregiverLink } from '../services/caregiverLinks';
 import { colors } from '../theme/colors';
 import type { UserSummary } from '../types/api';
 
@@ -21,6 +29,7 @@ export default function PatientsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const listRef = useFlashScrollIndicators<FlatList<UserSummary>>(!loading);
 
   async function load() {
@@ -53,6 +62,32 @@ export default function PatientsScreen() {
   function handleRetry() {
     setLoading(true);
     load();
+  }
+
+  function confirmStopCaring(patient: UserSummary) {
+    Alert.alert(
+      'Dejar de cuidar',
+      `¿Dejar de cuidar a ${patient.name}? Vas a dejar de ver y gestionar sus tratamientos y sus tomas.`,
+      [
+        { text: 'Volver', style: 'cancel' },
+        { text: 'Dejar de cuidar', style: 'destructive', onPress: () => handleStopCaring(patient) },
+      ],
+    );
+  }
+
+  async function handleStopCaring(patient: UserSummary) {
+    if (!user) {
+      return;
+    }
+    setBusyId(patient.id);
+    try {
+      await removeCaregiverLink(user.id, patient.id);
+      setPatients((current) => current.filter((item) => item.id !== patient.id));
+    } catch (e) {
+      Alert.alert('No se pudo guardar', e instanceof ApiError ? e.message : 'Intentá de nuevo.');
+    } finally {
+      setBusyId(null);
+    }
   }
 
   if (loading) {
@@ -94,20 +129,30 @@ export default function PatientsScreen() {
           />
         }
         renderItem={({ item }) => (
-          <Pressable
-            style={styles.card}
-            onPress={() =>
-              navigation.navigate('PatientDetail', { patientId: item.id, patientName: item.name })
-            }
-            accessibilityRole="button"
-            accessibilityHint="Abre las tomas, los tratamientos y el historial del paciente"
-          >
-            <View style={styles.cardText}>
-              <Text style={styles.name}>{item.name}</Text>
-              <Text style={styles.email}>{item.email}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={24} color={colors.primary} />
-          </Pressable>
+          <View style={styles.card}>
+            <Pressable
+              style={styles.patientRow}
+              onPress={() =>
+                navigation.navigate('PatientDetail', { patientId: item.id, patientName: item.name })
+              }
+              accessibilityRole="button"
+              accessibilityHint="Abre las tomas, los tratamientos y el historial del paciente"
+            >
+              <View style={styles.cardText}>
+                <Text style={styles.name}>{item.name}</Text>
+                <Text style={styles.email}>{item.email}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={24} color={colors.primary} />
+            </Pressable>
+            <Pressable
+              style={styles.stopCaring}
+              onPress={() => confirmStopCaring(item)}
+              disabled={busyId === item.id}
+              accessibilityRole="button"
+            >
+              <Text style={styles.stopCaringText}>Dejar de cuidar</Text>
+            </Pressable>
+          </View>
         )}
       />
     </Screen>
@@ -137,13 +182,26 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
   },
   card: {
-    flexDirection: 'row',
-    alignItems: 'center',
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
+  },
+  patientRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  stopCaring: {
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  stopCaringText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.error,
   },
   cardText: {
     flex: 1,

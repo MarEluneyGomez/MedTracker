@@ -94,7 +94,8 @@ El cuidador (tutor) ve en la pestaña **Pacientes** a los pacientes vinculados c
 - **Historial:** para un cuidador `GET /doses` trae las tomas de todos sus pacientes, así que se filtran las del paciente elegido a través de sus tratamientos.
 - **Notificaciones:** se programan solo para el propio paciente; lo que hace un cuidador no programa recordatorios en su celular.
 - **Textos:** en tercera persona para el cuidador ("Tomó 1 de 3", "La tomó").
-- **Vincular un cuidador** desde la app queda pendiente: el backend pide el id del cuidador, y falta poder hacerlo por email.
+- **Quitar un vínculo:** lo puede hacer cualquiera de los dos (`DELETE /caregiver-links/{caregiverId}/{patientId}`), siempre con confirmación. El paciente, desde Perfil > "Mis cuidadores", ve a sus cuidadores (`GET /caregiver-links/patient/{id}`) con lo que pueden y no pueden ver, y puede quitar a cualquiera. El cuidador, desde su lista de pacientes, puede "Dejar de cuidar" a uno.
+- **Agregar un cuidador** desde la app queda pendiente: el backend pide el id del cuidador, y falta poder hacerlo por email.
 
 ## Citas
 
@@ -154,7 +155,7 @@ frontend/
 ├── assets/                 # Íconos de la app y de las notificaciones
 │   └── sounds/             # Sonido de las notificaciones (recordatorio.wav)
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas y su formulario, historial médico y su formulario, pacientes del médico y del cuidador, pestañas de cada rol, perfil y baja de la cuenta)
+│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas y su formulario, historial médico y su formulario, pacientes del médico y del cuidador, cuidadores del paciente, pestañas de cada rol, perfil y baja de la cuenta)
 │   ├── components/         # Componentes reutilizables
 │   │   ├── AppButton, Screen, TextField, Logo
 │   │   ├── EmptyState # Mensaje centrado con ícono cuando una lista está vacía
@@ -187,9 +188,10 @@ frontend/
 │   │   ├── doseNotifications.ts # Qué notificaciones programar según las tomas que vienen
 │   │   ├── pushToken.ts    # Token de push del dispositivo para el backend
 │   │   ├── appointments.ts # Citas: listar, agendar, confirmar y cancelar, médicos y pacientes con cita confirmada
-│   │   ├── caregiverLinks.ts # Pacientes vinculados a un cuidador
+│   │   ├── caregiverLinks.ts # Vínculos cuidador-paciente: listar de cada lado y quitar
 │   │   ├── medicalHistory.ts # Historial médico: ver y cargar registros
 │   │   ├── medications.ts  # Catálogo de medicamentos
+│   │   ├── users.ts        # Perfil reducido de otro usuario (nombre y email)
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
 │   ├── types/              # Tipos de los DTOs del backend
