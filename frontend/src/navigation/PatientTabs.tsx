@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import AppointmentsScreen from '../screens/AppointmentsScreen';
 import HistoryScreen from '../screens/HistoryScreen';
+import AppointmentsStack from './AppointmentsStack';
 import ProfileStack from './ProfileStack';
 import TodayScreen from '../screens/TodayScreen';
 import { colors } from '../theme/colors';
@@ -59,7 +59,7 @@ export default function PatientTabs() {
 
       <Tab.Screen
         name="Appointments"
-        component={AppointmentsScreen}
+        component={AppointmentsStack}
         options={{
           title: 'Citas',
           tabBarIcon: ({ color, size }) => (

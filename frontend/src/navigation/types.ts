@@ -15,6 +15,8 @@ export type TreatmentsStackParamList = {
 export type ProfileStackParamList = {
   ProfileHome: undefined;
   MedicalHistory: undefined;
+  DeactivateAccount: undefined;
+  Caregivers: undefined;
 };
 
 export type DoctorPatientsStackParamList = {
@@ -26,4 +28,9 @@ export type DoctorPatientsStackParamList = {
 export type CaregiverStackParamList = {
   CaregiverHome: undefined;
   PatientDetail: { patientId: string; patientName: string };
+};
+
+export type AppointmentsStackParamList = {
+  AppointmentsList: undefined;
+  AppointmentForm: undefined;
 };

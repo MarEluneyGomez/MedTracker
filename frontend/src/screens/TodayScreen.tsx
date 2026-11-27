@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, View } from 'react-native';
 import AppButton from '../components/AppButton';
 import DoseCard from '../components/DoseCard';
+import EmptyState from '../components/EmptyState';
 import Screen from '../components/Screen';
 import { useActivePatient } from '../context/ActivePatientContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
@@ -153,10 +154,10 @@ export default function TodayScreen() {
           </View>
         }
         ListEmptyComponent={
-          <Text style={styles.message}>
-            {patient.isOwn ? 'No tenés' : 'No tiene'} tomas para hoy. Los horarios se cargan desde
-            Tratamientos.
-          </Text>
+          <EmptyState
+            icon="today-outline"
+            message={`${patient.isOwn ? 'No tenés' : 'No tiene'} tomas para hoy. Los horarios se cargan desde Tratamientos.`}
+          />
         }
         renderItem={({ item }) => {
           const doseDetails = details[item.reminderId];
@@ -185,6 +186,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   list: {
+    flexGrow: 1,
     gap: 12,
     paddingBottom: 24,
   },

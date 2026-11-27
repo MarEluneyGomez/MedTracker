@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { ProfileStackParamList } from '../navigation/types';
@@ -25,6 +25,7 @@ export default function ProfileScreen() {
   return (
     <Screen>
       <View style={styles.container}>
+        <Image source={require('../../assets/icon.png')} style={styles.icon} />
         <Text style={styles.title}>{user?.name}</Text>
         <Text style={styles.subtitle}>Rol: {ROLE_LABELS[user.role]}</Text>
         <Text style={styles.subtitle}>Mail: {user?.email}</Text>
@@ -35,9 +36,21 @@ export default function ProfileScreen() {
               onPress={() => navigation.navigate('MedicalHistory')}
             />
           ) : null}
+          {user.role === 'PATIENT' ? (
+            <AppButton title="Mis cuidadores" onPress={() => navigation.navigate('Caregivers')} />
+          ) : null}
           <AppButton title="Cerrar sesión" onPress={signOut} />
         </View>
       </View>
+      {user.role !== 'DOCTOR' ? (
+        <Pressable
+          style={styles.deleteAccount}
+          onPress={() => navigation.navigate('DeactivateAccount')}
+          accessibilityRole="button"
+        >
+          <Text style={styles.deleteAccountText}>Eliminar mi cuenta</Text>
+        </Pressable>
+      ) : null}
     </Screen>
   );
 }
@@ -47,6 +60,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  icon: {
+    width: 96,
+    height: 96,
+    marginBottom: 16,
+    borderRadius: 22,
   },
   title: {
     fontSize: 24,
@@ -61,5 +80,16 @@ const styles = StyleSheet.create({
   actions: {
     marginTop: 32,
     gap: 12,
+  },
+  deleteAccount: {
+    alignSelf: 'center',
+    minHeight: 44,
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  deleteAccountText: {
+    fontSize: 14,
+    color: colors.error,
+    textDecorationLine: 'underline',
   },
 });

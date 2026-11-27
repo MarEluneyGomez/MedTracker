@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, type ScrollViewInstance } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, type ScrollViewInstance } from 'react-native';
 import AppButton from '../components/AppButton';
 import Logo from '../components/Logo';
 import RoleSelector from '../components/RoleSelector';
@@ -90,6 +90,7 @@ export default function RegisterScreen() {
         keyboardShouldPersistTaps="handled"
         persistentScrollbar
       >
+        <Image source={require('../../assets/icon.png')} style={styles.icon} />
         <Logo />
         <Text style={styles.title}>Crear cuenta</Text>
         <TextField label="Nombre" value={name} onChangeText={setName} error={fieldErrors.name} />
@@ -140,6 +141,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 16,
     paddingVertical: 24,
+  },
+  icon: {
+    width: 72,
+    height: 72,
+    borderRadius: 18,
   },
   title: {
     fontSize: 28,

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import AppButton from '../components/AppButton';
 import Logo from '../components/Logo';
 import Screen from '../components/Screen';
@@ -45,6 +45,7 @@ export default function LoginScreen() {
   return (
     <Screen hasHeader>
       <View style={styles.container}>
+        <Image source={require('../../assets/icon.png')} style={styles.icon} />
         <Logo />
         <Text style={styles.title}>Iniciar sesión</Text>
         <TextField
@@ -81,6 +82,11 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     gap: 16,
+  },
+  icon: {
+    width: 72,
+    height: 72,
+    borderRadius: 18,
   },
   title: {
     fontSize: 28,

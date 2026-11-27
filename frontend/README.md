@@ -34,6 +34,8 @@ Mientras la app corre en modo desarrollo, la pantalla de inicio de sesión muest
 
 La sesión (usuario y tokens) se guarda cifrada en el dispositivo (`expo-secure-store`), así que se mantiene al cerrar y volver a abrir la app.
 
+**Eliminar la cuenta** (paciente y cuidador): desde Perfil, el enlace "Eliminar mi cuenta" (texto chico al pie, lejos de "Cerrar sesión", para que una persona mayor no lo toque sin querer ni lo confunda con salir de la app) abre una pantalla que explica qué se pierde y pide la contraseña actual, con una última confirmación (`POST /users/me/deactivate`). Es irreversible: el backend cancela las citas (también las pasadas), quita los vínculos con cuidadores, revoca todas las sesiones y no libera el email; los tratamientos, las tomas y el historial médico se conservan. Si sale bien, la app cierra la sesión local (borra los datos guardados y cancela las notificaciones) y vuelve a la bienvenida. Una contraseña incorrecta (403) o demasiados intentos (429) muestran el mensaje del backend sin cerrar la sesión. El médico no ve la opción: lo da de baja un operador, igual que el alta.
+
 ## Tratamientos
 
 La pestaña Tratamientos del paciente cubre CU-03 (agregar tratamiento) y CU-08 (editar o eliminar tratamiento):
@@ -92,7 +94,8 @@ El cuidador (tutor) ve en la pestaña **Pacientes** a los pacientes vinculados c
 - **Historial:** para un cuidador `GET /doses` trae las tomas de todos sus pacientes, así que se filtran las del paciente elegido a través de sus tratamientos.
 - **Notificaciones:** se programan solo para el propio paciente; lo que hace un cuidador no programa recordatorios en su celular.
 - **Textos:** en tercera persona para el cuidador ("Tomó 1 de 3", "La tomó").
-- **Vincular un cuidador** desde la app queda pendiente: el backend pide el id del cuidador, y falta poder hacerlo por email.
+- **Quitar un vínculo:** lo puede hacer cualquiera de los dos (`DELETE /caregiver-links/{caregiverId}/{patientId}`), siempre con confirmación. El paciente, desde Perfil > "Mis cuidadores", ve a sus cuidadores (`GET /caregiver-links/patient/{id}`) con lo que pueden y no pueden ver, y puede quitar a cualquiera. El cuidador, desde su lista de pacientes, puede "Dejar de cuidar" a uno.
+- **Agregar un cuidador** desde la app queda pendiente: el backend pide el id del cuidador, y falta poder hacerlo por email.
 
 ## Citas
 
@@ -103,7 +106,7 @@ Cubre parte de CU-09 del lado del paciente. La pestaña Citas lista las citas pr
 
 El médico ve la misma pestaña con sus citas: el nombre del paciente aparece recién cuando el paciente confirma (antes, el backend no lo informa y se muestra "Paciente sin confirmar"), las pendientes dicen "Esperando que el paciente confirme" y solo puede cancelarlas, porque confirmar es del paciente.
 
-Agendar una cita nueva queda pendiente: va a mostrar los turnos libres del médico, y para eso hace falta que el backend informe la disponibilidad.
+**Nueva cita** (solo el paciente): busca al médico por nombre (sin tildes ni mayúsculas, hasta 5 resultados y nada con el buscador vacío) y lo elige por su id, así dos médicos con el mismo nombre no se confunden; elige la fecha (de hoy en adelante) y la hora entre turnos de 30 minutos de 08:00 a 17:30 (si es hoy, solo los que no pasaron), y escribe el motivo (hasta 255 caracteres). Avisa que agendar le da al médico acceso al historial médico. La cita nace confirmada (`POST /medical-appointments/register`). Si el médico ya tiene otra cita a menos de 30 minutos, el backend responde 409 y se muestra su mensaje. El backend no informa los turnos libres, así que la app no puede ocultar los ocupados.
 
 ## Historial médico
 
@@ -152,9 +155,10 @@ frontend/
 ├── assets/                 # Íconos de la app y de las notificaciones
 │   └── sounds/             # Sonido de las notificaciones (recordatorio.wav)
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas, historial médico y su formulario, pacientes del médico y del cuidador, pestañas de cada rol, perfil)
+│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas y su formulario, historial médico y su formulario, pacientes del médico y del cuidador, cuidadores del paciente, pestañas de cada rol, perfil y baja de la cuenta)
 │   ├── components/         # Componentes reutilizables
 │   │   ├── AppButton, Screen, TextField, Logo
+│   │   ├── EmptyState # Mensaje centrado con ícono cuando una lista está vacía
 │   │   ├── Chip, RoleSelector, ChipSelector, DaySelector # Selección entre opciones
 │   │   ├── DateField, TimeField # Campos de fecha y hora
 │   │   ├── MedicationPicker, DosagePicker, FrequencyPicker # Partes del formulario de tratamiento
@@ -162,8 +166,9 @@ frontend/
 │   │   ├── DoseCard # Una toma del día con su estado y acciones
 │   │   ├── DoseStatusLabel # Estado de una toma con ícono y texto (Hoy e Historial)
 │   │   ├── AppointmentCard # Una cita con el médico o el paciente, su estado y acciones
+│   │   ├── DoctorPicker # Buscador de médicos para agendar una cita
 │   │   └── OfflineBanner # Aviso de que se muestran datos guardados (dentro de Screen)
-│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, ProfileStack, DoctorPatientsStack, CaregiverStack y las pestañas del paciente elegido (CaregiverPatientTabs), headerOptions y lista de pantallas (types.ts)
+│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, AppointmentsStack, ProfileStack, DoctorPatientsStack, CaregiverStack y las pestañas del paciente elegido (CaregiverPatientTabs), headerOptions y lista de pantallas (types.ts)
 │   ├── context/            # AuthContext (sesión) y ActivePatientContext (de qué paciente son los datos)
 │   ├── hooks/
 │   │   ├── useDoseNotificationsSync.ts # Recalcula las notificaciones al entrar y al volver a primer plano
@@ -173,7 +178,7 @@ frontend/
 │   │   └── usePushTokenRegistration.ts # Manda el token de push al backend al entrar, al volver a primer plano y si cambia
 │   ├── services/
 │   │   ├── api.ts          # Cliente HTTP: token en cada pedido, renovación de la sesión, copias sin conexión y errores (ApiError)
-│   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión
+│   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión, y baja de la cuenta
 │   │   ├── cache.ts        # Copias de las lecturas en el dispositivo (AsyncStorage)
 │   │   ├── connection.ts   # Si se están mostrando datos guardados y de cuándo
 │   │   ├── pendingDoseActions.ts # Acciones sobre tomas hechas sin conexión, en espera de mandarse
@@ -182,10 +187,11 @@ frontend/
 │   │   ├── notifications.ts # Permiso, canal de Android, botón "La tomé" y programar o cancelar notificaciones
 │   │   ├── doseNotifications.ts # Qué notificaciones programar según las tomas que vienen
 │   │   ├── pushToken.ts    # Token de push del dispositivo para el backend
-│   │   ├── appointments.ts # Citas: listar, confirmar y cancelar, médicos y pacientes con cita confirmada
-│   │   ├── caregiverLinks.ts # Pacientes vinculados a un cuidador
+│   │   ├── appointments.ts # Citas: listar, agendar, confirmar y cancelar, médicos y pacientes con cita confirmada
+│   │   ├── caregiverLinks.ts # Vínculos cuidador-paciente: listar de cada lado y quitar
 │   │   ├── medicalHistory.ts # Historial médico: ver y cargar registros
 │   │   ├── medications.ts  # Catálogo de medicamentos
+│   │   ├── users.ts        # Perfil reducido de otro usuario (nombre y email)
 │   │   ├── reminders.ts    # Recordatorios y sincronización de horarios
 │   │   └── treatments.ts   # Tratamientos: alta, edición, completar y baja
 │   ├── types/              # Tipos de los DTOs del backend

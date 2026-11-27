@@ -1,4 +1,6 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import CaregiversScreen from '../screens/CaregiversScreen';
+import DeactivateAccountScreen from '../screens/DeactivateAccountScreen';
 import MedicalHistoryScreen from '../screens/MedicalHistoryScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import { backHeaderOptions } from './headerOptions';
@@ -13,6 +15,12 @@ export default function ProfileStack() {
       <Stack.Screen
         name="MedicalHistory"
         component={MedicalHistoryScreen}
+        options={backHeaderOptions}
+      />
+      <Stack.Screen name="Caregivers" component={CaregiversScreen} options={backHeaderOptions} />
+      <Stack.Screen
+        name="DeactivateAccount"
+        component={DeactivateAccountScreen}
         options={backHeaderOptions}
       />
     </Stack.Navigator>

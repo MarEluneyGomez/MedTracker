@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import AppButton from '../components/AppButton';
+import EmptyState from '../components/EmptyState';
 import Screen from '../components/Screen';
 import { useActivePatient } from '../context/ActivePatientContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
@@ -186,9 +187,10 @@ export default function TreatmentsScreen() {
         onRefresh={handleRefresh}
         contentContainerStyle={styles.list}
         ListEmptyComponent={
-          <Text style={styles.message}>
-            Todavía no {patient.isOwn ? 'tenés' : 'tiene'} tratamientos cargados.
-          </Text>
+          <EmptyState
+            icon="medkit-outline"
+            message={`Todavía no ${patient.isOwn ? 'tenés' : 'tiene'} tratamientos cargados.`}
+          />
         }
         renderItem={({ item }) => {
           const medication = medications[item.medicationId];
@@ -310,6 +312,7 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   list: {
+    flexGrow: 1,
     gap: 12,
     paddingBottom: 24,
   },
