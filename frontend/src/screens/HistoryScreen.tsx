@@ -5,6 +5,7 @@ import { ActivityIndicator, SectionList, StyleSheet, Text, View } from 'react-na
 import AppButton from '../components/AppButton';
 import ChipSelector from '../components/ChipSelector';
 import DoseStatusLabel from '../components/DoseStatusLabel';
+import EmptyState from '../components/EmptyState';
 import Screen from '../components/Screen';
 import { useActivePatient } from '../context/ActivePatientContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
@@ -169,7 +170,7 @@ export default function HistoryScreen() {
           </View>
         }
         ListEmptyComponent={
-          <Text style={styles.message}>Todavía no hay tomas en este período.</Text>
+          <EmptyState icon="stats-chart-outline" message="Todavía no hay tomas en este período." />
         }
         renderSectionHeader={({ section }) => (
           <Text style={styles.dayTitle}>{formatLongDate(fromBackendDate(section.day))}</Text>
@@ -241,6 +242,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   list: {
+    flexGrow: 1,
     gap: 8,
     paddingBottom: 24,
   },

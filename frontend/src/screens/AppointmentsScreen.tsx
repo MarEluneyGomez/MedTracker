@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, SectionList, StyleSheet, Text, View } from 'react-native';
 import AppButton from '../components/AppButton';
 import AppointmentCard from '../components/AppointmentCard';
+import EmptyState from '../components/EmptyState';
 import Screen from '../components/Screen';
 import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
@@ -146,7 +147,9 @@ export default function AppointmentsScreen() {
             )}
           </View>
         }
-        ListEmptyComponent={<Text style={styles.message}>Todavía no tenés citas.</Text>}
+        ListEmptyComponent={
+          <EmptyState icon="calendar-outline" message="Todavía no tenés citas." />
+        }
         renderSectionHeader={({ section }) => (
           <Text style={styles.sectionTitle}>{section.title}</Text>
         )}
@@ -185,6 +188,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   list: {
+    flexGrow: 1,
     gap: 12,
     paddingBottom: 24,
   },

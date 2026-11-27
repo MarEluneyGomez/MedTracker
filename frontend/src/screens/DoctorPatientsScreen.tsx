@@ -4,6 +4,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import AppButton from '../components/AppButton';
+import EmptyState from '../components/EmptyState';
 import Screen from '../components/Screen';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
 import type { DoctorPatientsStackParamList } from '../navigation/types';
@@ -82,9 +83,10 @@ export default function DoctorPatientsScreen() {
         contentContainerStyle={styles.list}
         ListHeaderComponent={<Text style={styles.title}>Mis pacientes</Text>}
         ListEmptyComponent={
-          <Text style={styles.message}>
-            Todavía no tenés pacientes. Un paciente aparece acá cuando confirma una cita con vos.
-          </Text>
+          <EmptyState
+            icon="people-outline"
+            message="Todavía no tenés pacientes. Un paciente aparece acá cuando confirma una cita con vos."
+          />
         }
         renderItem={({ item }) => (
           <Pressable
@@ -114,6 +116,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   list: {
+    flexGrow: 1,
     gap: 12,
     paddingBottom: 24,
   },

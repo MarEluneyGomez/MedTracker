@@ -155,6 +155,7 @@ frontend/
 │   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas y su formulario, historial médico y su formulario, pacientes del médico y del cuidador, pestañas de cada rol, perfil)
 │   ├── components/         # Componentes reutilizables
 │   │   ├── AppButton, Screen, TextField, Logo
+│   │   ├── EmptyState # Mensaje centrado con ícono cuando una lista está vacía
 │   │   ├── Chip, RoleSelector, ChipSelector, DaySelector # Selección entre opciones
 │   │   ├── DateField, TimeField # Campos de fecha y hora
 │   │   ├── MedicationPicker, DosagePicker, FrequencyPicker # Partes del formulario de tratamiento

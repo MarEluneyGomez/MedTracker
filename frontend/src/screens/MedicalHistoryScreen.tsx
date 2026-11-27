@@ -3,6 +3,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
 import AppButton from '../components/AppButton';
+import EmptyState from '../components/EmptyState';
 import Screen from '../components/Screen';
 import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
@@ -100,11 +101,14 @@ export default function MedicalHistoryScreen() {
           </View>
         }
         ListEmptyComponent={
-          <Text style={styles.message}>
-            {patient
-              ? 'Todavía no hay registros en el historial de este paciente.'
-              : 'Todavía no tenés registros en tu historial médico. Los carga tu médico después de una cita.'}
-          </Text>
+          <EmptyState
+            icon="document-text-outline"
+            message={
+              patient
+                ? 'Todavía no hay registros en el historial de este paciente.'
+                : 'Todavía no tenés registros en tu historial médico. Los carga tu médico después de una cita.'
+            }
+          />
         }
         renderItem={({ item }) => (
           <View style={styles.card}>
@@ -125,6 +129,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   list: {
+    flexGrow: 1,
     gap: 12,
     paddingBottom: 24,
   },
