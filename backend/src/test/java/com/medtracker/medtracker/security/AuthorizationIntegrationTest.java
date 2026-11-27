@@ -830,6 +830,26 @@ class AuthorizationIntegrationTest {
         mockMvc.perform(as(doctor, json(post("/medical-appointments/register"), body))).andExpect(status().isCreated());
     }
 
+    @Test
+    void schedulingOverAnotherAppointmentOfTheDoctorIs409ForThePatientAndForTheDoctor() throws Exception {
+        // el mock responde que hay choque solo para ese médico y la ventana de 30 minutos a cada lado
+        when(appointmentRepository.existsOverlappingByDoctor(doctor.getId(),
+                LocalDateTime.of(2026, 11, 1, 9, 30), LocalDateTime.of(2026, 11, 1, 10, 30))).thenReturn(true);
+        String body = "{\"patient\":{\"id\":\"" + a.getId() + "\"},\"doctor\":{\"id\":\"" + doctor.getId()
+                + "\"},\"dateTime\":\"2026-11-01T10:00:00\",\"reason\":\"control\"}";
+
+        for (User who : List.of(a, doctor)) {
+            mockMvc.perform(as(who, json(post("/medical-appointments/register"), body)))
+                    .andExpect(status().isConflict())
+                    // este contexto no incluye GlobalExceptionHandler: el texto se comprueba en la excepción
+                    .andExpect(result -> org.assertj.core.api.Assertions.assertThat(result.getResolvedException())
+                            .isInstanceOfSatisfying(org.springframework.web.server.ResponseStatusException.class,
+                                    ex -> org.assertj.core.api.Assertions.assertThat(ex.getReason()).isEqualTo(
+                                            "El médico ya tiene una cita en ese horario; las citas duran 30 minutos")));
+        }
+        verify(appointmentRepository, never()).save(any());
+    }
+
     // ---------------------------------------------------------------- vínculos cuidador-paciente
 
     @Test

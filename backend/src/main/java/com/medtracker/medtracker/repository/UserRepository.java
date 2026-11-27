@@ -1,7 +1,9 @@
 package com.medtracker.medtracker.repository;
 
 import com.medtracker.medtracker.model.User;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -33,6 +35,13 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     // Verificar si el usuario existe y no está dado de baja (filtro JWT)
     boolean existsByIdAndDeletedAtIsNull(UUID id);
+
+    // Candado de escritura sobre la fila del usuario, hasta el fin de la transacción del que
+    // llama (exige una abierta). El alta de citas lo toma sobre el médico para que dos altas
+    // simultáneas no pasen a la vez el chequeo de superposición.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select u from User u where u.id = :id")
+    Optional<User> lockById(@Param("id") UUID id);
 
     // Pone el fcmToken en null solo si el usuario todavía tiene ese token (ya
     // recortado): si la app registró uno nuevo mientras tanto, no se pisa. Un
