@@ -9,13 +9,16 @@ Aplicación móvil orientada a facilitar la adherencia a tratamientos médicos m
 ## Tabla de contenidos
 
 1. [Descripción general](#descripción-general)
-2. [Tecnologías](#tecnologías)
-3. [Estructura del repositorio](#estructura-del-repositorio)
-4. [Requerimientos](#requerimientos-funcionales)
-5. [Reglas de negocio](#reglas-de-negocio)
-6. [Diccionario de datos](#diccionario-de-datos)
-7. [Base de datos](#base-de-datos)
-8. [Casos de uso](#casos-de-uso)
+2. [Integrantes](#integrantes)
+3. [Entrega final](#entrega-final)
+4. [Tecnologías](#tecnologías)
+5. [Ejecución](#ejecución)
+6. [Estructura del repositorio](#estructura-del-repositorio)
+7. [Requerimientos](#requerimientos-funcionales)
+8. [Reglas de negocio](#reglas-de-negocio)
+9. [Diccionario de datos](#diccionario-de-datos)
+10. [Base de datos](#base-de-datos)
+11. [Casos de uso](#casos-de-uso)
 
 ---
 
@@ -27,17 +30,50 @@ El sistema permite a un usuario (paciente) registrar los medicamentos que debe t
 
 ---
 
+## Integrantes
+
+Grupo 145.
+
+| Nombre completo | GitHub |
+|---|---|
+| Martín Eluney Gómez Piñeiro | [@MarEluneyGomez](https://github.com/MarEluneyGomez) |
+| Agustin Ezequiel Martinez | [@AgusMartinez96](https://github.com/AgusMartinez96) |
+
+---
+
+## Entrega final
+
+| Material | Enlace |
+|---|---|
+| Informe final (PDF) | _Pendiente_ |
+| Video de presentación | _Pendiente_ |
+| Sistema desplegado | La base de datos está publicada en Neon (PostgreSQL administrado). El backend y la app se ejecutan como se describe en [Ejecución](#ejecución). |
+
+---
+
 ## Tecnologías
 
 | Capa | Tecnología |
 |---|---|
-| Frontend / App móvil | React Native |
+| Frontend / App móvil | React Native con Expo y TypeScript; se compila con EAS Build |
 | Backend / API | Spring Boot (Java) |
 | Base de datos | PostgreSQL (hosteado en Neon) |
 | Notificaciones push | Notificaciones locales en la app (primer aviso) y Firebase Cloud Messaging (FCM) desde el backend como respaldo (cliente real con `medtracker.push.provider=fcm`; por defecto `log`, simulado, y con el job apagado) |
 | Autenticación | JWT propio, manejado en el backend (Spring Boot) |
 | Control de versiones | Git / GitHub |
 | Gestión de dependencias backend | Maven |
+
+---
+
+## Ejecución
+
+Cada parte tiene su README con el detalle; este es el orden para levantar el sistema completo:
+
+1. **Base de datos (PostgreSQL):** aplicar [`database/schema.sql`](database/schema.sql) (ver [Base de datos](#base-de-datos)). La conexión va en `database/.env.local`, a partir de [`database/.env.example`](database/.env.example).
+2. **Backend (Java 21, Spring Boot):** definir las variables de entorno de [`backend/.env.example`](backend/.env.example) (como mínimo la base y `JWT_SECRET`) y correr `./mvnw spring-boot:run` desde `backend/`. Ver [`backend/README.md`](backend/README.md).
+3. **App (Node.js, Expo):** copiar [`frontend/.env.example`](frontend/.env.example) a `frontend/.env.local` con la IP de la PC, instalar con `npm install` y levantar con `npx expo start --dev-client`, con el development build instalado en el celular. Ver [`frontend/README.md`](frontend/README.md).
+
+Las credenciales reales (base, JWT, Firebase) nunca se versionan: los `.env.local` y `google-services.json` están en `.gitignore`.
 
 ---
 
@@ -62,6 +98,7 @@ MedTracker/
 │   ├── app.json                # Configuración de Expo
 │   ├── app.config.js           # Ubicación del google-services.json (no versionado)
 │   ├── eas.json                # Perfiles de compilación con EAS Build
+│   ├── .env.example            # Variables de entorno de la app (copiar a .env.local)
 │   ├── .prettierrc             # Reglas de formato del código
 │   ├── tsconfig.json
 │   └── package.json
@@ -81,13 +118,17 @@ MedTracker/
 │   │   │   └── resources/
 │   │   │       └── application.properties
 │   │   └── test/                # Tests
+│   ├── .env.example             # Variables de entorno del backend, sin valores reales
 │   └── pom.xml
 │
 ├── database/
 │   ├── schema.sql              # DDL de tipos y tablas
 │   ├── queries.sql             # DML de ejemplo
+│   ├── migration-*.sql         # Cambios de esquema sobre una base ya creada
+│   ├── rollback-*.sql          # Reversión de cada migración
 │   ├── er-diagram.svg          # Diagrama de entidad-relación (exportado)
-│   └── er-diagram.md           # Diagrama de entidad-relación (embebe el SVG)
+│   ├── er-diagram.md           # Diagrama de entidad-relación (embebe el SVG)
+│   └── .env.example            # Cadena de conexión para psql (copiar a .env.local)
 │
 ├── docs/
 │   ├── modulos.md               # Listado de módulos funcionales y prioridad
@@ -476,7 +517,7 @@ Un job (`DosePushScheduler`) envía un push al paciente dueño del tratamiento (
 | RNF-02 | El tiempo máximo hasta que el servidor despacha el push, respecto del horario de la toma, es la demora configurada más el intervalo del job (con los valores por defecto, 15 + 1 = 16 minutos), más lo que tarde el propio ciclo (depende de la cantidad de tomas del lote y de la latencia del proveedor). No incluye la entrega del proveedor al dispositivo. |
 | RNF-03 | La comunicación entre app y backend debe realizarse mediante HTTPS. |
 | RNF-04 | Los datos sensibles del usuario deben almacenarse de forma segura (contraseñas hasheadas, no texto plano). |
-| RNF-05 | El sistema debe soportar operación offline parcial (ver medicamentos ya cargados sin conexión). *(a confirmar si aplica)* |
+| RNF-05 | El sistema debe soportar operación offline parcial: ver los datos ya cargados y registrar tomas sin conexión, que se envían al servidor (con la hora real) cuando vuelve la conexión. |
 
 ---
 
