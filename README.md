@@ -229,7 +229,7 @@ El access token deja de servir de inmediato (401), porque el filtro JWT comprueb
 - Un vínculo con el cuidador **o** con el paciente dado de baja cuenta como "sin vínculo" en las dos direcciones: no da acceso a datos ni al perfil, no aparece en `GET /users` y no figura en los listados de vínculos por cuidador o por paciente.
 - Un médico pierde el acceso al historial médico, al perfil reducido y a los listados de citas de un paciente dado de baja, y el paciente deja de ver el perfil y los listados de citas de un médico dado de baja. La cita en sí sigue visible para quien participa, con `GET /medical-appointments` y `GET /medical-appointments/{id}`.
 - `PUT /medical-appointments/{id}/status` sobre una cita con el paciente o el médico dados de baja solo admite `CANCELLED`; otro estado responde 409 "La otra persona de la cita ya no está activa; la cita solo se puede cancelar". Este chequeo es el último, después del 404, del 409 "La cita ya fue cancelada" y del 403 del médico; como la baja cancela las citas, lo normal es recibir el 409 de cita cancelada.
-- `PUT /users/me/fcm-token` guarda el token nuevo con un `UPDATE` condicional: si el usuario se dio de baja entre la autenticación y el guardado, no se escribe y responde 404. Si el token enviado es igual al ya guardado, ese `UPDATE` no se ejecuta: una baja concurrente en esa ventana (mínima) no se detecta, se responde 204 y el token se les quita igual a los otros usuarios que lo tuvieran.
+- `PUT /users/me/fcm-token` de un usuario ya dado de baja responde 401: lo rechaza el filtro JWT. El token nuevo se guarda con un `UPDATE` condicional, y solo si la baja sucede entre la autenticación y el guardado no se escribe y responde 404. Si el token enviado es igual al ya guardado, ese `UPDATE` no se ejecuta: una baja concurrente en esa ventana (mínima) no se detecta, se responde 204 y el token se les quita igual a los otros usuarios que lo tuvieran.
 
 **Cambio de contrato para el frontend:** hay un endpoint nuevo y hace falta una pantalla de baja que pida la contraseña como confirmación. Tras el 204, la app debe cerrar la sesión local (borrar sus tokens). El 403 por contraseña incorrecta **no** es una sesión vencida (a diferencia de un 401): no hay que refrescar ni desloguear, solo avisar y dejar reintentar. También puede responder 429.
 
@@ -265,7 +265,7 @@ Los endpoints de las tandas A y B reciben un DTO de entrada con Bean Validation 
 | `PUT /reminders/{id}` | `time`, `daysOfWeek`, `intervalDays`, `startDate`, `message` | `time`, `message` | igual que el alta |
 | `POST /doses/register` | `reminder{id}`, `scheduledAt` | `reminder.id`, `scheduledAt` | Nace `PENDING`; el estado y `confirmedAt` se ignoran. Las reglas de fecha, recordatorio, tratamiento y duplicados están en [Reglas y errores de `POST /doses/register`](#reglas-y-errores-de-post-dosesregister) |
 | `PUT /doses/{id}/confirm` | `confirmedAt` (opcional; el body entero es opcional) | ninguno | `confirmedAt` es una fecha-hora sin zona con el formato exacto `yyyy-MM-ddTHH:mm:ss` (milisegundos opcionales), no posterior a ahora + 5 minutos |
-| `POST /medical-appointments/register` | `patient{id}`, `doctor{id}`, `dateTime`, `reason` | los cuatro | `reason` no vacío y ≤ 255. Nace `CONFIRMED` si la agenda el paciente y `PENDING` si la agenda el médico; el estado no se acepta |
+| `POST /medical-appointments/register` | `patient{id}`, `doctor{id}`, `dateTime`, `reason` | los cuatro | `reason` no vacío y ≤ 255. Nace `CONFIRMED` si la agenda el paciente y `PENDING` si la agenda el médico; el estado no se acepta. Chequeos en orden: body (400), el usuario del token es el paciente o el médico (403), los dos usuarios existen con su rol (400) y el horario del médico está libre (409 "El médico ya tiene una cita en ese horario; las citas duran 30 minutos"); ver *Superposición de citas del médico* en [Autorización por dueño](#autorización-por-dueño-rn-01-rn-09) |
 | `POST /medical-histories/register` | `patient{id}`, `diagnosis`, `notes`, `recordDate` | `patient.id`, `diagnosis`, `recordDate` | `diagnosis` no vacío y ≤ 255; `notes` ≤ 5000 caracteres (límite de la aplicación: la columna es `TEXT`) |
 | `POST /caregiver-links/register` | `caregiver{id}`, `patient{id}` | los dos | Las reglas de negocio (409, rol `CAREGIVER`, 403) siguen en el service |
 | `POST /medications/register` | `name`, `administrationForm` | los dos | `name` no vacío y ≤ 150; `administrationForm` no vacío y ≤ 50 |
@@ -308,6 +308,20 @@ La identidad sale siempre del token. Un recurso ajeno, inexistente o eliminado l
 - *Cita agendada por el médico y sin vencimiento.* Un médico ya no puede darse acceso al historial de un paciente agendando una cita por su cuenta ni confirmándola: la cita que agenda el médico nace `PENDING`, solo el paciente puede dejarla `CONFIRMED` y el historial exige `CONFIRMED`. El médico necesita una cita `CONFIRMED` para `GET /users/{pacienteId}` y para `GET /medical-appointments/patient/{pacienteId}`. Límites que se aceptan: no hay vencimiento, así que una cita `CONFIRMED` da acceso hasta que el paciente la cancele o la pase a `PENDING`, o hasta que alguno de los dos se dé de baja; el médico necesita conocer el `id` del paciente (no hay un listado de pacientes para médicos); el paciente ve el perfil reducido del médico (`id`, `name`, `email` y `role`) con una cita `PENDING` o `CONFIRMED`; si el paciente retira el consentimiento pasando la cita a `PENDING`, el médico sigue leyendo la fecha, el motivo y el estado de esa cita con `GET /medical-appointments` y `GET /medical-appointments/{id}`, porque sigue siendo participante de la cita; y el 400 del alta de citas (usuario inexistente o con rol incorrecto) frente al 201 permite enumerar UUID, como ya ocurría.
 
 **Citas y acceso al historial médico.** La cita que agenda el paciente nace `CONFIRMED` y la que agenda el médico nace `PENDING`; el cliente no puede mandar el estado. Al agendar una cita, el paciente autoriza al médico a ver y crear su historial médico mientras la cita esté `CONFIRMED`; lo retira pasándola a `PENDING` o cancelándola. El paciente confirma, retira (pasándola a `PENDING`) o cancela; el médico solo puede cancelar. **Cambio de contrato para el frontend:** el médico ya no puede confirmar ni reabrir una cita (403); las citas del paciente nacen `CONFIRMED`; el paciente confirma las que agendó el médico con `PUT /medical-appointments/{id}/status?status=CONFIRMED`; y el médico necesita una cita `CONFIRMED` para ver o crear el historial médico de un paciente. Además, un médico con una cita solo `PENDING` recibe 404 en `GET /users/{pacienteId}` y 403 en `GET /medical-appointments/patient/{pacienteId}` hasta que el paciente la confirma; sigue viendo sus citas con `GET /medical-appointments` y `GET /medical-appointments/{id}`.
+
+**Superposición de citas del médico.** Toda cita dura 30 minutos (duración fija, sin columna de fin). `POST /medical-appointments/register` responde 409 "El médico ya tiene una cita en ese horario; las citas duran 30 minutos", sin guardar nada, si el médico tiene otra cita cuyo `date_time` dista menos de 30 minutos del pedido: con 29 minutos de diferencia chocan y con 30 exactos no. Bloquean las citas vigentes (`deleted_at` nulo) `PENDING` y `CONFIRMED`; no bloquean las `CANCELLED` ni las de un paciente dado de baja. La regla es igual agende quien agende. El chequeo corre dentro de una transacción y con un candado pesimista sobre la fila del médico, así que las altas de un mismo médico se serializan (también con varias instancias de la aplicación, porque el candado es de la base): de dos simultáneas que se superponen, la segunda recibe 409.
+
+**Cambio de contrato para el frontend:** el alta de citas puede responder ahora 409 con ese mensaje en `message`.
+
+**Limitaciones conocidas de la superposición de citas.**
+
+- La regla es solo del médico: un paciente puede tener dos citas a la misma hora con médicos distintos.
+- No hay agenda ni disponibilidad del médico; queda como mejora futura.
+- La regla no corrige las superposiciones que ya existan en la base.
+- Los tests automáticos usan repositorios mockeados: la consulta JPQL y el candado se verifican contra la base en el hot-test.
+- Una sola cuenta de paciente puede ocupar toda la agenda de un médico, no hay límite, y el 409 deja deducir qué franjas están ocupadas; la disponibilidad del médico queda como mejora futura.
+- El candado sobre la fila del médico no tiene tiempo de espera: si una alta tarda, las demás altas del mismo médico esperan.
+
 **Pendientes.**
 
 - La generación automática de dosis (registro, edición y reapertura de tratamiento, arranque, medianoche y `generate-daily`) no crea ni mueve dosis de hoy cuya hora pasó hace más de 5 minutos; un arranque tardío no las recrea. Un recordatorio genera como máximo una dosis por día: si ya tiene una de hoy en cualquier estado, ni la edición ni la generación automática crean otra. `POST /doses/register` aplica la misma regla: responde 409 si el recordatorio ya tiene una toma vigente ese día.
@@ -451,7 +465,7 @@ Un job (`DosePushScheduler`) envía un push al paciente dueño del tratamiento (
 | RF-09 | El sistema debe mostrar estadísticas o indicadores de adherencia al tratamiento. |
 | RF-10 | El sistema debe permitir editar o eliminar un tratamiento existente. |
 | RF-11 | El sistema debe permitir editar o eliminar un recordatorio. |
-| RF-12 | El sistema debe permitir agendar una cita médica entre un paciente y un médico, con fecha, hora y motivo. |
+| RF-12 | El sistema debe permitir agendar una cita médica entre un paciente y un médico, con fecha, hora y motivo. Cada cita dura 30 minutos y un médico no puede tener dos superpuestas. |
 | RF-13 | El sistema debe permitir a un paciente ver su historial médico (diagnósticos y observaciones registradas). |
 
 ### Requerimientos no funcionales
@@ -476,7 +490,7 @@ Un job (`DosePushScheduler`) envía un push al paciente dueño del tratamiento (
 - **RN-06:** Un tratamiento eliminado lógicamente (`deleted_at` distinto de NULL) no genera nuevas notificaciones, pero conserva su historial.
 - **RN-07:** No se pueden configurar dos recordatorios duplicados para el mismo tratamiento (mismo `treatment_id`, mismo `time` y mismo patrón: los mismos `days_of_week`, o el mismo `interval_days` con la misma `start_date`). Dos recordatorios "todos los días" (`days_of_week` e `interval_days` NULL) a la misma hora también cuentan como duplicados, y los recordatorios eliminados lógicamente no se consideran. *(implementado en `ReminderService` y reforzado en la base con un índice único parcial)*
 - **RN-08:** El alta de medicamentos y tratamientos la realiza el propio paciente o su tutor/responsable (`role = PATIENT` o `CAREGIVER`); el sistema no contempla intervención directa del médico, salvo para agendar/gestionar sus propias citas (RN-09).
-- **RN-09:** Una cita médica (`medical_appointment`) solo puede ser creada o modificada por el paciente involucrado o por el médico (`doctor_id`) asignado a esa cita. La cita nace `CONFIRMED` si la agenda el paciente y `PENDING` si la agenda el médico. El paciente puede dejarla en cualquier estado; el médico solo puede cancelarla (la confirma el paciente) y una cita cancelada no vuelve a cambiar. El médico accede al historial médico del paciente solo con una cita vigente `CONFIRMED` con él.
+- **RN-09:** Una cita médica (`medical_appointment`) solo puede ser creada o modificada por el paciente involucrado o por el médico (`doctor_id`) asignado a esa cita. La cita nace `CONFIRMED` si la agenda el paciente y `PENDING` si la agenda el médico. El paciente puede dejarla en cualquier estado; el médico solo puede cancelarla (la confirma el paciente) y una cita cancelada no vuelve a cambiar. El médico accede al historial médico del paciente solo con una cita vigente `CONFIRMED` con él. Las citas duran 30 minutos y un médico no puede tener dos superpuestas (cuentan las vigentes y no canceladas de pacientes que no estén dados de baja).
 
 
 
@@ -609,7 +623,7 @@ Vínculo entre un tutor/responsable y los pacientes que gestiona. Un usuario `CA
 
 ### Tabla: `medical_appointment`
 
-> **Nota de diseño:** módulo agregado durante el análisis, fuera del alcance funcional original. Cita médica entre un paciente y un médico; ambos son `user`, diferenciados por `role`.
+> **Nota de diseño:** módulo agregado durante el análisis, fuera del alcance funcional original. Cita médica entre un paciente y un médico; ambos son `user`, diferenciados por `role`. No hay hora de fin: toda cita dura 30 minutos fijos y un médico no puede tener dos superpuestas (lo valida la aplicación, no la base).
 
 | Campo | Tipo | Descripción |
 |---|---|---|
@@ -649,8 +663,8 @@ Vínculo entre un tutor/responsable y los pacientes que gestiona. Un usuario `CA
 | token_hash | VARCHAR(64) (único) | SHA-256 en hexadecimal del refresh token; nunca el token |
 | expires_at | TIMESTAMPTZ | Vencimiento (48 h desde la emisión por defecto) |
 | created_at | TIMESTAMPTZ | Fecha de emisión |
-| revoked_at | TIMESTAMPTZ (nullable) | Cuándo se rotó, se cerró con logout o se revocó por reuso. NULL si sigue vigente |
-| replaced_by | FK → refresh_token.id (nullable) | Token que lo reemplazó al rotar. NULL si se cerró con logout o se revocó por reuso |
+| revoked_at | TIMESTAMPTZ (nullable) | Cuándo se rotó, se cerró con logout, se revocó por reuso o por la baja de la cuenta (`POST /users/me/deactivate` revoca todos los del usuario). NULL si sigue vigente |
+| replaced_by | FK → refresh_token.id (nullable) | Token que lo reemplazó al rotar. NULL si se cerró con logout o se revocó por reuso o por la baja de la cuenta |
 
 ---
 
@@ -877,6 +891,7 @@ La reversión está en `database/rollback-notification-dose-id.sql` y aborta si 
 - **Flujos alternativos:**
   - **2a.** Campos obligatorios incompletos → el sistema no permite continuar.
   - **3a.** Si la cita la agenda el médico, queda en estado `PENDING` hasta que el paciente la confirme.
+  - **3b.** El médico ya tiene una cita a menos de 30 minutos de ese horario → el sistema no la crea e informa "El médico ya tiene una cita en ese horario; las citas duran 30 minutos".
 - **Postcondición:** La cita queda registrada y visible tanto para el paciente como para el médico. Solo con la cita `CONFIRMED` el médico accede al historial médico del paciente.
 
 ---
