@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { ProfileStackParamList } from '../navigation/types';
@@ -25,6 +25,7 @@ export default function ProfileScreen() {
   return (
     <Screen>
       <View style={styles.container}>
+        <Image source={require('../../assets/icon.png')} style={styles.icon} />
         <Text style={styles.title}>{user?.name}</Text>
         <Text style={styles.subtitle}>Rol: {ROLE_LABELS[user.role]}</Text>
         <Text style={styles.subtitle}>Mail: {user?.email}</Text>
@@ -47,6 +48,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  icon: {
+    width: 96,
+    height: 96,
+    marginBottom: 16,
+    borderRadius: 22,
   },
   title: {
     fontSize: 24,

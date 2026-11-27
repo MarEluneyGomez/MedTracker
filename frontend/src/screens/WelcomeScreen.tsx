@@ -1,6 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import AppButton from '../components/AppButton';
 import { colors } from '../theme/colors';
 import type { RootStackParamList } from '../navigation/types';
@@ -13,6 +13,7 @@ export default function WelcomeScreen() {
   return (
     <Screen>
       <View style={styles.container}>
+        <Image source={require('../../assets/icon.png')} style={styles.icon} />
         <Logo />
         <Text style={styles.subtitle}>Tu medicación, siempre a tiempo</Text>
         <View style={styles.actions}>
@@ -29,6 +30,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  icon: {
+    width: 120,
+    height: 120,
+    marginBottom: 16,
+    borderRadius: 28,
   },
   subtitle: {
     marginTop: 8,
