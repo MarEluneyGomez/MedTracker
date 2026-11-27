@@ -15,6 +15,7 @@ export type TreatmentsStackParamList = {
 export type ProfileStackParamList = {
   ProfileHome: undefined;
   MedicalHistory: undefined;
+  DeactivateAccount: undefined;
 };
 
 export type DoctorPatientsStackParamList = {

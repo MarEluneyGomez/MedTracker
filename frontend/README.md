@@ -34,6 +34,8 @@ Mientras la app corre en modo desarrollo, la pantalla de inicio de sesión muest
 
 La sesión (usuario y tokens) se guarda cifrada en el dispositivo (`expo-secure-store`), así que se mantiene al cerrar y volver a abrir la app.
 
+**Dar de baja la cuenta** (paciente y cuidador): desde Perfil, "Dar de baja mi cuenta" abre una pantalla que explica qué se pierde y pide la contraseña actual, con una última confirmación (`POST /users/me/deactivate`). Es irreversible: el backend cancela las citas (también las pasadas), quita los vínculos con cuidadores, revoca todas las sesiones y no libera el email; los tratamientos, las tomas y el historial médico se conservan. Si sale bien, la app cierra la sesión local (borra los datos guardados y cancela las notificaciones) y vuelve a la bienvenida. Una contraseña incorrecta (403) o demasiados intentos (429) muestran el mensaje del backend sin cerrar la sesión. El médico no ve la opción: lo da de baja un operador, igual que el alta.
+
 ## Tratamientos
 
 La pestaña Tratamientos del paciente cubre CU-03 (agregar tratamiento) y CU-08 (editar o eliminar tratamiento):
@@ -152,7 +154,7 @@ frontend/
 ├── assets/                 # Íconos de la app y de las notificaciones
 │   └── sounds/             # Sonido de las notificaciones (recordatorio.wav)
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas y su formulario, historial médico y su formulario, pacientes del médico y del cuidador, pestañas de cada rol, perfil)
+│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas y su formulario, historial médico y su formulario, pacientes del médico y del cuidador, pestañas de cada rol, perfil y baja de la cuenta)
 │   ├── components/         # Componentes reutilizables
 │   │   ├── AppButton, Screen, TextField, Logo
 │   │   ├── EmptyState # Mensaje centrado con ícono cuando una lista está vacía
@@ -175,7 +177,7 @@ frontend/
 │   │   └── usePushTokenRegistration.ts # Manda el token de push al backend al entrar, al volver a primer plano y si cambia
 │   ├── services/
 │   │   ├── api.ts          # Cliente HTTP: token en cada pedido, renovación de la sesión, copias sin conexión y errores (ApiError)
-│   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión
+│   │   ├── auth.ts         # Login, registro, renovación, cierre y guardado de la sesión, y baja de la cuenta
 │   │   ├── cache.ts        # Copias de las lecturas en el dispositivo (AsyncStorage)
 │   │   ├── connection.ts   # Si se están mostrando datos guardados y de cuándo
 │   │   ├── pendingDoseActions.ts # Acciones sobre tomas hechas sin conexión, en espera de mandarse

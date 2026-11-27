@@ -42,6 +42,10 @@ export function logout(refreshToken: string): Promise<void> {
   return apiRequest<void>('POST', '/auth/logout', { refreshToken }, { authenticated: false });
 }
 
+export function deactivateAccount(password: string): Promise<void> {
+  return apiRequest<void>('POST', '/users/me/deactivate', { password });
+}
+
 export type RegisterData = {
   name: string;
   email: string;

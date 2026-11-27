@@ -37,6 +37,13 @@ export default function ProfileScreen() {
             />
           ) : null}
           <AppButton title="Cerrar sesión" onPress={signOut} />
+          {user.role !== 'DOCTOR' ? (
+            <AppButton
+              title="Dar de baja mi cuenta"
+              variant="danger"
+              onPress={() => navigation.navigate('DeactivateAccount')}
+            />
+          ) : null}
         </View>
       </View>
     </Screen>
