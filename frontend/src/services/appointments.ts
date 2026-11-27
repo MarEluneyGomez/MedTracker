@@ -36,3 +36,19 @@ export async function getConfirmedPatients(
   const results = await Promise.allSettled([...ids].map(getPatient));
   return results.filter((result) => result.status === 'fulfilled').map((result) => result.value);
 }
+
+export type NewAppointment = {
+  patientId: string;
+  doctorId: string;
+  dateTime: string;
+  reason: string;
+};
+
+export function createAppointment(data: NewAppointment): Promise<MedicalAppointment> {
+  return apiRequest<MedicalAppointment>('POST', '/medical-appointments/register', {
+    patient: { id: data.patientId },
+    doctor: { id: data.doctorId },
+    dateTime: data.dateTime,
+    reason: data.reason.trim(),
+  });
+}

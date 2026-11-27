@@ -103,7 +103,7 @@ Cubre parte de CU-09 del lado del paciente. La pestaña Citas lista las citas pr
 
 El médico ve la misma pestaña con sus citas: el nombre del paciente aparece recién cuando el paciente confirma (antes, el backend no lo informa y se muestra "Paciente sin confirmar"), las pendientes dicen "Esperando que el paciente confirme" y solo puede cancelarlas, porque confirmar es del paciente.
 
-Agendar una cita nueva queda pendiente: va a mostrar los turnos libres del médico, y para eso hace falta que el backend informe la disponibilidad.
+**Nueva cita** (solo el paciente): busca al médico por nombre (sin tildes ni mayúsculas, hasta 5 resultados y nada con el buscador vacío) y lo elige por su id, así dos médicos con el mismo nombre no se confunden; elige la fecha (de hoy en adelante) y la hora entre turnos de 30 minutos de 08:00 a 17:30 (si es hoy, solo los que no pasaron), y escribe el motivo (hasta 255 caracteres). Avisa que agendar le da al médico acceso al historial médico. La cita nace confirmada (`POST /medical-appointments/register`). Si el médico ya tiene otra cita a menos de 30 minutos, el backend responde 409 y se muestra su mensaje. El backend no informa los turnos libres, así que la app no puede ocultar los ocupados.
 
 ## Historial médico
 
@@ -152,7 +152,7 @@ frontend/
 ├── assets/                 # Íconos de la app y de las notificaciones
 │   └── sounds/             # Sonido de las notificaciones (recordatorio.wav)
 ├── src/
-│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas, historial médico y su formulario, pacientes del médico y del cuidador, pestañas de cada rol, perfil)
+│   ├── screens/            # Pantallas (bienvenida, login, registro, hoy, tratamientos y su formulario, horarios y su formulario, historial, citas y su formulario, historial médico y su formulario, pacientes del médico y del cuidador, pestañas de cada rol, perfil)
 │   ├── components/         # Componentes reutilizables
 │   │   ├── AppButton, Screen, TextField, Logo
 │   │   ├── Chip, RoleSelector, ChipSelector, DaySelector # Selección entre opciones
@@ -162,8 +162,9 @@ frontend/
 │   │   ├── DoseCard # Una toma del día con su estado y acciones
 │   │   ├── DoseStatusLabel # Estado de una toma con ícono y texto (Hoy e Historial)
 │   │   ├── AppointmentCard # Una cita con el médico o el paciente, su estado y acciones
+│   │   ├── DoctorPicker # Buscador de médicos para agendar una cita
 │   │   └── OfflineBanner # Aviso de que se muestran datos guardados (dentro de Screen)
-│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, ProfileStack, DoctorPatientsStack, CaregiverStack y las pestañas del paciente elegido (CaregiverPatientTabs), headerOptions y lista de pantallas (types.ts)
+│   ├── navigation/         # RootNavigator, pestañas de cada rol, TreatmentsStack, AppointmentsStack, ProfileStack, DoctorPatientsStack, CaregiverStack y las pestañas del paciente elegido (CaregiverPatientTabs), headerOptions y lista de pantallas (types.ts)
 │   ├── context/            # AuthContext (sesión) y ActivePatientContext (de qué paciente son los datos)
 │   ├── hooks/
 │   │   ├── useDoseNotificationsSync.ts # Recalcula las notificaciones al entrar y al volver a primer plano
@@ -182,7 +183,7 @@ frontend/
 │   │   ├── notifications.ts # Permiso, canal de Android, botón "La tomé" y programar o cancelar notificaciones
 │   │   ├── doseNotifications.ts # Qué notificaciones programar según las tomas que vienen
 │   │   ├── pushToken.ts    # Token de push del dispositivo para el backend
-│   │   ├── appointments.ts # Citas: listar, confirmar y cancelar, médicos y pacientes con cita confirmada
+│   │   ├── appointments.ts # Citas: listar, agendar, confirmar y cancelar, médicos y pacientes con cita confirmada
 │   │   ├── caregiverLinks.ts # Pacientes vinculados a un cuidador
 │   │   ├── medicalHistory.ts # Historial médico: ver y cargar registros
 │   │   ├── medications.ts  # Catálogo de medicamentos

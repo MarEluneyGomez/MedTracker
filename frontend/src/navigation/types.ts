@@ -27,3 +27,8 @@ export type CaregiverStackParamList = {
   CaregiverHome: undefined;
   PatientDetail: { patientId: string; patientName: string };
 };
+
+export type AppointmentsStackParamList = {
+  AppointmentsList: undefined;
+  AppointmentForm: undefined;
+};

@@ -1,4 +1,5 @@
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, SectionList, StyleSheet, Text, View } from 'react-native';
 import AppButton from '../components/AppButton';
@@ -6,6 +7,7 @@ import AppointmentCard from '../components/AppointmentCard';
 import Screen from '../components/Screen';
 import { useAuth } from '../context/AuthContext';
 import { useFlashScrollIndicators } from '../hooks/useFlashScrollIndicators';
+import type { AppointmentsStackParamList } from '../navigation/types';
 import { ApiError } from '../services/api';
 import {
   cancelAppointment,
@@ -22,6 +24,7 @@ import { formatClockTime, formatLongDate, fromBackendDate } from '../utils/dates
 export default function AppointmentsScreen() {
   const { user } = useAuth();
   const isDoctor = user?.role === 'DOCTOR';
+  const navigation = useNavigation<NativeStackNavigationProp<AppointmentsStackParamList>>();
   const [appointments, setAppointments] = useState<MedicalAppointment[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -132,7 +135,17 @@ export default function AppointmentsScreen() {
         refreshing={refreshing}
         onRefresh={handleRefresh}
         contentContainerStyle={styles.list}
-        ListHeaderComponent={<Text style={styles.title}>Mis citas</Text>}
+        ListHeaderComponent={
+          <View style={styles.header}>
+            <Text style={styles.title}>Mis citas</Text>
+            {isDoctor ? null : (
+              <AppButton
+                title="Nueva cita"
+                onPress={() => navigation.navigate('AppointmentForm')}
+              />
+            )}
+          </View>
+        }
         ListEmptyComponent={<Text style={styles.message}>Todavía no tenés citas.</Text>}
         renderSectionHeader={({ section }) => (
           <Text style={styles.sectionTitle}>{section.title}</Text>
@@ -174,6 +187,9 @@ const styles = StyleSheet.create({
   list: {
     gap: 12,
     paddingBottom: 24,
+  },
+  header: {
+    gap: 16,
   },
   title: {
     marginTop: 16,
