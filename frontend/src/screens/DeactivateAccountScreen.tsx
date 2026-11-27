@@ -34,9 +34,9 @@ export default function DeactivateAccountScreen() {
       return;
     }
     setPasswordError(null);
-    Alert.alert('Dar de baja la cuenta', '¿Seguro? No se puede deshacer.', [
+    Alert.alert('Eliminar la cuenta', '¿Seguro? No se puede deshacer.', [
       { text: 'Volver', style: 'cancel' },
-      { text: 'Dar de baja', style: 'destructive', onPress: handleDeactivate },
+      { text: 'Eliminar', style: 'destructive', onPress: handleDeactivate },
     ]);
   }
 
@@ -47,7 +47,7 @@ export default function DeactivateAccountScreen() {
       await deactivateAccount(password);
       await signOut();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'No se pudo dar de baja la cuenta.');
+      setError(e instanceof ApiError ? e.message : 'No se pudo eliminar la cuenta.');
       setSaving(false);
     }
   }
@@ -59,7 +59,7 @@ export default function DeactivateAccountScreen() {
         keyboardShouldPersistTaps="handled"
         persistentScrollbar
       >
-        <Text style={styles.title}>Dar de baja mi cuenta</Text>
+        <Text style={styles.title}>Eliminar mi cuenta</Text>
         <View style={styles.warning}>
           <Ionicons name="warning-outline" size={24} color={colors.error} />
           <Text style={styles.warningText}>
@@ -76,7 +76,7 @@ export default function DeactivateAccountScreen() {
         />
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <AppButton
-          title="Dar de baja mi cuenta"
+          title="Eliminar mi cuenta"
           variant="danger"
           onPress={confirmDeactivation}
           loading={saving}

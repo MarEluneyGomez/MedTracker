@@ -1,4 +1,4 @@
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { ProfileStackParamList } from '../navigation/types';
@@ -37,15 +37,17 @@ export default function ProfileScreen() {
             />
           ) : null}
           <AppButton title="Cerrar sesión" onPress={signOut} />
-          {user.role !== 'DOCTOR' ? (
-            <AppButton
-              title="Dar de baja mi cuenta"
-              variant="danger"
-              onPress={() => navigation.navigate('DeactivateAccount')}
-            />
-          ) : null}
         </View>
       </View>
+      {user.role !== 'DOCTOR' ? (
+        <Pressable
+          style={styles.deleteAccount}
+          onPress={() => navigation.navigate('DeactivateAccount')}
+          accessibilityRole="button"
+        >
+          <Text style={styles.deleteAccountText}>Eliminar mi cuenta</Text>
+        </Pressable>
+      ) : null}
     </Screen>
   );
 }
@@ -75,5 +77,16 @@ const styles = StyleSheet.create({
   actions: {
     marginTop: 32,
     gap: 12,
+  },
+  deleteAccount: {
+    alignSelf: 'center',
+    minHeight: 44,
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  deleteAccountText: {
+    fontSize: 14,
+    color: colors.error,
+    textDecorationLine: 'underline',
   },
 });
